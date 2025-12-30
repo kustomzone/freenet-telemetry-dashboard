@@ -961,7 +961,7 @@
         /* Timeline Track */
         .timeline {
             position: relative;
-            height: 100px;
+            height: 115px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
             border-radius: 12px;
@@ -1015,10 +1015,31 @@
 
         .timeline-events {
             position: absolute;
-            top: 30px;
-            left: 16px;
+            top: 20px;
+            left: 50px; /* space for labels */
             right: 16px;
-            height: 45px; /* 5 lanes * 9px each */
+            height: 75px; /* 5 lanes * 15px each */
+        }
+
+        .timeline-lane-labels {
+            position: absolute;
+            top: 20px;
+            left: 8px;
+            width: 40px;
+            height: 75px;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .timeline-lane-label {
+            height: 15px;
+            font-family: var(--font-mono);
+            font-size: 0.55em;
+            font-weight: 500;
+            display: flex;
+            align-items: center;
+            padding-right: 4px;
+            justify-content: flex-end;
         }
 
         .timeline-marker {
@@ -1539,6 +1560,13 @@
             <div class="timeline" id="timeline">
                 <div class="timeline-ruler" id="timeline-ruler"></div>
                 <div class="timeline-track"></div>
+                <div class="timeline-lane-labels">
+                    <div class="timeline-lane-label" style="color:var(--color-put)">PUT</div>
+                    <div class="timeline-lane-label" style="color:var(--color-get)">GET</div>
+                    <div class="timeline-lane-label" style="color:var(--color-update)">UPD</div>
+                    <div class="timeline-lane-label" style="color:var(--color-subscribe)">SUB</div>
+                    <div class="timeline-lane-label" style="color:var(--color-connect)">CONN</div>
+                </div>
                 <div class="timeline-events" id="timeline-events"></div>
                 <div class="timeline-live-zone"></div>
                 <div class="timeline-playhead" id="playhead">
@@ -2437,8 +2465,8 @@
                 subscribe: { color: 'var(--color-subscribe)', row: 3, label: 'SUB' },
                 connect: { color: 'var(--color-connect)', row: 4, label: 'CONN' },
             };
-            const laneHeight = 8;
-            const laneGap = 1;
+            const laneHeight = 13;
+            const laneGap = 2;
             const totalHeight = Object.keys(lanes).length * (laneHeight + laneGap);
 
             // Create lane backgrounds and labels
