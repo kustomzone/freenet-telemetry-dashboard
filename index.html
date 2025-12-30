@@ -370,6 +370,19 @@
             letter-spacing: 0.08em;
         }
 
+        .panel-time-label {
+            font-family: var(--font-mono);
+            font-size: 0.7em;
+            color: var(--text-muted);
+            padding: 2px 8px;
+            background: var(--bg-tertiary);
+            border-radius: 4px;
+        }
+        .panel-time-label.live {
+            color: var(--color-connect);
+            background: rgba(52, 211, 153, 0.15);
+        }
+
         .panel-badge {
             font-family: var(--font-mono);
             font-size: 0.7em;
@@ -1447,6 +1460,7 @@
                 <div class="panel">
                     <div class="panel-header">
                         <span class="panel-title">Network Topology</span>
+                        <span class="panel-time-label" id="topology-time-label">Live</span>
                     </div>
                     <p class="panel-subtitle">Peers arranged by their network location (0.0-1.0). Click a peer to filter events.</p>
                     <div class="ring-container" id="ring-container">
@@ -2497,6 +2511,17 @@
             document.getElementById('playhead-time').textContent = formatTime(currentTime);
             document.getElementById('playhead-date').textContent = formatDate(currentTime);
             document.getElementById('time-display').textContent = formatTime(currentTime).split(' ')[0];
+
+            // Update topology time label
+            const topoLabel = document.getElementById('topology-time-label');
+            if (isLive) {
+                topoLabel.textContent = 'Live';
+                topoLabel.classList.add('live');
+            } else {
+                const timeStr = new Date(currentTime / 1_000_000).toLocaleTimeString([], {hour: '2-digit', minute: '2-digit'});
+                topoLabel.textContent = `at ${timeStr}`;
+                topoLabel.classList.remove('live');
+            }
 
             renderDetailTimeline();
         }
