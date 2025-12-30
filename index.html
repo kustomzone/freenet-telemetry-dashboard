@@ -1015,10 +1015,10 @@
 
         .timeline-events {
             position: absolute;
-            top: 35px;
+            top: 30px;
             left: 16px;
             right: 16px;
-            bottom: 10px;
+            height: 45px; /* 5 lanes * 9px each */
         }
 
         .timeline-marker {
@@ -1551,12 +1551,12 @@
             <div class="timeline-labels">
                 <span class="timeline-label" id="timeline-start">--:--</span>
                 <div class="timeline-legend">
-                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-connect)"></span>connect</span>
                     <span class="legend-item"><span class="legend-dot" style="background:var(--color-put)"></span>put</span>
                     <span class="legend-item"><span class="legend-dot" style="background:var(--color-get)"></span>get</span>
-                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-update)"></span>update</span>
-                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-subscribe)"></span>subscribe</span>
-                    <span style="color:var(--text-muted);font-size:0.9em;margin-left:8px">| height = activity</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-update)"></span>upd</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-subscribe)"></span>sub</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-connect)"></span>conn</span>
+                    <span style="color:var(--text-muted);font-size:0.85em;margin-left:6px">bright=completed</span>
                 </div>
                 <span class="timeline-label" id="timeline-end">Now</span>
             </div>
@@ -2429,39 +2429,78 @@
 
             const duration = timeRange.end - timeRange.start;
 
-            // Group events by position (bucket into ~500 slots)
-            const buckets = {};
-            allEvents.forEach(event => {
-                const bucket = Math.round((event.timestamp - timeRange.start) / duration * 500);
-                if (!buckets[bucket]) buckets[bucket] = { events: [], types: {} };
-                buckets[bucket].events.push(event);
-                const type = getEventClass(event.event_type);
-                buckets[bucket].types[type] = (buckets[bucket].types[type] || 0) + 1;
+            // Define lanes: each operation type gets a row
+            const lanes = {
+                put: { color: 'var(--color-put)', row: 0, label: 'PUT' },
+                get: { color: 'var(--color-get)', row: 1, label: 'GET' },
+                update: { color: 'var(--color-update)', row: 2, label: 'UPD' },
+                subscribe: { color: 'var(--color-subscribe)', row: 3, label: 'SUB' },
+                connect: { color: 'var(--color-connect)', row: 4, label: 'CONN' },
+            };
+            const laneHeight = 8;
+            const laneGap = 1;
+            const totalHeight = Object.keys(lanes).length * (laneHeight + laneGap);
+
+            // Create lane backgrounds and labels
+            Object.entries(lanes).forEach(([type, lane]) => {
+                const bg = document.createElement('div');
+                bg.className = 'timeline-lane-bg';
+                bg.style.cssText = `position:absolute;left:0;right:0;top:${lane.row * (laneHeight + laneGap)}px;height:${laneHeight}px;background:rgba(255,255,255,0.02);border-radius:2px;`;
+                container.appendChild(bg);
             });
 
-            // Render one marker per bucket showing dominant type
-            Object.entries(buckets).forEach(([bucket, data]) => {
-                const posPercent = bucket / 5; // 500 buckets -> 100%
+            // Group events into time buckets per lane
+            const buckets = {};
+            allEvents.forEach(event => {
+                const bucket = Math.round((event.timestamp - timeRange.start) / duration * 400);
+                const type = event.event_type;
+
+                // Determine which lane
+                let laneType = 'connect';
+                if (type.includes('put')) laneType = 'put';
+                else if (type.includes('get')) laneType = 'get';
+                else if (type.includes('update')) laneType = 'update';
+                else if (type.includes('subscrib')) laneType = 'subscribe';
+                else if (!type.includes('connect')) return; // Skip other events
+
+                const key = `${bucket}-${laneType}`;
+                if (!buckets[key]) buckets[key] = { bucket, laneType, events: [], hasResponse: false };
+                buckets[key].events.push(event);
+
+                // Track if this bucket has a response/success
+                if (type.includes('success') || type.includes('subscribed')) {
+                    buckets[key].hasResponse = true;
+                }
+            });
+
+            // Render markers
+            Object.values(buckets).forEach(data => {
+                const posPercent = data.bucket / 4; // 400 buckets -> 100%
                 if (posPercent < 0 || posPercent > 100) return;
 
-                // Find dominant event type in this bucket
-                const dominantType = Object.entries(data.types)
-                    .sort((a, b) => b[1] - a[1])[0][0];
-
+                const lane = lanes[data.laneType];
                 const marker = document.createElement('div');
-                marker.className = `timeline-marker ${dominantType}`;
-                marker.style.left = `${posPercent}%`;
 
-                // Height based on event count (more events = taller bar)
-                const count = data.events.length;
-                const height = Math.min(45, 10 + Math.log2(count + 1) * 8);
-                marker.style.height = `${height}px`;
-                marker.style.top = `${45 - height}px`;
-                marker.style.opacity = Math.min(1, 0.4 + count * 0.1);
+                // Brighter if has response/success, dimmer if just request
+                const opacity = data.hasResponse ? 1 : 0.5;
+                const width = Math.min(6, 2 + data.events.length);
 
-                const typeBreakdown = Object.entries(data.types)
-                    .map(([t, c]) => `${t}: ${c}`).join(', ');
-                marker.title = `${count} event${count > 1 ? 's' : ''}\n${typeBreakdown}`;
+                marker.className = 'timeline-lane-marker';
+                marker.style.cssText = `
+                    position:absolute;
+                    left:${posPercent}%;
+                    top:${lane.row * (laneHeight + laneGap)}px;
+                    width:${width}px;
+                    height:${laneHeight}px;
+                    background:${lane.color};
+                    opacity:${opacity};
+                    border-radius:1px;
+                    cursor:pointer;
+                    transform:translateX(-50%);
+                `;
+
+                const evtTypes = [...new Set(data.events.map(e => e.event_type))].join(', ');
+                marker.title = `${data.events.length} ${data.laneType} event(s)\n${evtTypes}`;
                 marker.onclick = (e) => {
                     e.stopPropagation();
                     goToTime(data.events[0].timestamp);
