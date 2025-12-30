@@ -880,11 +880,13 @@
             background: linear-gradient(to top, var(--bg-primary) 0%, var(--bg-primary) 60%, transparent 100%);
             padding: 30px 24px 20px;
             z-index: 100;
+            overflow-x: hidden;
         }
 
         .timeline-wrapper {
             max-width: 1400px;
             margin: 0 auto;
+            overflow: hidden;
         }
 
         .timeline-header {
@@ -1213,7 +1215,7 @@
         .timeline-playhead { cursor: grab; }
 
         /* Transaction Detail Gantt View */
-        .tx-detail-container { display: none; margin-top: 8px; }
+        .tx-detail-container { display: none; margin-top: 8px; overflow: hidden; }
         .tx-detail-container.visible { display: block; }
         .tx-detail-header {
             display: flex; justify-content: space-between; align-items: center;
