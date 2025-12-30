@@ -1168,6 +1168,15 @@
             opacity: 0.7;
         }
 
+        .timeline-legend {
+            display: flex;
+            gap: 10px;
+            font-family: var(--font-mono);
+            font-size: 0.6em;
+            color: var(--text-muted);
+            align-items: center;
+        }
+
         /* Detail Timeline with Transaction Lanes */
         .timeline-detail-header { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; margin-bottom: 6px; padding: 0 4px; }
         .timeline-detail-title { font-family: var(--font-mono); font-size: 0.7em; color: var(--text-muted); font-weight: 500; }
@@ -1527,7 +1536,14 @@
             </div>
             <div class="timeline-labels">
                 <span class="timeline-label" id="timeline-start">--:--</span>
-                <span class="timeline-help">Drag window to scrub, edges to resize</span>
+                <div class="timeline-legend">
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-connect)"></span>connect</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-put)"></span>put</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-get)"></span>get</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-update)"></span>update</span>
+                    <span class="legend-item"><span class="legend-dot" style="background:var(--color-subscribe)"></span>subscribe</span>
+                    <span style="color:var(--text-muted);font-size:0.9em;margin-left:8px">| height = activity</span>
+                </div>
                 <span class="timeline-label" id="timeline-end">Now</span>
             </div>
             <div class="timeline-detail-header">
@@ -2399,37 +2415,44 @@
 
             const duration = timeRange.end - timeRange.start;
 
-            // Group events by position to vary heights
-            const eventsByPos = {};
+            // Group events by position (bucket into ~500 slots)
+            const buckets = {};
             allEvents.forEach(event => {
-                const pos = Math.round((event.timestamp - timeRange.start) / duration * 1000);
-                if (!eventsByPos[pos]) eventsByPos[pos] = [];
-                eventsByPos[pos].push(event);
+                const bucket = Math.round((event.timestamp - timeRange.start) / duration * 500);
+                if (!buckets[bucket]) buckets[bucket] = { events: [], types: {} };
+                buckets[bucket].events.push(event);
+                const type = getEventClass(event.event_type);
+                buckets[bucket].types[type] = (buckets[bucket].types[type] || 0) + 1;
             });
 
-            Object.entries(eventsByPos).forEach(([pos, events]) => {
-                const posPercent = pos / 10;
+            // Render one marker per bucket showing dominant type
+            Object.entries(buckets).forEach(([bucket, data]) => {
+                const posPercent = bucket / 5; // 500 buckets -> 100%
                 if (posPercent < 0 || posPercent > 100) return;
 
-                // Stack events at same position
-                events.forEach((event, idx) => {
-                    const marker = document.createElement('div');
-                    marker.className = `timeline-marker ${getEventClass(event.event_type)}`;
-                    marker.style.left = `${posPercent}%`;
+                // Find dominant event type in this bucket
+                const dominantType = Object.entries(data.types)
+                    .sort((a, b) => b[1] - a[1])[0][0];
 
-                    // Vary height based on density
-                    const height = Math.min(40, 15 + idx * 8);
-                    marker.style.height = `${height}px`;
-                    marker.style.top = `${40 - height/2}px`;
-                    marker.style.opacity = 0.5 + Math.min(0.5, events.length * 0.1);
+                const marker = document.createElement('div');
+                marker.className = `timeline-marker ${dominantType}`;
+                marker.style.left = `${posPercent}%`;
 
-                    marker.title = `${event.time_str} - ${event.event_type}`;
-                    marker.onclick = (e) => {
-                        e.stopPropagation();
-                        goToTime(event.timestamp);
-                    };
-                    container.appendChild(marker);
-                });
+                // Height based on event count (more events = taller bar)
+                const count = data.events.length;
+                const height = Math.min(45, 10 + Math.log2(count + 1) * 8);
+                marker.style.height = `${height}px`;
+                marker.style.top = `${45 - height}px`;
+                marker.style.opacity = Math.min(1, 0.4 + count * 0.1);
+
+                const typeBreakdown = Object.entries(data.types)
+                    .map(([t, c]) => `${t}: ${c}`).join(', ');
+                marker.title = `${count} event${count > 1 ? 's' : ''}\n${typeBreakdown}`;
+                marker.onclick = (e) => {
+                    e.stopPropagation();
+                    goToTime(data.events[0].timestamp);
+                };
+                container.appendChild(marker);
             });
 
             document.getElementById('timeline-start').textContent = formatTime(timeRange.start);
