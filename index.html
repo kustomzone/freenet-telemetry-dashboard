@@ -598,15 +598,14 @@
         }
 
         /* Legend */
-        .topology-legend {
-            position: absolute;
-            bottom: 16px;
-            left: 16px;
+        .topology-legend-inline {
             display: flex;
-            flex-direction: column;
-            gap: 8px;
+            gap: 12px;
             font-family: var(--font-mono);
-            font-size: 0.7em;
+            font-size: 0.6em;
+            color: var(--text-muted);
+            margin-bottom: 8px;
+            flex-wrap: wrap;
         }
 
         .legend-item {
@@ -639,6 +638,35 @@
         .legend-marker.selected {
             background: var(--accent-light);
             box-shadow: 0 0 8px rgba(126, 207, 239, 0.5);
+        }
+
+        .legend-line {
+            width: 20px;
+            height: 3px;
+            border-radius: 1px;
+        }
+
+        .legend-line.connection {
+            background: repeating-linear-gradient(
+                90deg,
+                var(--color-connect) 0px,
+                var(--color-connect) 4px,
+                transparent 4px,
+                transparent 8px
+            );
+        }
+
+        .legend-line.message {
+            background: var(--color-put);
+            position: relative;
+        }
+        .legend-line.message::after {
+            content: '▸';
+            position: absolute;
+            right: -6px;
+            top: -6px;
+            font-size: 10px;
+            color: var(--color-put);
         }
 
         /* Contract selector */
@@ -1483,29 +1511,16 @@
                         <span class="panel-title">Network Topology</span>
                         <span class="panel-time-label" id="topology-time-label">Live</span>
                     </div>
-                    <p class="panel-subtitle">Peers arranged by their network location (0.0-1.0). Click a peer to filter events.</p>
+                    <div class="topology-legend-inline">
+                        <span class="legend-item"><span class="legend-marker gateway"></span>Gateway</span>
+                        <span class="legend-item"><span class="legend-marker peer"></span>Peer</span>
+                        <span class="legend-item"><span class="legend-line connection"></span>Connection</span>
+                        <span class="legend-item"><span class="legend-line message"></span>Message flow</span>
+                    </div>
                     <div class="ring-container" id="ring-container">
                         <div class="empty-state">
                             <div class="empty-state-icon">&#9673;</div>
                             <div>Loading network state...</div>
-                        </div>
-                        <div class="topology-legend" id="topology-legend" style="display: none;">
-                            <div class="legend-item">
-                                <span class="legend-marker gateway"></span>
-                                <span>Gateway</span>
-                            </div>
-                            <div class="legend-item" id="legend-you" style="display: none;">
-                                <span class="legend-marker you"></span>
-                                <span>You (<span id="your-hash">---</span>)</span>
-                            </div>
-                            <div class="legend-item">
-                                <span class="legend-marker peer"></span>
-                                <span>Peer</span>
-                            </div>
-                            <div class="legend-item">
-                                <span class="legend-marker selected"></span>
-                                <span>Selected</span>
-                            </div>
                         </div>
                     </div>
                 </div>
