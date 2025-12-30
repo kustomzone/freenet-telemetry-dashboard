@@ -1194,6 +1194,55 @@
         /* Playhead grab cursor */
         .timeline-playhead { cursor: grab; }
 
+        /* Transaction Detail Gantt View */
+        .tx-detail-container { display: none; margin-top: 8px; }
+        .tx-detail-container.visible { display: block; }
+        .tx-detail-header {
+            display: flex; justify-content: space-between; align-items: center;
+            padding: 8px 12px; background: var(--bg-tertiary); border-radius: 8px 8px 0 0;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .tx-detail-title { font-family: var(--font-mono); font-size: 0.75em; color: var(--text-primary); }
+        .tx-detail-title .op-badge {
+            display: inline-block; padding: 2px 8px; border-radius: 4px; margin-right: 8px;
+            font-weight: 600; text-transform: uppercase; font-size: 0.85em;
+        }
+        .tx-detail-title .op-badge.put { background: var(--color-put); color: #000; }
+        .tx-detail-title .op-badge.get { background: var(--color-get); color: #fff; }
+        .tx-detail-title .op-badge.update { background: var(--color-update); color: #000; }
+        .tx-detail-title .op-badge.subscribe { background: var(--color-subscribe); color: #fff; }
+        .tx-detail-close {
+            background: none; border: none; color: var(--text-muted); cursor: pointer;
+            font-size: 1.2em; padding: 4px 8px; border-radius: 4px;
+        }
+        .tx-detail-close:hover { background: var(--bg-secondary); color: var(--text-primary); }
+        .tx-detail-gantt {
+            background: var(--bg-tertiary); border-radius: 0 0 8px 8px; padding: 12px;
+            max-height: 200px; overflow-y: auto;
+        }
+        .tx-event-row {
+            display: flex; align-items: center; gap: 12px; padding: 4px 0;
+            font-family: var(--font-mono); font-size: 0.7em;
+        }
+        .tx-event-time { width: 70px; color: var(--text-muted); text-align: right; flex-shrink: 0; }
+        .tx-event-bar-container { flex: 1; height: 18px; position: relative; background: var(--bg-secondary); border-radius: 4px; }
+        .tx-event-bar {
+            position: absolute; height: 100%; border-radius: 4px; min-width: 4px;
+            display: flex; align-items: center; padding: 0 8px; font-size: 0.9em; color: #fff;
+            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+        }
+        .tx-event-bar.request { background: linear-gradient(90deg, var(--color-put), transparent); }
+        .tx-event-bar.success { background: var(--color-connect); }
+        .tx-event-bar.failed { background: #ff6b6b; }
+        .tx-event-bar.other { background: var(--text-muted); }
+        .tx-event-type { color: var(--text-primary); width: 140px; flex-shrink: 0; }
+        .tx-detail-summary {
+            display: flex; gap: 16px; padding: 8px 12px; background: var(--bg-secondary);
+            border-radius: 4px; margin-bottom: 8px; font-family: var(--font-mono); font-size: 0.65em;
+        }
+        .tx-detail-summary span { color: var(--text-muted); }
+        .tx-detail-summary strong { color: var(--text-primary); }
+
         /* Empty state */
         .empty-state {
             display: flex;
@@ -1463,6 +1512,18 @@
                 <div class="timeline-ruler" id="detail-ruler"></div>
                 <div class="timeline-lanes" id="timeline-lanes"></div>
             </div>
+            <div class="tx-detail-container" id="tx-detail-container">
+                <div class="tx-detail-header">
+                    <div class="tx-detail-title" id="tx-detail-title">
+                        <span class="op-badge">GET</span>
+                        <span>Transaction Details</span>
+                    </div>
+                    <button class="tx-detail-close" onclick="closeTransactionDetail()">&times;</button>
+                </div>
+                <div class="tx-detail-gantt" id="tx-detail-gantt">
+                    <!-- Events rendered here -->
+                </div>
+            </div>
         </div>
     </div>
 
@@ -1491,6 +1552,7 @@
         let opStats = null;  // Operation statistics
         let displayedEvents = [];  // Events currently shown in the events panel
         let allTransactions = [];  // Transactions for timeline lanes
+        let selectedTransaction = null;  // Currently selected transaction for detail view
 
         const SVG_SIZE = 450;
         const CENTER = SVG_SIZE / 2;
@@ -1559,6 +1621,71 @@
             }
         }
 
+        function showTransactionDetail(tx) {
+            selectedTransaction = tx;
+            const container = document.getElementById('tx-detail-container');
+            const titleEl = document.getElementById('tx-detail-title');
+            const ganttEl = document.getElementById('tx-detail-gantt');
+
+            // Update title with op badge
+            const opClass = tx.op || 'other';
+            titleEl.innerHTML = `<span class="op-badge ${opClass}">${(tx.op || 'unknown').toUpperCase()}</span>` +
+                `<span>Transaction ${tx.tx_id.substring(0, 8)}...</span>`;
+
+            // Build summary
+            const duration = tx.duration_ms ? `${tx.duration_ms.toFixed(1)}ms` : 'pending';
+            const events = tx.events || [];
+            let summaryHtml = `<div class="tx-detail-summary">
+                <span>Duration: <strong>${duration}</strong></span>
+                <span>Events: <strong>${events.length}</strong></span>
+                <span>Status: <strong>${tx.status || 'unknown'}</strong></span>
+                ${tx.contract ? `<span>Contract: <strong>${tx.contract}</strong></span>` : ''}
+            </div>`;
+
+            // Build Gantt chart of events
+            if (events.length === 0) {
+                ganttEl.innerHTML = summaryHtml + '<div style="color:var(--text-muted);padding:12px;">No event details available</div>';
+            } else {
+                // Sort events by timestamp
+                const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+                const txStart = sortedEvents[0].timestamp;
+                const txEnd = sortedEvents[sortedEvents.length - 1].timestamp;
+                const txDuration = Math.max(txEnd - txStart, 1); // Avoid division by zero
+
+                let eventsHtml = '';
+                sortedEvents.forEach((evt, idx) => {
+                    const relativeTime = (evt.timestamp - txStart) / 1_000_000; // Convert to ms
+                    const barStart = (evt.timestamp - txStart) / txDuration;
+                    // Each event bar extends to the next event (or end)
+                    const nextTs = idx < sortedEvents.length - 1 ? sortedEvents[idx + 1].timestamp : txEnd;
+                    const barWidth = Math.max((nextTs - evt.timestamp) / txDuration, 0.05);
+
+                    // Determine event bar color
+                    let barClass = 'other';
+                    if (evt.event_type.includes('request')) barClass = 'request';
+                    else if (evt.event_type.includes('success')) barClass = 'success';
+                    else if (evt.event_type.includes('fail') || evt.event_type.includes('error')) barClass = 'failed';
+
+                    eventsHtml += `<div class="tx-event-row">
+                        <span class="tx-event-time">+${relativeTime.toFixed(1)}ms</span>
+                        <span class="tx-event-type">${evt.event_type}</span>
+                        <div class="tx-event-bar-container">
+                            <div class="tx-event-bar ${barClass}" style="left:${barStart*100}%;width:${barWidth*100}%"></div>
+                        </div>
+                    </div>`;
+                });
+
+                ganttEl.innerHTML = summaryHtml + eventsHtml;
+            }
+
+            container.classList.add('visible');
+        }
+
+        function closeTransactionDetail() {
+            selectedTransaction = null;
+            document.getElementById('tx-detail-container').classList.remove('visible');
+        }
+
         function renderDetailTimeline() {
             const windowSize = timeWindowNs * 2;
             let windowStart = currentTime - timeWindowNs;
@@ -1614,7 +1741,7 @@
                     bar.style.left = `${startPos * 100}%`;
                     bar.style.width = `${Math.max(0.5, (endPos - startPos) * 100)}%`;
                     bar.title = `${tx.op}: ${tx.contract || 'unknown'}\nDuration: ${tx.duration_ms ? tx.duration_ms.toFixed(0) + 'ms' : 'pending'}\nEvents: ${tx.event_count}`;
-                    bar.onclick = () => { const e = allEvents.find(ev => ev.tx_id === tx.tx_id); if (e) selectEvent(e); };
+                    bar.onclick = () => showTransactionDetail(tx);
                     laneDiv.appendChild(bar);
                 });
                 lanesContainer.appendChild(laneDiv);
