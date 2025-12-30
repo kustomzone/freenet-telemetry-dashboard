@@ -1191,6 +1191,24 @@
         .tx-bar.pending { opacity: 0.5; }
         .tx-bar.failed { box-shadow: 0 0 0 2px #ff6b6b; }
 
+        /* Transaction event markers (Gantt-style) */
+        .tx-event-marker {
+            position: absolute;
+            border-radius: 3px;
+            cursor: pointer;
+            transform: translateX(-50%);
+            transition: transform 0.1s;
+        }
+        .tx-event-marker:hover { transform: translateX(-50%) scale(1.3); z-index: 10; }
+        .tx-event-marker.put { background: var(--color-put); }
+        .tx-event-marker.get { background: var(--color-get); }
+        .tx-event-marker.update { background: var(--color-update); }
+        .tx-event-marker.subscribe { background: var(--color-subscribe); }
+        .tx-event-marker.success { background: var(--color-connect); }
+        .tx-event-marker.failed { background: #ff6b6b; }
+        .tx-event-marker.other { background: var(--text-muted); }
+        .tx-connector { opacity: 0.5; }
+
         /* Playhead grab cursor */
         .timeline-playhead { cursor: grab; }
 
@@ -1716,40 +1734,82 @@
                 detailRuler.appendChild(tick);
             }
 
-            // Filter and render transactions
-            const windowTx = allTransactions.filter(tx => tx.end_ns >= windowStart && tx.start_ns <= windowEnd);
+            // Filter transactions with events in window
+            const windowTx = allTransactions.filter(tx =>
+                tx.end_ns >= windowStart && tx.start_ns <= windowEnd && tx.events && tx.events.length > 0
+            );
+
+            // Pack transactions into lanes (each tx gets its own lane row)
             const lanes = [];
             windowTx.forEach(tx => {
-                let laneIdx = lanes.findIndex(lane => lane[lane.length - 1].end_ns < tx.start_ns);
+                let laneIdx = lanes.findIndex(lane => lane[lane.length - 1].end_ns + 100_000_000 < tx.start_ns); // 100ms gap
                 if (laneIdx === -1) { laneIdx = lanes.length; lanes.push([]); }
                 lanes[laneIdx].push(tx);
             });
 
             const lanesContainer = document.getElementById('timeline-lanes');
             lanesContainer.innerHTML = '';
-            const laneHeight = 16, maxLanes = 4;
+            const laneHeight = 20, maxLanes = 4;
 
             lanes.slice(0, maxLanes).forEach((lane, laneIdx) => {
                 const laneDiv = document.createElement('div');
                 laneDiv.className = 'tx-lane';
                 laneDiv.style.top = `${laneIdx * laneHeight}px`;
+
                 lane.forEach(tx => {
-                    const startPos = Math.max(0, (tx.start_ns - windowStart) / windowDuration);
-                    const endPos = Math.min(1, (tx.end_ns - windowStart) / windowDuration);
-                    const bar = document.createElement('div');
-                    bar.className = `tx-bar ${tx.op || 'other'} ${tx.status || ''}`;
-                    bar.style.left = `${startPos * 100}%`;
-                    bar.style.width = `${Math.max(0.5, (endPos - startPos) * 100)}%`;
-                    bar.title = `${tx.op}: ${tx.contract || 'unknown'}\nDuration: ${tx.duration_ms ? tx.duration_ms.toFixed(0) + 'ms' : 'pending'}\nEvents: ${tx.event_count}`;
-                    bar.onclick = () => showTransactionDetail(tx);
-                    laneDiv.appendChild(bar);
+                    const events = tx.events || [];
+                    if (events.length === 0) return;
+
+                    // Sort events by timestamp
+                    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
+
+                    // Draw a connecting line for the transaction span
+                    const txStart = Math.max(windowStart, tx.start_ns);
+                    const txEnd = Math.min(windowEnd, tx.end_ns || tx.start_ns);
+                    const lineStartPos = (txStart - windowStart) / windowDuration;
+                    const lineEndPos = (txEnd - windowStart) / windowDuration;
+
+                    if (events.length > 1) {
+                        const line = document.createElement('div');
+                        line.className = 'tx-connector';
+                        line.style.cssText = `position:absolute;left:${lineStartPos*100}%;width:${(lineEndPos-lineStartPos)*100}%;top:8px;height:2px;background:var(--border-color);`;
+                        laneDiv.appendChild(line);
+                    }
+
+                    // Draw each event as a small bar
+                    sortedEvents.forEach((evt, idx) => {
+                        const evtPos = (evt.timestamp - windowStart) / windowDuration;
+                        if (evtPos < 0 || evtPos > 1) return;
+
+                        const evtBar = document.createElement('div');
+                        // Color based on event type
+                        let evtClass = tx.op || 'other';
+                        if (evt.event_type.includes('success')) evtClass = 'success';
+                        else if (evt.event_type.includes('fail') || evt.event_type.includes('error')) evtClass = 'failed';
+                        else if (evt.event_type.includes('request')) evtClass = tx.op || 'request';
+
+                        evtBar.className = `tx-event-marker ${evtClass}`;
+                        evtBar.style.left = `${evtPos * 100}%`;
+
+                        // Make first/last events slightly larger
+                        const isEndpoint = idx === 0 || idx === sortedEvents.length - 1;
+                        evtBar.style.width = isEndpoint ? '10px' : '6px';
+                        evtBar.style.height = isEndpoint ? '14px' : '10px';
+                        evtBar.style.top = isEndpoint ? '2px' : '4px';
+
+                        const evtType = evt.event_type.replace(/_/g, ' ');
+                        evtBar.title = `${evtType}\n${tx.op}: ${tx.contract || 'unknown'}`;
+                        evtBar.onclick = (e) => { e.stopPropagation(); showTransactionDetail(tx); };
+                        laneDiv.appendChild(evtBar);
+                    });
                 });
                 lanesContainer.appendChild(laneDiv);
             });
+
             if (lanes.length > maxLanes) {
                 const overflow = document.createElement('div');
                 overflow.style.cssText = 'position:absolute;bottom:0;right:0;font-size:10px;color:var(--text-muted)';
-                overflow.textContent = `+${lanes.length - maxLanes} more`;
+                overflow.textContent = `+${lanes.length - maxLanes} more lanes`;
                 lanesContainer.appendChild(overflow);
             }
         }
