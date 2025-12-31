@@ -123,35 +123,45 @@
 
                 <div class="panel">
                     <div class="panel-header">
-                        <span class="panel-title" id="events-title">Events</span>
-                        <div class="contract-dropdown" id="contract-dropdown">
-                            <button class="contract-dropdown-btn" onclick="toggleContractDropdown()">
-                                <span>&#9733;</span>
-                                <span id="contract-btn-label">Contracts</span>
-                                <span>&#9662;</span>
-                            </button>
-                            <div class="contract-dropdown-menu" id="contract-menu"></div>
+                        <div class="panel-tabs">
+                            <button class="panel-tab active" id="tab-events" onclick="switchTab('events')">Events</button>
+                            <button class="panel-tab" id="tab-subscriptions" onclick="switchTab('subscriptions')">Subscriptions <span class="tab-count" id="sub-tab-count">0</span></button>
                         </div>
                     </div>
-                    <div class="filter-bar" id="filter-bar">
-                        <span class="filter-bar-label">Filters:</span>
-                        <span class="filter-no-active" id="no-filters">None active</span>
-                        <div id="filter-chips"></div>
-                        <input type="text" class="filter-input" id="filter-input" placeholder="Search..." style="flex: 1; min-width: 80px;">
-                        <button class="filter-clear-all" id="clear-all-btn" onclick="clearAllFilters()" style="display: none;">Clear all</button>
-                    </div>
-                    <div class="events-panel" id="events-panel">
-                        <div class="empty-state">
-                            <div class="empty-state-icon">&#8987;</div>
-                            <div>Waiting for events...</div>
+                    <!-- Events Tab Content -->
+                    <div class="tab-content active" id="tab-content-events">
+                        <div class="events-header">
+                            <span class="events-title" id="events-title">Events</span>
+                        </div>
+                        <div class="filter-bar" id="filter-bar">
+                            <span class="filter-bar-label">Filters:</span>
+                            <span class="filter-no-active" id="no-filters">None active</span>
+                            <div id="filter-chips"></div>
+                            <input type="text" class="filter-input" id="filter-input" placeholder="Search..." style="flex: 1; min-width: 80px;">
+                            <button class="filter-clear-all" id="clear-all-btn" onclick="clearAllFilters()" style="display: none;">Clear all</button>
+                        </div>
+                        <div class="events-panel" id="events-panel">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">&#8987;</div>
+                                <div>Waiting for events...</div>
+                            </div>
+                        </div>
+                        <div class="event-legend">
+                            <span class="event-legend-item"><span class="event-legend-dot connect"></span> connect</span>
+                            <span class="event-legend-item"><span class="event-legend-dot put"></span> store</span>
+                            <span class="event-legend-item"><span class="event-legend-dot get"></span> get</span>
+                            <span class="event-legend-item"><span class="event-legend-dot update"></span> update</span>
+                            <span class="event-legend-item"><span class="event-legend-dot subscribe"></span> subscribe</span>
                         </div>
                     </div>
-                    <div class="event-legend">
-                        <span class="event-legend-item"><span class="event-legend-dot connect"></span> connect</span>
-                        <span class="event-legend-item"><span class="event-legend-dot put"></span> store</span>
-                        <span class="event-legend-item"><span class="event-legend-dot get"></span> get</span>
-                        <span class="event-legend-item"><span class="event-legend-dot update"></span> update</span>
-                        <span class="event-legend-item"><span class="event-legend-dot subscribe"></span> subscribe</span>
+                    <!-- Subscriptions Tab Content -->
+                    <div class="tab-content" id="tab-content-subscriptions">
+                        <div class="subscriptions-list" id="subscriptions-list">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">&#9733;</div>
+                                <div>No active subscriptions</div>
+                            </div>
+                        </div>
                     </div>
                 </div>
             </div>

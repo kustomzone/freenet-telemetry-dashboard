@@ -464,6 +464,107 @@
             updateView();
         }
 
+        // Tab switching
+        let activeTab = 'events';
+
+        function switchTab(tabName) {
+            activeTab = tabName;
+
+            // Update tab buttons
+            document.querySelectorAll('.panel-tab').forEach(tab => {
+                tab.classList.toggle('active', tab.id === `tab-${tabName}`);
+            });
+
+            // Update tab content
+            document.querySelectorAll('.tab-content').forEach(content => {
+                content.classList.toggle('active', content.id === `tab-content-${tabName}`);
+            });
+
+            // Render subscriptions if switching to that tab
+            if (tabName === 'subscriptions') {
+                renderSubscriptionsList();
+            }
+        }
+
+        function renderSubscriptionsList() {
+            const list = document.getElementById('subscriptions-list');
+            const contracts = Object.keys(subscriptionData);
+
+            // Update tab count
+            document.getElementById('sub-tab-count').textContent = contracts.length;
+
+            if (contracts.length === 0) {
+                list.innerHTML = `
+                    <div class="empty-state">
+                        <div class="empty-state-icon">&#9733;</div>
+                        <div>No active subscriptions</div>
+                    </div>
+                `;
+                return;
+            }
+
+            // Sort contracts by activity (those with subscribers/downstream first)
+            const sortedContracts = contracts.sort((a, b) => {
+                const aData = subscriptionData[a];
+                const bData = subscriptionData[b];
+                const aScore = (aData.subscribers?.length || 0) + (aData.downstream?.length || 0) + (aData.is_seeding ? 10 : 0);
+                const bScore = (bData.subscribers?.length || 0) + (bData.downstream?.length || 0) + (bData.is_seeding ? 10 : 0);
+                return bScore - aScore;
+            });
+
+            list.innerHTML = sortedContracts.map(key => {
+                const data = subscriptionData[key];
+                const isSelected = selectedContract === key;
+                const subscriberCount = data.subscribers?.length || 0;
+                const downstreamCount = data.downstream?.length || 0;
+                const hasUpstream = data.upstream ? true : false;
+
+                // Build stats display
+                let stats = [];
+                if (data.is_seeding) {
+                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon seeding">&#9679;</span> Seeding</span>`);
+                }
+                if (hasUpstream) {
+                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon upstream">&#8593;</span> Upstream</span>`);
+                }
+                if (downstreamCount > 0) {
+                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon downstream">&#8595;</span> ${downstreamCount} downstream</span>`);
+                }
+                if (subscriberCount > 0) {
+                    stats.push(`<span class="subscription-stat">&#128101; ${subscriberCount} subscribers</span>`);
+                }
+
+                // Tree info
+                let treeInfo = '';
+                if (data.upstream) {
+                    const upstreamShort = data.upstream.split('@')[0].substring(0, 8) + '...';
+                    treeInfo = `Upstream: ${upstreamShort}`;
+                }
+
+                return `
+                    <div class="subscription-item ${isSelected ? 'selected' : ''}" onclick="selectSubscription('${key}')">
+                        <div class="subscription-key">${data.short_key}</div>
+                        <div class="subscription-stats">${stats.join('') || '<span style="color:var(--text-muted)">No activity</span>'}</div>
+                        ${treeInfo ? `<div class="subscription-tree-info">${treeInfo}</div>` : ''}
+                    </div>
+                `;
+            }).join('');
+        }
+
+        function selectSubscription(contractKey) {
+            // Toggle selection
+            if (selectedContract === contractKey) {
+                selectedContract = null;
+            } else {
+                selectedContract = contractKey;
+            }
+
+            // Update visuals
+            renderSubscriptionsList();
+            updateFilterBar();
+            updateView();
+        }
+
         function formatLatency(ms) {
             if (ms === null || ms === undefined) return '-';
             if (ms < 1000) return Math.round(ms) + 'ms';
@@ -517,29 +618,8 @@
         }
 
         function updateContractDropdown() {
-            const menu = document.getElementById('contract-menu');
-            const btnLabel = document.getElementById('contract-btn-label');
-            const contracts = Object.keys(subscriptionData);
-
-            if (contracts.length === 0) {
-                menu.innerHTML = '<div class="contract-dropdown-item" style="color: var(--text-muted);">No contracts</div>';
-                btnLabel.textContent = 'Contracts (0)';
-                return;
-            }
-
-            btnLabel.textContent = `Contracts (${contracts.length})`;
-
-            menu.innerHTML = contracts.map(key => {
-                const data = subscriptionData[key];
-                const treeSize = Object.keys(data.tree || {}).length;
-
-                return `
-                    <div class="contract-dropdown-item" onclick="selectContract('${key}')">
-                        <div class="contract-dropdown-key">${data.short_key}</div>
-                        <div class="contract-dropdown-stats">${data.subscribers.length} subscribers &middot; ${treeSize} paths</div>
-                    </div>
-                `;
-            }).join('');
+            // Contract dropdown has been replaced by Subscriptions tab
+            // This function is kept for compatibility but is now a no-op
         }
 
         function reconstructStateAtTime(targetTime) {
@@ -1447,6 +1527,8 @@
                 if (data.subscriptions) {
                     subscriptionData = data.subscriptions;
                     updateContractDropdown();
+                    // Update subscription tab count
+                    document.getElementById('sub-tab-count').textContent = Object.keys(subscriptionData).length;
                     console.log('Subscriptions:', Object.keys(subscriptionData).length, 'contracts');
                 }
 
