@@ -316,6 +316,7 @@
             // Toggle: clicking same event deselects it
             if (selectedEvent === event) {
                 selectedEvent = null;
+                selectedContract = null;  // Also clear contract selection
                 goLive();  // Return to live view when deselecting
                 return;
             }
@@ -335,6 +336,13 @@
                 if (event.connection) {
                     highlightedPeers.add(event.connection[0]);
                     highlightedPeers.add(event.connection[1]);
+                }
+
+                // If event has a contract with subscription tree, select it to show the tree
+                if (event.contract_full && subscriptionData[event.contract_full]) {
+                    selectedContract = event.contract_full;
+                } else {
+                    selectedContract = null;  // Clear if no contract
                 }
             }
 
@@ -374,7 +382,6 @@
 
         function clearPeerSelection() {
             selectedPeerId = null;
-            document.getElementById('filter-input').placeholder = 'Filter by tx...';
             updateView();
         }
 
@@ -460,7 +467,6 @@
             selectedTxId = null;
             selectedContract = null;
             filterText = '';
-            document.getElementById('filter-input').value = '';
             updateFilterBar();
             updateView();
         }
@@ -530,7 +536,8 @@
             if (isLive) {
                 for (const key of allContracts) {
                     const data = subscriptionData[key];
-                    if (data.is_seeding || data.upstream || (data.downstream?.length > 0)) {
+                    // Use new aggregate fields
+                    if (data.any_seeding || data.total_downstream > 0 || (data.peer_states?.length > 0)) {
                         activeContractKeys.add(key);
                     }
                 }
@@ -564,8 +571,9 @@
             const sortedContracts = activeContracts.sort((a, b) => {
                 const aData = subscriptionData[a];
                 const bData = subscriptionData[b];
-                const aScore = (aData.subscribers?.length || 0) + (aData.downstream?.length || 0) + (aData.is_seeding ? 10 : 0);
-                const bScore = (bData.subscribers?.length || 0) + (bData.downstream?.length || 0) + (bData.is_seeding ? 10 : 0);
+                // Use new aggregate stats
+                const aScore = (aData.subscribers?.length || 0) + (aData.total_downstream || 0) + (aData.any_seeding ? 10 : 0);
+                const bScore = (bData.subscribers?.length || 0) + (bData.total_downstream || 0) + (bData.any_seeding ? 10 : 0);
                 return bScore - aScore;
             });
 
@@ -573,29 +581,52 @@
                 const data = subscriptionData[key];
                 const isSelected = selectedContract === key;
                 const subscriberCount = data.subscribers?.length || 0;
-                const downstreamCount = data.downstream?.length || 0;
-                const hasUpstream = data.upstream ? true : false;
+                const peerStates = data.peer_states || [];
+                const peerCount = data.peer_count || 0;
+                const totalDownstream = data.total_downstream || 0;
+                const anySeeding = data.any_seeding || false;
+
+                // Count peers with upstream
+                const peersWithUpstream = peerStates.filter(p => p.upstream).length;
 
                 // Build stats display
                 let stats = [];
-                if (data.is_seeding) {
-                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon seeding">&#9679;</span> Seeding</span>`);
+                if (anySeeding) {
+                    const seedingPeers = peerStates.filter(p => p.is_seeding).length;
+                    const label = seedingPeers > 1 ? `${seedingPeers} peers seeding` : 'Seeding';
+                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon seeding">&#9679;</span> ${label}</span>`);
                 }
-                if (hasUpstream) {
-                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon upstream">&#8593;</span> Upstream</span>`);
+                if (peersWithUpstream > 0) {
+                    const label = peersWithUpstream > 1 ? `${peersWithUpstream} peers subscribed` : 'Subscribed';
+                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon upstream">&#8593;</span> ${label}</span>`);
                 }
-                if (downstreamCount > 0) {
-                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon downstream">&#8595;</span> ${downstreamCount} downstream</span>`);
+                if (totalDownstream > 0) {
+                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon downstream">&#8595;</span> ${totalDownstream} downstream (${peerCount} peers)</span>`);
                 }
                 if (subscriberCount > 0) {
-                    stats.push(`<span class="subscription-stat">&#128101; ${subscriberCount} subscribers</span>`);
+                    stats.push(`<span class="subscription-stat">&#128101; ${subscriberCount} broadcast recipients</span>`);
                 }
 
-                // Tree info
+                // Tree info - show per-peer details
                 let treeInfo = '';
-                if (data.upstream) {
-                    const upstreamShort = data.upstream.split('@')[0].substring(0, 8) + '...';
-                    treeInfo = `Upstream: ${upstreamShort}`;
+                if (peerStates.length > 0) {
+                    const peerInfos = peerStates.slice(0, 3).map(p => {
+                        const parts = [];
+                        if (p.is_seeding) parts.push('seeding');
+                        if (p.upstream) {
+                            const upShort = p.upstream.split('@')[0].substring(0, 6) + '...';
+                            parts.push(`up:${upShort}`);
+                        }
+                        if (p.downstream_count > 0) parts.push(`${p.downstream_count} down`);
+                        const peerShort = p.peer_id.substring(0, 6) + '...';
+                        return parts.length > 0 ? `${peerShort}: ${parts.join(', ')}` : null;
+                    }).filter(Boolean);
+                    if (peerInfos.length > 0) {
+                        treeInfo = peerInfos.join(' | ');
+                        if (peerStates.length > 3) {
+                            treeInfo += ` (+${peerStates.length - 3} more)`;
+                        }
+                    }
                 }
 
                 return `
@@ -1492,13 +1523,13 @@
             currentTime = Date.now() * 1_000_000;
             selectedEvent = null;
             selectedPeerId = null;
+            selectedContract = null;  // Clear contract selection when going live
             highlightedPeers.clear();
             document.getElementById('mode-button').className = 'timeline-mode live';
             document.getElementById('mode-button').textContent = 'LIVE';
             document.getElementById('status-dot').className = 'status-dot live';
             document.getElementById('status-text').textContent = 'Live';
             document.getElementById('events-title').textContent = 'Events';
-            document.getElementById('filter-input').placeholder = 'Filter by tx...';
             updateView();
         }
 
@@ -1637,11 +1668,6 @@
                 }
             });
 
-            // Filter input
-            document.getElementById('filter-input').addEventListener('input', (e) => {
-                filterText = e.target.value;
-                updateView();
-            });
         }
 
         function handleMessage(data) {

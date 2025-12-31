@@ -40,9 +40,9 @@ peer_presence = {}
 # contract_key -> {subscribers: set(ip), broadcasts: [(from_ip, to_ip, timestamp)]}
 subscriptions = {}  # contract_key -> subscription data
 
-# Seeding state per contract
-# contract_key -> {is_seeding: bool, upstream: peer_str, downstream: [peer_str], downstream_count: int}
-seeding_state = {}  # contract_key -> seeding/subscription tree data
+# Seeding state per (contract, peer) - tracks each peer's subscription tree position
+# contract_key -> {peer_id -> {is_seeding: bool, upstream: peer_str, downstream: [peer_str], downstream_count: int}}
+seeding_state = {}  # contract_key -> {peer_id -> state}
 
 # Operation statistics
 op_stats = {
@@ -317,41 +317,54 @@ def process_record(record, store_history=True):
         op_stats["subscribe"]["successes"] += 1
 
     # Handle new subscription tree telemetry events (v0.1.70+)
-    elif event_type == "seeding_started":
+    # Each event is reported by a specific peer - we track state per (contract, peer)
+    # Get the reporting peer's ID from attrs or body
+    reporting_peer = attrs.get("peer_id") or ""
+    if not reporting_peer:
+        # Try to extract from this_peer if available
+        this_peer_str = body.get("this_peer", "")
+        if this_peer_str:
+            pid, _, _ = parse_peer_string(this_peer_str)
+            if pid:
+                reporting_peer = pid
+
+    def get_peer_state(contract_key, peer_id):
+        """Get or create state for a (contract, peer) pair."""
+        if contract_key not in seeding_state:
+            seeding_state[contract_key] = {}
+        if peer_id not in seeding_state[contract_key]:
+            seeding_state[contract_key][peer_id] = {
+                "is_seeding": False,
+                "upstream": None,
+                "downstream": [],
+                "downstream_count": 0,
+            }
+        return seeding_state[contract_key][peer_id]
+
+    if event_type == "seeding_started":
         # Local client started subscribing to a contract
         contract_key = body.get("key") or body.get("contract_key")
-        if contract_key:
-            if contract_key not in seeding_state:
-                seeding_state[contract_key] = {
-                    "is_seeding": False,
-                    "upstream": None,
-                    "downstream": [],
-                    "downstream_count": 0,
-                }
-            seeding_state[contract_key]["is_seeding"] = True
+        if contract_key and reporting_peer:
+            state = get_peer_state(contract_key, reporting_peer)
+            state["is_seeding"] = True
 
     elif event_type == "seeding_stopped":
         # Local client stopped subscribing (last client unsubscribed)
         contract_key = body.get("key") or body.get("contract_key")
         reason = body.get("reason", "Unknown")
-        if contract_key and contract_key in seeding_state:
-            seeding_state[contract_key]["is_seeding"] = False
-            seeding_state[contract_key]["stopped_reason"] = reason
+        if contract_key and reporting_peer and contract_key in seeding_state:
+            if reporting_peer in seeding_state[contract_key]:
+                state = seeding_state[contract_key][reporting_peer]
+                state["is_seeding"] = False
+                state["stopped_reason"] = reason
 
     elif event_type == "downstream_added":
         # A downstream peer subscribed through us
         contract_key = body.get("key") or body.get("contract_key")
         subscriber = body.get("subscriber")
         downstream_count = body.get("downstream_count", 0)
-        if contract_key:
-            if contract_key not in seeding_state:
-                seeding_state[contract_key] = {
-                    "is_seeding": False,
-                    "upstream": None,
-                    "downstream": [],
-                    "downstream_count": 0,
-                }
-            state = seeding_state[contract_key]
+        if contract_key and reporting_peer:
+            state = get_peer_state(contract_key, reporting_peer)
             state["downstream_count"] = downstream_count
             if subscriber and subscriber not in state["downstream"]:
                 state["downstream"].append(subscriber)
@@ -362,41 +375,39 @@ def process_record(record, store_history=True):
         subscriber = body.get("subscriber")
         downstream_count = body.get("downstream_count", 0)
         reason = body.get("reason", "Unknown")
-        if contract_key and contract_key in seeding_state:
-            state = seeding_state[contract_key]
-            state["downstream_count"] = downstream_count
-            if subscriber and subscriber in state["downstream"]:
-                state["downstream"].remove(subscriber)
+        if contract_key and reporting_peer and contract_key in seeding_state:
+            if reporting_peer in seeding_state[contract_key]:
+                state = seeding_state[contract_key][reporting_peer]
+                state["downstream_count"] = downstream_count
+                if subscriber and subscriber in state["downstream"]:
+                    state["downstream"].remove(subscriber)
 
     elif event_type == "upstream_set":
         # We subscribed to an upstream peer for this contract
         contract_key = body.get("key") or body.get("contract_key")
         upstream = body.get("upstream")
-        if contract_key:
-            if contract_key not in seeding_state:
-                seeding_state[contract_key] = {
-                    "is_seeding": False,
-                    "upstream": None,
-                    "downstream": [],
-                    "downstream_count": 0,
-                }
-            seeding_state[contract_key]["upstream"] = upstream
+        if contract_key and reporting_peer:
+            state = get_peer_state(contract_key, reporting_peer)
+            state["upstream"] = upstream
 
     elif event_type == "unsubscribed":
         # We unsubscribed from a contract (could be voluntary or upstream disconnected)
         contract_key = body.get("key") or body.get("contract_key")
         reason = body.get("reason", "Unknown")
         upstream = body.get("upstream")
-        if contract_key and contract_key in seeding_state:
-            state = seeding_state[contract_key]
-            state["upstream"] = None
-            state["unsubscribed_reason"] = reason
+        if contract_key and reporting_peer and contract_key in seeding_state:
+            if reporting_peer in seeding_state[contract_key]:
+                state = seeding_state[contract_key][reporting_peer]
+                state["upstream"] = None
+                state["unsubscribed_reason"] = reason
 
     elif event_type == "subscription_state":
         # Full snapshot of subscription state for a contract
         contract_key = body.get("key") or body.get("contract_key")
-        if contract_key:
-            seeding_state[contract_key] = {
+        if contract_key and reporting_peer:
+            if contract_key not in seeding_state:
+                seeding_state[contract_key] = {}
+            seeding_state[contract_key][reporting_peer] = {
                 "is_seeding": body.get("is_seeding", False),
                 "upstream": body.get("upstream"),
                 "downstream": body.get("downstream", []),
@@ -617,7 +628,11 @@ def get_operation_stats():
 
 
 def get_subscription_trees():
-    """Get subscription tree data for all contracts."""
+    """Get subscription tree data for all contracts.
+
+    Returns per-peer subscription state so the UI can show which peer
+    has which role (seeding, upstream, downstream) in the subscription tree.
+    """
     result = {}
 
     # Get all contract keys from both sources
@@ -628,20 +643,39 @@ def get_subscription_trees():
         sub_data = subscriptions.get(contract_key, {"subscribers": set(), "tree": {}})
         tree = {k: list(v) for k, v in sub_data["tree"].items()}
 
-        # Get seeding/subscription state (from new v0.1.70 events)
-        seed_data = seeding_state.get(contract_key, {})
+        # Get seeding/subscription state per peer (from new v0.1.70 events)
+        # seeding_state[contract_key] is now {peer_id -> state}
+        peer_states = seeding_state.get(contract_key, {})
+
+        # Compute aggregate stats across all peers for this contract
+        total_downstream = 0
+        any_seeding = False
+        peers_with_data = []
+
+        for peer_id, state in peer_states.items():
+            if state.get("is_seeding"):
+                any_seeding = True
+            total_downstream += state.get("downstream_count", 0)
+            peers_with_data.append({
+                "peer_id": peer_id,
+                "is_seeding": state.get("is_seeding", False),
+                "upstream": state.get("upstream"),
+                "downstream": state.get("downstream", []),
+                "downstream_count": state.get("downstream_count", 0),
+            })
 
         # Only include contracts with actual data
-        if tree or sub_data["subscribers"] or seed_data:
+        if tree or sub_data["subscribers"] or peer_states:
             result[contract_key] = {
                 "subscribers": list(sub_data["subscribers"]),
                 "tree": tree,
                 "short_key": contract_key[:12] + "...",
-                # New seeding state fields
-                "is_seeding": seed_data.get("is_seeding", False),
-                "upstream": seed_data.get("upstream"),
-                "downstream": seed_data.get("downstream", []),
-                "downstream_count": seed_data.get("downstream_count", 0),
+                # Per-peer state (new structure)
+                "peer_states": peers_with_data,
+                # Aggregate stats for quick display
+                "total_downstream": total_downstream,
+                "any_seeding": any_seeding,
+                "peer_count": len(peer_states),
             }
     return result
 
