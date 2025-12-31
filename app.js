@@ -488,23 +488,79 @@
 
         function renderSubscriptionsList() {
             const list = document.getElementById('subscriptions-list');
-            const contracts = Object.keys(subscriptionData);
+            const allContracts = Object.keys(subscriptionData);
 
-            // Update tab count
-            document.getElementById('sub-tab-count').textContent = contracts.length;
+            // TODO: Replace this activity-based filtering with proper state reconstruction
+            // once periodic subscription_state snapshots are implemented (see GitHub issue #2491).
+            // Current approach: show contracts with subscription-related events in time window.
 
-            if (contracts.length === 0) {
+            // Determine time window for filtering
+            const WINDOW_NS = 10 * 60 * 1_000_000_000; // 10 minutes in nanoseconds
+            let windowStart, windowEnd;
+
+            if (isLive) {
+                // Live mode: show contracts active in last 10 minutes OR with current state
+                windowEnd = Date.now() * 1_000_000;
+                windowStart = windowEnd - WINDOW_NS;
+            } else {
+                // Historical mode: show contracts with events in ±5 min around current time
+                windowStart = currentTime - (WINDOW_NS / 2);
+                windowEnd = currentTime + (WINDOW_NS / 2);
+            }
+
+            // Find contracts with subscription-related events in the time window
+            const subscriptionEventTypes = [
+                'subscribe_request', 'subscribed', 'seeding_started', 'seeding_stopped',
+                'downstream_added', 'downstream_removed', 'upstream_set', 'unsubscribed',
+                'update_request', 'update_success', 'broadcast_emitted', 'subscription_state'
+            ];
+
+            const activeContractKeys = new Set();
+            for (const event of allEvents) {
+                if (event.timestamp >= windowStart && event.timestamp <= windowEnd) {
+                    // Check if it's a subscription-related event with a contract
+                    if (event.contract_full && subscriptionEventTypes.some(t => event.event_type?.includes(t))) {
+                        activeContractKeys.add(event.contract_full);
+                    }
+                }
+            }
+
+            // In live mode, also include contracts with current active state
+            if (isLive) {
+                for (const key of allContracts) {
+                    const data = subscriptionData[key];
+                    if (data.is_seeding || data.upstream || (data.downstream?.length > 0)) {
+                        activeContractKeys.add(key);
+                    }
+                }
+            }
+
+            // Filter to only active contracts that we have data for
+            const activeContracts = allContracts.filter(key => activeContractKeys.has(key));
+
+            // Update tab count to show active/total
+            const countLabel = document.getElementById('sub-tab-count');
+            if (activeContracts.length === allContracts.length) {
+                countLabel.textContent = activeContracts.length;
+            } else {
+                countLabel.textContent = `${activeContracts.length}/${allContracts.length}`;
+            }
+
+            if (activeContracts.length === 0) {
                 list.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">&#9733;</div>
-                        <div>No active subscriptions</div>
+                        <div>No active subscriptions${isLive ? '' : ' at this time'}</div>
+                        <div style="font-size: 0.8em; color: var(--text-muted); margin-top: 8px;">
+                            ${allContracts.length} total contracts tracked
+                        </div>
                     </div>
                 `;
                 return;
             }
 
             // Sort contracts by activity (those with subscribers/downstream first)
-            const sortedContracts = contracts.sort((a, b) => {
+            const sortedContracts = activeContracts.sort((a, b) => {
                 const aData = subscriptionData[a];
                 const bData = subscriptionData[b];
                 const aScore = (aData.subscribers?.length || 0) + (aData.downstream?.length || 0) + (aData.is_seeding ? 10 : 0);
@@ -1333,6 +1389,11 @@
 
             document.getElementById('event-count').textContent = allEvents.filter(e => e.timestamp <= currentTime).length;
             updatePlayhead();
+
+            // Update subscriptions list if that tab is active (time-window filtering)
+            if (activeTab === 'subscriptions') {
+                renderSubscriptionsList();
+            }
         }
 
         function handleEventClick(idx) {
