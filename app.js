@@ -19,6 +19,7 @@
         let opStats = null;  // Operation statistics
         let displayedEvents = [];  // Events currently shown in the events panel
         let allTransactions = [];  // Transactions for timeline lanes
+        const transactionMap = new Map();  // tx_id -> index in allTransactions for quick lookup
         let selectedTransaction = null;  // Currently selected transaction for detail view
         let initialStatePeers = [];  // Peers from initial state message
         let initialStateConnections = [];  // Connections from initial state message
@@ -625,6 +626,90 @@
             if (ms === null || ms === undefined) return '-';
             if (ms < 1000) return Math.round(ms) + 'ms';
             return (ms / 1000).toFixed(1) + 's';
+        }
+
+        // Track a transaction from an incoming event (frontend-side transaction tracking)
+        function trackTransactionFromEvent(event) {
+            const txId = event.tx_id;
+            if (!txId || txId === '00000000000000000000000000') return;
+
+            const eventType = event.event_type || '';
+            const timestamp = event.timestamp;
+
+            // Determine operation type and status from event type
+            let op = 'other';
+            let isStart = false;
+            let isEnd = false;
+            let status = null;
+
+            if (eventType.startsWith('put_')) {
+                op = 'put';
+                if (eventType === 'put_request') isStart = true;
+                else if (eventType === 'put_success') { isEnd = true; status = 'success'; }
+            } else if (eventType.startsWith('get_')) {
+                op = 'get';
+                if (eventType === 'get_request') isStart = true;
+                else if (eventType === 'get_success') { isEnd = true; status = 'success'; }
+                else if (eventType === 'get_not_found') { isEnd = true; status = 'not_found'; }
+            } else if (eventType.startsWith('update_')) {
+                op = 'update';
+                if (eventType === 'update_request') isStart = true;
+                else if (eventType === 'update_success') { isEnd = true; status = 'success'; }
+            } else if (eventType.startsWith('subscribe')) {
+                op = 'subscribe';
+                if (eventType === 'subscribe_request') isStart = true;
+                else if (eventType === 'subscribed') { isEnd = true; status = 'success'; }
+            } else if (eventType.includes('connect')) {
+                op = 'connect';
+                if (eventType === 'connect_request_sent') isStart = true;
+                else if (eventType === 'connect_connected') { isEnd = true; status = 'success'; }
+            } else if (eventType === 'disconnect') {
+                op = 'disconnect';
+                isStart = true; isEnd = true; status = 'complete';
+            }
+
+            // Check if transaction already exists
+            if (transactionMap.has(txId)) {
+                const idx = transactionMap.get(txId);
+                const tx = allTransactions[idx];
+
+                // Add event to transaction
+                tx.events.push({
+                    event_type: eventType,
+                    timestamp: timestamp,
+                    peer_id: event.peer_id
+                });
+                tx.event_count = tx.events.length;
+
+                // Update end time and status
+                if (timestamp > tx.end_ns) {
+                    tx.end_ns = timestamp;
+                }
+                if (isEnd && status) {
+                    tx.status = status;
+                    tx.duration_ms = (tx.end_ns - tx.start_ns) / 1_000_000;
+                }
+            } else {
+                // Create new transaction
+                const newTx = {
+                    tx_id: txId,
+                    op: op,
+                    contract: event.contract_full ? event.contract_full.substring(0, 12) + '...' : null,
+                    contract_full: event.contract_full || null,
+                    start_ns: timestamp,
+                    end_ns: timestamp,
+                    duration_ms: null,
+                    status: (isStart && !isEnd) ? 'pending' : (status || 'complete'),
+                    event_count: 1,
+                    events: [{
+                        event_type: eventType,
+                        timestamp: timestamp,
+                        peer_id: event.peer_id
+                    }]
+                };
+                transactionMap.set(txId, allTransactions.length);
+                allTransactions.push(newTx);
+            }
         }
 
         function getRateClass(rate) {
@@ -1632,6 +1717,9 @@
 
                 if (data.transactions) {
                     allTransactions = data.transactions;
+                    // Build transaction map for quick lookup
+                    transactionMap.clear();
+                    allTransactions.forEach((tx, idx) => transactionMap.set(tx.tx_id, idx));
                     console.log(`Loaded ${allTransactions.length} transactions`);
                 }
 
@@ -1650,6 +1738,9 @@
             } else if (data.type === 'event') {
                 allEvents.push(data);
                 timeRange.end = data.timestamp;
+
+                // Track transaction from this event
+                trackTransactionFromEvent(data);
 
                 if (timeRange.end > timeRange.start) {
                     const container = document.getElementById('timeline-events');
