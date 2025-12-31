@@ -44,6 +44,31 @@ subscriptions = {}  # contract_key -> subscription data
 # contract_key -> {peer_id -> {is_seeding: bool, upstream: peer_str, downstream: [peer_str], downstream_count: int}}
 seeding_state = {}  # contract_key -> {peer_id -> state}
 
+# Contract state hashes per (contract, peer) - tracks state propagation
+# contract_key -> {peer_id -> {hash: str, timestamp: int, event_type: str}}
+contract_states = {}
+
+
+def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_type):
+    """Update the known state hash for a (contract, peer) pair."""
+    if not contract_key or not peer_id or not state_hash:
+        return
+
+    if contract_key not in contract_states:
+        contract_states[contract_key] = {}
+
+    # Only update if this is newer than what we have
+    existing = contract_states[contract_key].get(peer_id)
+    if existing and existing["timestamp"] >= timestamp:
+        return
+
+    contract_states[contract_key][peer_id] = {
+        "hash": state_hash,
+        "timestamp": timestamp,
+        "event_type": event_type,
+    }
+
+
 # Operation statistics
 op_stats = {
     "put": {"requests": 0, "successes": 0, "latencies": []},
@@ -264,6 +289,36 @@ def process_record(record, store_history=True):
 
     # Track operation statistics
     tx_id = body.get("id") or attrs.get("transaction_id")  # Transaction ID for correlating request/success
+
+    # Extract state hashes (from PR #2492)
+    state_hash = body.get("state_hash")
+    state_hash_before = body.get("state_hash_before")
+    state_hash_after = body.get("state_hash_after")
+
+    # Get contract key for state tracking
+    contract_key = body.get("contract_key") or body.get("key")
+
+    # Get peer_id for state tracking
+    event_peer_id = attrs.get("peer_id") or ""
+    if not event_peer_id:
+        this_peer_str = body.get("this_peer", "")
+        if this_peer_str:
+            pid, _, _ = parse_peer_string(this_peer_str)
+            if pid:
+                event_peer_id = pid
+
+    # Update contract state on relevant events
+    if contract_key and event_peer_id:
+        if event_type == "put_success" and state_hash:
+            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
+        elif event_type == "get_success" and state_hash:
+            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
+        elif event_type == "update_success" and state_hash_after:
+            update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
+        elif event_type in ("broadcast_emitted", "update_broadcast_emitted") and state_hash:
+            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
+        elif event_type == "broadcast_received" and state_hash:
+            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
 
     if event_type == "put_request":
         op_stats["put"]["requests"] += 1
@@ -564,6 +619,14 @@ def process_record(record, store_history=True):
         event["contract"] = contract_key[:12] + "..."
         event["contract_full"] = contract_key
 
+    # Include state hashes if present (from PR #2492)
+    if state_hash:
+        event["state_hash"] = state_hash
+    if state_hash_before:
+        event["state_hash_before"] = state_hash_before
+    if state_hash_after:
+        event["state_hash_after"] = state_hash_after
+
     # Include transaction ID for timeline lanes
     if tx_id and tx_id != "00000000000000000000000000":
         event["tx_id"] = tx_id
@@ -725,6 +788,7 @@ def get_network_state():
         "peers": peer_list,
         "connections": conn_list,
         "subscriptions": get_subscription_trees(),
+        "contract_states": contract_states,
         "op_stats": get_operation_stats(),
         "peer_lifecycle": {
             "active_count": len(active_peers),

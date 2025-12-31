@@ -14,8 +14,10 @@
         let gatewayPeerId = null;   // Gateway peer ID
         let yourPeerId = null;      // User's own peer ID
         let yourIpHash = null;      // User's IP hash
-        let subscriptionData = {};  // contract_key -> subscription data
-        let selectedContract = null; // Currently selected contract for subscription view
+        let contractData = {};  // contract_key -> contract data (subscriptions, states, etc.)
+        let contractStates = {};  // contract_key -> {peer_id -> {hash, timestamp}}
+        let selectedContract = null; // Currently selected contract
+        let contractSearchText = '';  // Search filter for contracts
         let opStats = null;  // Operation statistics
         let displayedEvents = [];  // Events currently shown in the events panel
         let allTransactions = [];  // Transactions for timeline lanes
@@ -64,6 +66,17 @@
         function locationToXY(location) {
             const angle = location * 2 * Math.PI - Math.PI / 2;
             return { x: CENTER + RADIUS * Math.cos(angle), y: CENTER + RADIUS * Math.sin(angle) };
+        }
+
+        // Convert state hash to deterministic HSL color
+        function hashToColor(hash) {
+            if (!hash) return null;
+            // Use first 6 chars of hash for hue (0-360)
+            const hue = parseInt(hash.substring(0, 6), 16) % 360;
+            return {
+                fill: `hsl(${hue}, 70%, 50%)`,
+                glow: `hsla(${hue}, 70%, 50%, 0.3)`
+            };
         }
 
         function formatTime(tsNano) {
@@ -339,7 +352,7 @@
                 }
 
                 // If event has a contract with subscription tree, select it to show the tree
-                if (event.contract_full && subscriptionData[event.contract_full]) {
+                if (event.contract_full && contractData[event.contract_full]) {
                     selectedContract = event.contract_full;
                 } else {
                     selectedContract = null;  // Clear if no contract
@@ -432,8 +445,8 @@
                 chips.push(`<span class="filter-chip tx">Tx: ${selectedTxId.substring(0, 8)}...<button class="filter-chip-close" onclick="clearTxFilter()">×</button></span>`);
             }
 
-            if (selectedContract && subscriptionData[selectedContract]) {
-                const shortKey = subscriptionData[selectedContract].short_key;
+            if (selectedContract && contractData[selectedContract]) {
+                const shortKey = contractData[selectedContract].short_key;
                 chips.push(`<span class="filter-chip contract">Contract: ${shortKey}<button class="filter-chip-close" onclick="clearContractFilter()">×</button></span>`);
             }
 
@@ -487,15 +500,15 @@
                 content.classList.toggle('active', content.id === `tab-content-${tabName}`);
             });
 
-            // Render subscriptions if switching to that tab
-            if (tabName === 'subscriptions') {
-                renderSubscriptionsList();
+            // Render contracts if switching to that tab
+            if (tabName === 'contracts') {
+                renderContractsList();
             }
         }
 
-        function renderSubscriptionsList() {
-            const list = document.getElementById('subscriptions-list');
-            const allContracts = Object.keys(subscriptionData);
+        function renderContractsList() {
+            const list = document.getElementById('contracts-list');
+            const allContracts = Object.keys(contractData);
 
             // TODO: Replace this activity-based filtering with proper state reconstruction
             // once periodic subscription_state snapshots are implemented (see GitHub issue #2491).
@@ -535,7 +548,7 @@
             // In live mode, also include contracts with current active state
             if (isLive) {
                 for (const key of allContracts) {
-                    const data = subscriptionData[key];
+                    const data = contractData[key];
                     // Use new aggregate fields
                     if (data.any_seeding || data.total_downstream > 0 || (data.peer_states?.length > 0)) {
                         activeContractKeys.add(key);
@@ -546,19 +559,30 @@
             // Filter to only active contracts that we have data for
             const activeContracts = allContracts.filter(key => activeContractKeys.has(key));
 
-            // Update tab count to show active/total
-            const countLabel = document.getElementById('sub-tab-count');
-            if (activeContracts.length === allContracts.length) {
-                countLabel.textContent = activeContracts.length;
-            } else {
-                countLabel.textContent = `${activeContracts.length}/${allContracts.length}`;
+            // Apply search filter
+            let filteredContracts = activeContracts;
+            if (contractSearchText) {
+                const searchLower = contractSearchText.toLowerCase();
+                filteredContracts = activeContracts.filter(key =>
+                    key.toLowerCase().startsWith(searchLower)
+                );
             }
 
-            if (activeContracts.length === 0) {
+            // Update tab count to show filtered/active/total
+            const countLabel = document.getElementById('contract-tab-count');
+            if (filteredContracts.length === allContracts.length) {
+                countLabel.textContent = allContracts.length;
+            } else if (filteredContracts.length === activeContracts.length) {
+                countLabel.textContent = `${activeContracts.length}/${allContracts.length}`;
+            } else {
+                countLabel.textContent = `${filteredContracts.length}/${activeContracts.length}`;
+            }
+
+            if (filteredContracts.length === 0) {
                 list.innerHTML = `
                     <div class="empty-state">
-                        <div class="empty-state-icon">&#9733;</div>
-                        <div>No active subscriptions${isLive ? '' : ' at this time'}</div>
+                        <div class="empty-state-icon">&#128230;</div>
+                        <div>${contractSearchText ? 'No matching contracts' : (isLive ? 'No contracts with activity' : 'No contracts at this time')}</div>
                         <div style="font-size: 0.8em; color: var(--text-muted); margin-top: 8px;">
                             ${allContracts.length} total contracts tracked
                         </div>
@@ -568,9 +592,9 @@
             }
 
             // Sort contracts by activity (those with subscribers/downstream first)
-            const sortedContracts = activeContracts.sort((a, b) => {
-                const aData = subscriptionData[a];
-                const bData = subscriptionData[b];
+            const sortedContracts = filteredContracts.sort((a, b) => {
+                const aData = contractData[a];
+                const bData = contractData[b];
                 // Use new aggregate stats
                 const aScore = (aData.subscribers?.length || 0) + (aData.total_downstream || 0) + (aData.any_seeding ? 10 : 0);
                 const bScore = (bData.subscribers?.length || 0) + (bData.total_downstream || 0) + (bData.any_seeding ? 10 : 0);
@@ -578,7 +602,7 @@
             });
 
             list.innerHTML = sortedContracts.map(key => {
-                const data = subscriptionData[key];
+                const data = contractData[key];
                 const isSelected = selectedContract === key;
                 const subscriberCount = data.subscribers?.length || 0;
                 const peerStates = data.peer_states || [];
@@ -586,60 +610,78 @@
                 const totalDownstream = data.total_downstream || 0;
                 const anySeeding = data.any_seeding || false;
 
+                // Get state info from contractStates
+                const states = contractStates[key] || {};
+                const peerStateHashes = Object.entries(states);
+                const uniqueHashes = new Set(peerStateHashes.map(([_, s]) => s.hash));
+                const isDiverged = uniqueHashes.size > 1;
+                const latestHash = peerStateHashes.length > 0
+                    ? peerStateHashes.sort((a, b) => b[1].timestamp - a[1].timestamp)[0][1].hash
+                    : null;
+
                 // Count peers with upstream
                 const peersWithUpstream = peerStates.filter(p => p.upstream).length;
 
                 // Build stats display
                 let stats = [];
-                if (anySeeding) {
-                    const seedingPeers = peerStates.filter(p => p.is_seeding).length;
-                    const label = seedingPeers > 1 ? `${seedingPeers} peers seeding` : 'Seeding';
-                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon seeding">&#9679;</span> ${label}</span>`);
-                }
-                if (peersWithUpstream > 0) {
-                    const label = peersWithUpstream > 1 ? `${peersWithUpstream} peers subscribed` : 'Subscribed';
-                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon upstream">&#8593;</span> ${label}</span>`);
-                }
-                if (totalDownstream > 0) {
-                    stats.push(`<span class="subscription-stat"><span class="subscription-stat-icon downstream">&#8595;</span> ${totalDownstream} downstream (${peerCount} peers)</span>`);
-                }
-                if (subscriberCount > 0) {
-                    stats.push(`<span class="subscription-stat">&#128101; ${subscriberCount} broadcast recipients</span>`);
+
+                // Sync status indicator
+                if (peerStateHashes.length > 0) {
+                    if (isDiverged) {
+                        stats.push(`<span class="sync-indicator diverged">&#9888; ${uniqueHashes.size} states</span>`);
+                    } else {
+                        stats.push(`<span class="sync-indicator synced">&#10003; Synced</span>`);
+                    }
                 }
 
-                // Tree info - show per-peer details
-                let treeInfo = '';
-                if (peerStates.length > 0) {
-                    const peerInfos = peerStates.slice(0, 3).map(p => {
-                        const parts = [];
-                        if (p.is_seeding) parts.push('seeding');
-                        if (p.upstream) {
-                            const upShort = p.upstream.split('@')[0].substring(0, 6) + '...';
-                            parts.push(`up:${upShort}`);
-                        }
-                        if (p.downstream_count > 0) parts.push(`${p.downstream_count} down`);
-                        const peerShort = p.peer_id.substring(0, 6) + '...';
-                        return parts.length > 0 ? `${peerShort}: ${parts.join(', ')}` : null;
-                    }).filter(Boolean);
+                // State hash badge
+                if (latestHash) {
+                    stats.push(`<span class="state-hash">[${latestHash}]</span>`);
+                }
+
+                if (peerStateHashes.length > 0) {
+                    stats.push(`<span class="contract-stat">${peerStateHashes.length} peers</span>`);
+                }
+
+                if (anySeeding) {
+                    const seedingPeers = peerStates.filter(p => p.is_seeding).length;
+                    const label = seedingPeers > 1 ? `${seedingPeers} seeding` : 'Seeding';
+                    stats.push(`<span class="contract-stat"><span class="contract-stat-icon seeding">&#9679;</span> ${label}</span>`);
+                }
+                if (peersWithUpstream > 0) {
+                    const label = peersWithUpstream > 1 ? `${peersWithUpstream} subscribed` : 'Subscribed';
+                    stats.push(`<span class="contract-stat"><span class="contract-stat-icon upstream">&#8593;</span> ${label}</span>`);
+                }
+                if (totalDownstream > 0) {
+                    stats.push(`<span class="contract-stat"><span class="contract-stat-icon downstream">&#8595;</span> ${totalDownstream} downstream</span>`);
+                }
+
+                // Peer state info
+                let peerInfo = '';
+                if (peerStateHashes.length > 0) {
+                    const peerInfos = peerStateHashes.slice(0, 3).map(([peerId, state]) => {
+                        const peerShort = peerId.substring(0, 8) + '...';
+                        return `${peerShort}: [${state.hash}]`;
+                    });
                     if (peerInfos.length > 0) {
-                        treeInfo = peerInfos.join(' | ');
-                        if (peerStates.length > 3) {
-                            treeInfo += ` (+${peerStates.length - 3} more)`;
+                        peerInfo = peerInfos.join(' | ');
+                        if (peerStateHashes.length > 3) {
+                            peerInfo += ` (+${peerStateHashes.length - 3} more)`;
                         }
                     }
                 }
 
                 return `
-                    <div class="subscription-item ${isSelected ? 'selected' : ''}" onclick="selectSubscription('${key}')">
-                        <div class="subscription-key">${data.short_key}</div>
-                        <div class="subscription-stats">${stats.join('') || '<span style="color:var(--text-muted)">No activity</span>'}</div>
-                        ${treeInfo ? `<div class="subscription-tree-info">${treeInfo}</div>` : ''}
+                    <div class="contract-item ${isSelected ? 'selected' : ''}" onclick="selectContract('${key}')">
+                        <div class="contract-key">${data.short_key}</div>
+                        <div class="contract-stats">${stats.join('') || '<span style="color:var(--text-muted)">No state data</span>'}</div>
+                        ${peerInfo ? `<div class="contract-peer-info">${peerInfo}</div>` : ''}
                     </div>
                 `;
             }).join('');
         }
 
-        function selectSubscription(contractKey) {
+        function selectContract(contractKey) {
             // Toggle selection
             if (selectedContract === contractKey) {
                 selectedContract = null;
@@ -648,7 +690,7 @@
             }
 
             // Update visuals
-            renderSubscriptionsList();
+            renderContractsList();
             updateFilterBar();
             updateView();
         }
@@ -965,16 +1007,36 @@
                 let fillColor = '#007FFF';  // Default peer blue
                 let glowColor = 'rgba(0, 127, 255, 0.2)';
                 let label = '';
+                let peerStateHash = null;
+
+                // Check for state hash when a contract is selected
+                if (selectedContract && contractStates[selectedContract]) {
+                    const peerState = contractStates[selectedContract][id];
+                    if (peerState && peerState.hash) {
+                        peerStateHash = peerState.hash;
+                        const colors = hashToColor(peerStateHash);
+                        fillColor = colors.fill;
+                        glowColor = colors.glow;
+                    } else {
+                        // Peer doesn't have state for this contract - dim it
+                        fillColor = '#3a3f47';
+                        glowColor = 'rgba(58, 63, 71, 0.2)';
+                    }
+                }
 
                 if (isGateway) {
-                    fillColor = '#f59e0b';  // Amber for gateway
-                    glowColor = 'rgba(245, 158, 11, 0.3)';
+                    if (!selectedContract) {
+                        fillColor = '#f59e0b';  // Amber for gateway
+                        glowColor = 'rgba(245, 158, 11, 0.3)';
+                    }
                     label = 'GW';
                 } else if (isYou) {
-                    fillColor = '#10b981';  // Emerald for you
-                    glowColor = 'rgba(16, 185, 129, 0.3)';
+                    if (!selectedContract) {
+                        fillColor = '#10b981';  // Emerald for you
+                        glowColor = 'rgba(16, 185, 129, 0.3)';
+                    }
                     label = 'YOU';
-                } else if (isSubscriber) {
+                } else if (isSubscriber && !selectedContract) {
                     fillColor = '#f472b6';  // Pink for subscriber
                     glowColor = 'rgba(244, 114, 182, 0.3)';
                 }
@@ -1024,7 +1086,12 @@
 
                 const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
                 const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-                title.textContent = `${id}${peerType}\n#${peer.ip_hash || ''}\nLocation: ${peer.location.toFixed(4)}\nClick to filter events`;
+                let tooltipText = `${id}${peerType}\n#${peer.ip_hash || ''}\nLocation: ${peer.location.toFixed(4)}`;
+                if (peerStateHash) {
+                    tooltipText += `\nState: [${peerStateHash.substring(0, 8)}]`;
+                }
+                tooltipText += '\nClick to filter events';
+                title.textContent = tooltipText;
                 clickTarget.appendChild(title);
                 svg.appendChild(circle);
 
@@ -1138,8 +1205,8 @@
             }
 
             // Draw subscription tree arrows if a contract is selected
-            if (selectedContract && subscriptionData[selectedContract]) {
-                const subData = subscriptionData[selectedContract];
+            if (selectedContract && contractData[selectedContract]) {
+                const subData = contractData[selectedContract];
                 const tree = subData.tree;
 
                 // Add arrowhead marker definition
@@ -1367,8 +1434,8 @@
 
             // Get subscription subscribers for highlighting (if contract selected)
             let subscriberPeerIds = new Set();
-            if (selectedContract && subscriptionData[selectedContract]) {
-                subscriberPeerIds = new Set(subscriptionData[selectedContract].subscribers);
+            if (selectedContract && contractData[selectedContract]) {
+                subscriberPeerIds = new Set(contractData[selectedContract].subscribers);
             }
 
             updateRingSVG(peers, connections, subscriberPeerIds);
@@ -1379,8 +1446,8 @@
             // Update topology subtitle
             const topoSubtitle = document.querySelector('.panel-subtitle');
             if (topoSubtitle) {
-                if (selectedContract && subscriptionData[selectedContract]) {
-                    const subData = subscriptionData[selectedContract];
+                if (selectedContract && contractData[selectedContract]) {
+                    const subData = contractData[selectedContract];
                     const visibleSubs = [...subscriberPeerIds].filter(id => peers.has(id)).length;
                     topoSubtitle.textContent = `${visibleSubs}/${subData.subscribers.length} subscribers visible. Pink arrows show broadcast tree.`;
                 } else {
@@ -1418,20 +1485,17 @@
                 );
             }
 
-            // Filter by selected contract (show only subscribe/update events for this contract)
+            // Filter by selected contract (show all events for this contract)
             if (selectedContract) {
-                nearbyEvents = nearbyEvents.filter(e =>
-                    e.contract_full === selectedContract &&
-                    (e.event_type.includes('subscribe') || e.event_type.includes('update') || e.event_type.includes('broadcast'))
-                );
+                nearbyEvents = nearbyEvents.filter(e => e.contract_full === selectedContract);
             }
 
             nearbyEvents = nearbyEvents.slice(-30);
 
             // Update events title based on filtering
             const eventsTitle = document.getElementById('events-title');
-            if (selectedContract && subscriptionData[selectedContract]) {
-                eventsTitle.textContent = `Events for ${subscriptionData[selectedContract].short_key}`;
+            if (selectedContract && contractData[selectedContract]) {
+                eventsTitle.textContent = `Events for ${contractData[selectedContract].short_key}`;
             } else if (selectedPeerId) {
                 eventsTitle.textContent = `Events for ${selectedPeerId.substring(0, 12)}...`;
             } else {
@@ -1487,11 +1551,22 @@
                     const txActive = e.tx_id && selectedTxId === e.tx_id ? ' active' : '';
                     const txHtml = e.tx_id ? `<span class="event-tx event-filter-link${txActive}" onclick="event.stopPropagation(); toggleTxFilter('${e.tx_id}')">${e.tx_id.substring(0, 8)}</span>` : '';
 
+                    // State hash display
+                    let stateHashHtml = '';
+                    if (e.state_hash_before && e.state_hash_after) {
+                        // Update event: show before→after
+                        stateHashHtml = `<span class="state-hash">[${e.state_hash_before.substring(0, 4)}→${e.state_hash_after.substring(0, 4)}]</span>`;
+                    } else if (e.state_hash) {
+                        // Single state hash
+                        stateHashHtml = `<span class="state-hash">[${e.state_hash.substring(0, 4)}]</span>`;
+                    }
+
                     return `
                         <div class="${classes.join(' ')}" data-event-idx="${idx}" onclick="handleEventClick(${idx})">
                             <span class="event-time">${e.time_str}</span>
                             <span class="event-badge ${getEventClass(e.event_type)}">${getEventLabel(e.event_type)}</span>
                             <div class="event-peers">${peersHtml}</div>
+                            ${stateHashHtml}
                             ${txHtml}
                         </div>
                     `;
@@ -1507,8 +1582,8 @@
             updatePlayhead();
 
             // Update subscriptions list if that tab is active (time-window filtering)
-            if (activeTab === 'subscriptions') {
-                renderSubscriptionsList();
+            if (activeTab === 'contracts') {
+                renderContractsList();
             }
         }
 
@@ -1668,6 +1743,15 @@
                 }
             });
 
+            // Contract search input
+            const contractSearch = document.getElementById('contract-search');
+            if (contractSearch) {
+                contractSearch.addEventListener('input', (e) => {
+                    contractSearchText = e.target.value;
+                    renderContractsList();
+                });
+            }
+
         }
 
         function handleMessage(data) {
@@ -1695,13 +1779,20 @@
                 const topoLegend = document.getElementById('topology-legend');
                 if (topoLegend) topoLegend.style.display = 'flex';
 
-                // Store subscription data
+                // Store contract/subscription data
                 if (data.subscriptions) {
-                    subscriptionData = data.subscriptions;
+                    contractData = data.subscriptions;
                     updateContractDropdown();
-                    // Update subscription tab count
-                    document.getElementById('sub-tab-count').textContent = Object.keys(subscriptionData).length;
-                    console.log('Subscriptions:', Object.keys(subscriptionData).length, 'contracts');
+                    // Update contracts tab count
+                    const countEl = document.getElementById('contract-tab-count');
+                    if (countEl) countEl.textContent = Object.keys(contractData).length;
+                    console.log('Contracts:', Object.keys(contractData).length);
+                }
+
+                // Store contract state hashes
+                if (data.contract_states) {
+                    contractStates = data.contract_states;
+                    console.log('Contract states:', Object.keys(contractStates).length);
                 }
 
                 // Store and display operation stats

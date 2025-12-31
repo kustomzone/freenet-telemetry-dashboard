@@ -125,7 +125,7 @@
                     <div class="panel-header">
                         <div class="panel-tabs">
                             <button class="panel-tab active" id="tab-events" onclick="switchTab('events')">Events</button>
-                            <button class="panel-tab" id="tab-subscriptions" onclick="switchTab('subscriptions')">Subscriptions <span class="tab-count" id="sub-tab-count">0</span></button>
+                            <button class="panel-tab" id="tab-contracts" onclick="switchTab('contracts')">Contracts <span class="tab-count" id="contract-tab-count">0</span></button>
                         </div>
                     </div>
                     <!-- Events Tab Content -->
@@ -153,12 +153,15 @@
                             <span class="event-legend-item"><span class="event-legend-dot subscribe"></span> subscribe</span>
                         </div>
                     </div>
-                    <!-- Subscriptions Tab Content -->
-                    <div class="tab-content" id="tab-content-subscriptions">
-                        <div class="subscriptions-list" id="subscriptions-list">
+                    <!-- Contracts Tab Content -->
+                    <div class="tab-content" id="tab-content-contracts">
+                        <div class="contracts-search">
+                            <input type="text" class="contract-search-input" id="contract-search" placeholder="Search by contract ID prefix...">
+                        </div>
+                        <div class="contracts-list" id="contracts-list">
                             <div class="empty-state">
-                                <div class="empty-state-icon">&#9733;</div>
-                                <div>No active subscriptions</div>
+                                <div class="empty-state-icon">&#128230;</div>
+                                <div>No contracts with activity</div>
                             </div>
                         </div>
                     </div>
