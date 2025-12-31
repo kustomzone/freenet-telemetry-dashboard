@@ -512,12 +512,15 @@ def process_record(record, store_history=True):
                     "ip_hash": ip_hash(ip),
                     "location": loc,
                     "last_seen": timestamp,
-                    "connections": set()
+                    "connections": set(),
+                    "peer_id": peer_id,  # Store telemetry peer_id for contract_states matching
                 }
                 updated_peers.append(ip)
             else:
                 peers[ip]["location"] = loc
                 peers[ip]["last_seen"] = timestamp
+                if peer_id:
+                    peers[ip]["peer_id"] = peer_id  # Update peer_id if available
 
             # Track peer presence for historical reconstruction
             if ip not in peer_presence:
@@ -752,16 +755,21 @@ def get_network_state():
 
     # Filter to only recently active peers
     active_peer_ips = set()
+    active_peer_ids = set()  # Track telemetry peer_ids for contract_states filtering
     peer_list = []
     for ip, data in peers.items():
         if is_public_ip(ip):
             last_seen = data.get("last_seen", 0)
             if now_ns - last_seen < STALE_THRESHOLD_NS:
                 active_peer_ips.add(ip)
+                # Collect telemetry peer_id for contract_states matching
+                if data.get("peer_id"):
+                    active_peer_ids.add(data["peer_id"])
                 peer_list.append({
                     "id": data["id"],
                     "ip_hash": data.get("ip_hash", ip_hash(ip)),
                     "location": data["location"],
+                    "peer_id": data.get("peer_id"),  # Include for frontend reference
                 })
 
     # Only include connections between active peers
@@ -783,12 +791,23 @@ def get_network_state():
         v = data.get("version", "unknown")
         version_counts[v] = version_counts.get(v, 0) + 1
 
+    # Filter contract_states to only include currently active peers (from topology)
+    filtered_contract_states = {}
+    for contract_key, peer_states in contract_states.items():
+        filtered_peers = {
+            peer_id: state
+            for peer_id, state in peer_states.items()
+            if peer_id in active_peer_ids
+        }
+        if filtered_peers:
+            filtered_contract_states[contract_key] = filtered_peers
+
     return {
         "type": "state",
         "peers": peer_list,
         "connections": conn_list,
         "subscriptions": get_subscription_trees(),
-        "contract_states": contract_states,
+        "contract_states": filtered_contract_states,
         "op_stats": get_operation_stats(),
         "peer_lifecycle": {
             "active_count": len(active_peers),
