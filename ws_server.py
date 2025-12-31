@@ -298,17 +298,23 @@ def process_record(record, store_history=True):
     # Get contract key for state tracking
     contract_key = body.get("contract_key") or body.get("key")
 
-    # Get peer_id for state tracking
+    # Get peer_id and IP for state tracking
+    # Check multiple fields that might contain peer info: this_peer, requester, target
     event_peer_id = attrs.get("peer_id") or ""
-    if not event_peer_id:
-        this_peer_str = body.get("this_peer", "")
-        if this_peer_str:
-            pid, _, _ = parse_peer_string(this_peer_str)
-            if pid:
+    event_peer_ip = None
+    for peer_field in ["this_peer", "requester", "target"]:
+        peer_str = body.get(peer_field, "")
+        if peer_str:
+            pid, pip, _ = parse_peer_string(peer_str)
+            if pid and not event_peer_id:
                 event_peer_id = pid
+            if pip and not event_peer_ip:
+                event_peer_ip = pip
+            if event_peer_ip:
+                break  # Got an IP, stop looking
 
-    # Update contract state on relevant events
-    if contract_key and event_peer_id:
+    # Update contract state on relevant events (skip simulated peers)
+    if contract_key and event_peer_id and (event_peer_ip is None or is_public_ip(event_peer_ip)):
         if event_type == "put_success" and state_hash:
             update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
         elif event_type == "get_success" and state_hash:
@@ -492,7 +498,10 @@ def process_record(record, store_history=True):
             peer_lifecycle[peer_id]["shutdown_reason"] = body.get("reason")
 
     # Extract peer info
-    this_peer_id, this_ip, this_loc = parse_peer_string(body.get("this_peer", ""))
+    # Use attrs peer_id for "this" peer (matches lifecycle peer_id)
+    attrs_peer_id = attrs.get("peer_id", "")
+    parsed_peer_id, this_ip, this_loc = parse_peer_string(body.get("this_peer", ""))
+
     other_peer_id, other_ip, other_loc = None, None, None
 
     # Check various fields for other peer
@@ -504,7 +513,7 @@ def process_record(record, store_history=True):
 
     # Update peer state
     updated_peers = []
-    for ip, loc, peer_id in [(this_ip, this_loc, this_peer_id), (other_ip, other_loc, other_peer_id)]:
+    for ip, loc, peer_id in [(this_ip, this_loc, attrs_peer_id), (other_ip, other_loc, other_peer_id)]:
         if ip and is_public_ip(ip) and loc is not None:
             if ip not in peers:
                 peers[ip] = {
@@ -528,8 +537,12 @@ def process_record(record, store_history=True):
                     "id": anonymize_ip(ip),
                     "ip_hash": ip_hash(ip),
                     "location": loc,
-                    "first_seen": timestamp
+                    "first_seen": timestamp,
+                    "peer_id": peer_id  # Real peer_id for lifecycle lookup
                 }
+            elif peer_id and not peer_presence[ip].get("peer_id"):
+                # Update peer_id if we didn't have it before
+                peer_presence[ip]["peer_id"] = peer_id
 
     # Track connections (event_type is "connect" in attrs, "connected" in body)
     connection_added = None
@@ -802,6 +815,20 @@ def get_network_state():
         if filtered_peers:
             filtered_contract_states[contract_key] = filtered_peers
 
+    # Include lifecycle data for topology peers first (so tooltips work),
+    # then fill remaining slots with other active peers
+    topology_peer_ids = set(active_peer_ids)
+    topology_lifecycle = [
+        {"peer_id": pid, **active_peers[pid]}
+        for pid in topology_peer_ids
+        if pid in active_peers
+    ]
+    other_lifecycle = [
+        {"peer_id": pid, **data}
+        for pid, data in active_peers.items()
+        if pid not in topology_peer_ids
+    ][:50 - len(topology_lifecycle)]
+
     return {
         "type": "state",
         "peers": peer_list,
@@ -813,7 +840,7 @@ def get_network_state():
             "active_count": len(active_peers),
             "gateway_count": sum(1 for d in active_peers.values() if d.get("is_gateway")),
             "versions": version_counts,
-            "peers": list(active_peers.values())[:50],  # Limit to last 50 for display
+            "peers": topology_lifecycle + other_lifecycle,
         },
     }
 
@@ -988,6 +1015,9 @@ async def load_initial_state():
 
     print(f"Loaded {count} records. Found {len(peers)} peers, {len(connections)} connections.")
     print(f"Event history: {len(event_history)} events in buffer")
+    print(f"Contract states: {len(contract_states)} contracts")
+    for ck, ps in list(contract_states.items())[:3]:
+        print(f"  {ck[:16]}... has {len(ps)} peers")
 
 
 async def main():

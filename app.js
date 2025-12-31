@@ -135,9 +135,12 @@
             } else {
                 selectedTransaction = tx;
                 selectedTxId = tx.tx_id;
+                // Switch to Events tab to show filtered events
+                switchTab('events');
             }
             updateFilterBar();
             updateView();  // Refresh events list with filter
+            updateURL();
             return;  // Events box now shows transaction details, no popup needed
 
             const container = document.getElementById('tx-detail-container');
@@ -371,6 +374,7 @@
             }
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function togglePeerFilter(peerId) {
@@ -381,6 +385,7 @@
             }
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function toggleTxFilter(txId) {
@@ -391,6 +396,7 @@
             }
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function clearPeerSelection() {
@@ -428,6 +434,7 @@
             // Update filter bar
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function updateFilterBar() {
@@ -461,18 +468,21 @@
             selectedPeerId = null;
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function clearTxFilter() {
             selectedTxId = null;
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function clearContractFilter() {
             selectedContract = null;
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function clearAllFilters() {
@@ -480,6 +490,98 @@
             selectedTxId = null;
             selectedContract = null;
             filterText = '';
+            updateFilterBar();
+            updateView();
+            updateURL();
+        }
+
+        // URL state encoding - allows sharing dashboard state via URL
+        let urlLoaded = false;
+
+        function updateURL() {
+            if (!urlLoaded) return;  // Don't update URL before initial load completes
+
+            const params = new URLSearchParams();
+
+            if (selectedContract) {
+                // Use first 16 chars of contract key for URL brevity
+                params.set('contract', selectedContract.substring(0, 16));
+            }
+            if (selectedPeerId) {
+                params.set('peer', selectedPeerId.substring(0, 16));
+            }
+            if (selectedTxId) {
+                params.set('tx', selectedTxId.substring(0, 12));
+            }
+            if (activeTab !== 'events') {
+                params.set('tab', activeTab);
+            }
+            if (!isLive && currentTime) {
+                // Store time as ISO string for readability
+                params.set('time', new Date(currentTime / 1_000_000).toISOString());
+            }
+
+            const queryString = params.toString();
+            const newUrl = queryString ? `?${queryString}` : window.location.pathname;
+            history.replaceState(null, '', newUrl);
+        }
+
+        function loadFromURL() {
+            const params = new URLSearchParams(window.location.search);
+
+            // Restore contract selection (match partial key)
+            const contractParam = params.get('contract');
+            if (contractParam && contractData) {
+                const match = Object.keys(contractData).find(k => k.startsWith(contractParam));
+                if (match) {
+                    selectedContract = match;
+                    console.log('Restored contract from URL:', match.substring(0, 16));
+                }
+            }
+
+            // Restore peer selection (match partial ID)
+            const peerParam = params.get('peer');
+            if (peerParam && initialStatePeers) {
+                const match = initialStatePeers.find(p => p.id && p.id.startsWith(peerParam));
+                if (match) {
+                    selectedPeerId = match.id;
+                    console.log('Restored peer from URL:', match.id.substring(0, 16));
+                }
+            }
+
+            // Restore transaction filter (match partial ID)
+            const txParam = params.get('tx');
+            if (txParam && allTransactions) {
+                const match = allTransactions.find(t => t.tx_id && t.tx_id.startsWith(txParam));
+                if (match) {
+                    selectedTxId = match.tx_id;
+                    console.log('Restored tx from URL:', match.tx_id.substring(0, 12));
+                }
+            }
+
+            // Restore tab
+            const tabParam = params.get('tab');
+            if (tabParam && ['events', 'contracts', 'transactions', 'peers'].includes(tabParam)) {
+                switchTab(tabParam);
+            }
+
+            // Restore time (pauses live mode)
+            const timeParam = params.get('time');
+            if (timeParam) {
+                try {
+                    const timestamp = new Date(timeParam).getTime() * 1_000_000;
+                    if (!isNaN(timestamp) && timestamp > 0) {
+                        currentTime = timestamp;
+                        isLive = false;
+                        document.getElementById('live-btn').classList.remove('active');
+                        console.log('Restored time from URL:', timeParam);
+                    }
+                } catch (e) {
+                    console.warn('Invalid time in URL:', timeParam);
+                }
+            }
+
+            urlLoaded = true;
             updateFilterBar();
             updateView();
         }
@@ -504,6 +606,8 @@
             if (tabName === 'contracts') {
                 renderContractsList();
             }
+
+            updateURL();
         }
 
         function renderContractsList() {
@@ -693,6 +797,7 @@
             renderContractsList();
             updateFilterBar();
             updateView();
+            updateURL();
         }
 
         function formatLatency(ms) {
@@ -849,7 +954,11 @@
             // Also build peer info map from peer_presence for location data
             const peerInfo = new Map();
             for (const p of peerPresence) {
-                peerInfo.set(p.id, { location: p.location, ip_hash: p.ip_hash });
+                peerInfo.set(p.id, {
+                    location: p.location,
+                    ip_hash: p.ip_hash,
+                    peer_id: p.peer_id  // Real peer_id for lifecycle lookup
+                });
             }
 
             // Scan events to find active peers and connections
@@ -860,11 +969,13 @@
                 if (inWindow && event.peer_id) {
                     const info = peerInfo.get(event.peer_id);
                     if (info) {
+                        // Use info which has the real peer_id from peer_presence
                         peers.set(event.peer_id, info);
                     } else if (event.location !== undefined) {
                         peers.set(event.peer_id, {
                             location: event.location,
                             ip_hash: event.peer_ip_hash
+                            // Note: no peer_id available without peer_presence data
                         });
                     }
                 }
@@ -1010,8 +1121,9 @@
                 let peerStateHash = null;
 
                 // Check for state hash when a contract is selected
-                if (selectedContract && contractStates[selectedContract]) {
-                    const peerState = contractStates[selectedContract][id];
+                // Note: contractStates is keyed by telemetry peer_id, not anonymized id
+                if (selectedContract && contractStates[selectedContract] && peer.peer_id) {
+                    const peerState = contractStates[selectedContract][peer.peer_id];
                     if (peerState && peerState.hash) {
                         peerStateHash = peerState.hash;
                         const colors = hashToColor(peerStateHash);
@@ -1087,6 +1199,39 @@
                 const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
                 const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
                 let tooltipText = `${id}${peerType}\n#${peer.ip_hash || ''}\nLocation: ${peer.location.toFixed(4)}`;
+
+                // Add OS/version info from peer lifecycle data
+                // Try peer.peer_id first, then fall back to topology's peer_id for this anonymized ID
+                if (peerLifecycle && peerLifecycle.peers) {
+                    let lifecycleData = null;
+
+                    // First try the peer's own peer_id (from presence or live state)
+                    if (peer.peer_id) {
+                        lifecycleData = peerLifecycle.peers.find(p => p.peer_id === peer.peer_id);
+                    }
+
+                    // If not found, try looking up by anonymized ID in topology (for historical mode)
+                    if (!lifecycleData) {
+                        const topoPeer = initialStatePeers.find(p => p.id === id);
+                        if (topoPeer && topoPeer.peer_id) {
+                            lifecycleData = peerLifecycle.peers.find(p => p.peer_id === topoPeer.peer_id);
+                        }
+                    }
+
+                    if (lifecycleData) {
+                        if (lifecycleData.version) {
+                            tooltipText += `\nVersion: ${lifecycleData.version}`;
+                        }
+                        if (lifecycleData.os) {
+                            let osInfo = lifecycleData.os;
+                            if (lifecycleData.arch) {
+                                osInfo += ` (${lifecycleData.arch})`;
+                            }
+                            tooltipText += `\nOS: ${osInfo}`;
+                        }
+                    }
+                }
+
                 if (peerStateHash) {
                     tooltipText += `\nState: [${peerStateHash.substring(0, 8)}]`;
                 }
@@ -1418,7 +1563,8 @@
                 for (const p of initialStatePeers) {
                     peers.set(p.id, {
                         location: p.location,
-                        ip_hash: p.ip_hash
+                        ip_hash: p.ip_hash,
+                        peer_id: p.peer_id  // Include for contract state lookup
                     });
                 }
                 for (const conn of initialStateConnections) {
@@ -1606,6 +1752,7 @@
             document.getElementById('status-text').textContent = 'Live';
             document.getElementById('events-title').textContent = 'Events';
             updateView();
+            updateURL();
         }
 
         function goToTime(time) {
@@ -1617,6 +1764,7 @@
             document.getElementById('status-text').textContent = 'Time Travel';
             document.getElementById('events-title').textContent = 'Events at ' + formatTime(time);
             updateView();
+            updateURL();
         }
 
         function updateWindowLabel() {
@@ -1662,34 +1810,48 @@
                 return { left, right };
             }
 
-            resizeLeft.addEventListener('mousedown', (e) => {
-                dragMode = 'resize-left'; dragStartX = e.clientX;
+            // Helper to get clientX from mouse or touch event
+            function getClientX(e) {
+                return e.touches ? e.touches[0].clientX : e.clientX;
+            }
+
+            function startResizeLeft(e) {
+                dragMode = 'resize-left'; dragStartX = getClientX(e);
                 const edges = getWindowEdges(); dragStartLeft = edges.left; dragStartRight = edges.right;
                 e.preventDefault(); e.stopPropagation();
-            });
+            }
+            resizeLeft.addEventListener('mousedown', startResizeLeft);
+            resizeLeft.addEventListener('touchstart', startResizeLeft, { passive: false });
 
-            resizeRight.addEventListener('mousedown', (e) => {
-                dragMode = 'resize-right'; dragStartX = e.clientX;
+            function startResizeRight(e) {
+                dragMode = 'resize-right'; dragStartX = getClientX(e);
                 const edges = getWindowEdges(); dragStartLeft = edges.left; dragStartRight = edges.right;
                 e.preventDefault(); e.stopPropagation();
-            });
+            }
+            resizeRight.addEventListener('mousedown', startResizeRight);
+            resizeRight.addEventListener('touchstart', startResizeRight, { passive: false });
 
-            playhead.addEventListener('mousedown', (e) => {
+            function startMove(e) {
                 if (e.target === resizeLeft || e.target === resizeRight) return;
-                dragMode = 'move'; dragStartX = e.clientX;
+                dragMode = 'move'; dragStartX = getClientX(e);
                 const edges = getWindowEdges(); dragStartLeft = edges.left; dragStartRight = edges.right;
                 playhead.style.cursor = 'grabbing';
                 e.preventDefault(); e.stopPropagation();
-            });
+            }
+            playhead.addEventListener('mousedown', startMove);
+            playhead.addEventListener('touchstart', startMove, { passive: false });
 
             playhead.addEventListener('click', (e) => e.stopPropagation());
 
-            document.addEventListener('mousemove', (e) => {
+            function handleDragMove(e) {
                 if (!dragMode) return;
+                // Prevent scroll during drag on touch devices
+                if (e.cancelable) e.preventDefault();
+                const clientX = getClientX(e);
                 const rect = timeline.getBoundingClientRect();
                 const timelineWidth = rect.width - 32;
                 const duration = timeRange.end - timeRange.start;
-                const deltaX = e.clientX - dragStartX;
+                const deltaX = clientX - dragStartX;
                 const deltaNs = (deltaX / timelineWidth) * duration;
 
                 if (dragMode === 'move') {
@@ -1714,16 +1876,20 @@
                         isLive = false; updateWindowLabel(); updatePlayhead(); updateView();
                     }
                 }
-            });
+            }
+            document.addEventListener('mousemove', handleDragMove);
+            document.addEventListener('touchmove', handleDragMove, { passive: false });
 
-            document.addEventListener('mouseup', () => {
+            function handleDragEnd() {
                 if (dragMode) {
                     justDragged = true;
                     if (dragMode === 'move') playhead.style.cursor = 'grab';
                     dragMode = null;
                     setTimeout(() => { justDragged = false; }, 100);
                 }
-            });
+            }
+            document.addEventListener('mouseup', handleDragEnd);
+            document.addEventListener('touchend', handleDragEnd);
 
             // Initialize window label
             updateWindowLabel();
@@ -1851,6 +2017,11 @@
                 renderTimeline();
                 renderRuler();
                 updateView();
+
+                // Restore state from URL after initial load
+                if (!urlLoaded) {
+                    loadFromURL();
+                }
 
             } else if (data.type === 'event') {
                 allEvents.push(data);
