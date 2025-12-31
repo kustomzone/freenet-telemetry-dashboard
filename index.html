@@ -445,6 +445,12 @@
             color: var(--color-get);
         }
 
+        .filter-chip.tx {
+            background: rgba(251, 191, 36, 0.15);
+            border-color: rgba(251, 191, 36, 0.3);
+            color: var(--color-put);
+        }
+
         .filter-chip-close {
             width: 14px;
             height: 14px;
@@ -820,14 +826,36 @@
             border-radius: 3px;
         }
 
+        .events-header {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+            padding: 8px 16px;
+            background: var(--bg-secondary);
+            font-size: 0.7em;
+            font-weight: 600;
+            color: var(--text-muted);
+            text-transform: uppercase;
+            letter-spacing: 0.5px;
+            position: sticky;
+            top: 0;
+            z-index: 10;
+            border-bottom: 1px solid var(--border-color);
+        }
+        .events-header span { flex-shrink: 0; }
+        .events-header .header-time { width: 70px; }
+        .events-header .header-type { width: 100px; }
+        .events-header .header-peers { flex: 1; }
+        .events-header .header-tx { width: 70px; text-align: right; }
+
         .event-item {
             display: flex;
             align-items: center;
             gap: 12px;
-            padding: 12px 16px;
-            margin-bottom: 4px;
+            padding: 10px 16px;
+            margin-bottom: 2px;
             background: var(--bg-tertiary);
-            border-radius: 10px;
+            border-radius: 6px;
             font-size: 0.85em;
             transition: all 0.2s ease;
             border-left: 3px solid transparent;
@@ -868,12 +896,15 @@
             font-family: var(--font-mono);
             font-size: 0.75em;
             font-weight: 500;
-            padding: 4px 10px;
+            padding: 4px 8px;
             border-radius: 6px;
             text-transform: lowercase;
+            min-width: 80px;
+            text-align: center;
+            flex-shrink: 0;
         }
 
-        .event-badge.connect {
+        .event-badge.connect, .event-badge.start_connection, .event-badge.connected, .event-badge.finished {
             background: rgba(34, 211, 238, 0.15);
             color: var(--color-connect);
             border-left-color: var(--color-connect);
@@ -910,6 +941,45 @@
             font-size: 0.75em;
             color: var(--text-muted);
             margin-left: auto;
+        }
+
+        /* Clickable filter elements */
+        .event-filter-link {
+            font-family: var(--font-mono);
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            cursor: pointer;
+            padding: 2px 6px;
+            border-radius: 4px;
+            transition: all 0.15s;
+        }
+        .event-filter-link:hover {
+            background: rgba(0, 127, 255, 0.2);
+            color: var(--accent-primary);
+        }
+        .event-filter-link.active {
+            background: var(--accent-primary);
+            color: white;
+        }
+        .event-peers {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
+        }
+        .event-arrow {
+            color: var(--text-secondary);
+            font-size: 0.9em;
+            font-weight: bold;
+        }
+        .event-tx {
+            font-family: var(--font-mono);
+            font-size: 0.8em;
+            color: var(--text-secondary);
+            width: 70px;
+            text-align: right;
+            flex-shrink: 0;
         }
 
         /* Timeline Container */
@@ -1093,7 +1163,7 @@
         /* Playhead - Time Window Range */
         .timeline-playhead {
             position: absolute;
-            top: 35px;
+            top: 20px;  /* Align with timeline-events which starts at 20px */
             bottom: 10px;
             min-width: 40px;
             background: rgba(255, 255, 255, 0.08);
@@ -1250,7 +1320,7 @@
         .detail-legend .legend-dot.get { background: var(--color-get); }
         .detail-legend .legend-dot.update { background: var(--color-update); }
         .detail-legend .legend-dot.subscribe { background: var(--color-subscribe); }
-        .timeline-detail { position: relative; height: 100px; background: var(--bg-tertiary); border-radius: 8px; padding: 8px 16px; margin-bottom: 8px; }
+        .timeline-detail { position: relative; height: 120px; background: var(--bg-tertiary); border-radius: 8px; padding: 8px 16px; margin-bottom: 8px; }
         .timeline-detail .timeline-ruler { top: 8px; }
         .timeline-lanes { position: absolute; top: 28px; left: 16px; right: 16px; bottom: 8px; overflow: hidden; }
         .tx-lane { position: absolute; left: 0; right: 0; height: 16px; }
@@ -1260,6 +1330,8 @@
         .tx-bar.get { background: var(--color-get); }
         .tx-bar.update { background: var(--color-update); }
         .tx-bar.subscribe { background: var(--color-subscribe); }
+        .tx-bar.connect { background: var(--color-connect); }
+        .tx-bar.disconnect { background: var(--color-error); }
         .tx-bar.other { background: var(--text-muted); }
         .tx-bar.pending { opacity: 0.5; }
         .tx-bar.failed { box-shadow: 0 0 0 2px #ff6b6b; }
@@ -1321,24 +1393,25 @@
         .tx-detail-close:hover { background: var(--bg-secondary); color: var(--text-primary); }
         .tx-detail-gantt {
             background: var(--bg-tertiary); border-radius: 0 0 8px 8px; padding: 12px;
-            max-height: 200px; overflow-y: auto;
+            max-height: 200px; overflow-y: auto; overflow-x: hidden;
         }
         .tx-event-row {
-            display: flex; align-items: center; gap: 12px; padding: 4px 0;
+            display: flex; align-items: center; gap: 8px; padding: 3px 0;
             font-family: var(--font-mono); font-size: 0.7em;
         }
-        .tx-event-time { width: 70px; color: var(--text-muted); text-align: right; flex-shrink: 0; }
-        .tx-event-bar-container { flex: 1; height: 18px; position: relative; background: var(--bg-secondary); border-radius: 4px; }
-        .tx-event-bar {
-            position: absolute; height: 100%; border-radius: 4px; min-width: 4px;
-            display: flex; align-items: center; padding: 0 8px; font-size: 0.9em; color: #fff;
-            white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
-        }
-        .tx-event-bar.request { background: linear-gradient(90deg, var(--color-put), transparent); }
-        .tx-event-bar.success { background: var(--color-connect); }
-        .tx-event-bar.failed { background: #ff6b6b; }
-        .tx-event-bar.other { background: var(--text-muted); }
-        .tx-event-type { color: var(--text-primary); width: 140px; flex-shrink: 0; }
+        .tx-event-time { width: 55px; color: var(--text-muted); text-align: right; flex-shrink: 0; }
+        .tx-event-dot { width: 8px; height: 8px; border-radius: 50%; flex-shrink: 0; }
+        .tx-event-dot.request { background: var(--color-put); }
+        .tx-event-dot.success { background: var(--color-connect); }
+        .tx-event-dot.failed { background: #ff6b6b; }
+        .tx-event-dot.connect { background: var(--color-connect); }
+        .tx-event-dot.put { background: var(--color-put); }
+        .tx-event-dot.get { background: var(--color-get); }
+        .tx-event-dot.update { background: var(--color-update); }
+        .tx-event-dot.subscribe { background: var(--color-subscribe); }
+        .tx-event-dot.other { background: var(--text-muted); }
+        .tx-event-type { color: var(--text-primary); flex: 1; }
+        .tx-event-peer { color: var(--text-muted); font-size: 0.9em; }
         .tx-detail-summary {
             display: flex; gap: 16px; padding: 8px 12px; background: var(--bg-secondary);
             border-radius: 4px; margin-bottom: 8px; font-family: var(--font-mono); font-size: 0.65em;
@@ -1649,6 +1722,7 @@
         let selectedEvent = null;
         let highlightedPeers = new Set();
         let selectedPeerId = null;  // For filtering events by peer
+        let selectedTxId = null;    // For filtering events by transaction
         let gatewayPeerId = null;   // Gateway peer ID
         let yourPeerId = null;      // User's own peer ID
         let yourIpHash = null;      // User's IP hash
@@ -1658,6 +1732,10 @@
         let displayedEvents = [];  // Events currently shown in the events panel
         let allTransactions = [];  // Transactions for timeline lanes
         let selectedTransaction = null;  // Currently selected transaction for detail view
+        let initialStatePeers = [];  // Peers from initial state message
+        let initialStateConnections = [];  // Connections from initial state message
+        let peerLifecycle = null;  // Peer lifecycle data (version, arch, OS)
+        let peerPresence = [];  // Peer presence timeline for historical reconstruction
 
         const SVG_SIZE = 450;
         const CENTER = SVG_SIZE / 2;
@@ -1665,12 +1743,33 @@
 
         function getEventClass(eventType) {
             if (!eventType) return 'other';
-            if (eventType.includes('connect')) return 'connect';
+            // Handle specific connect event types
+            if (eventType.includes('connect') || eventType === 'start_connection' || eventType === 'finished') return 'connect';
             if (eventType.includes('put')) return 'put';
             if (eventType.includes('get')) return 'get';
             if (eventType.includes('update')) return 'update';
             if (eventType.includes('subscrib')) return 'subscribe';
             return 'other';
+        }
+
+        function getEventLabel(eventType) {
+            // Return user-friendly labels for event types
+            const labels = {
+                'start_connection': 'connecting',
+                'connected': 'connected',
+                'finished': 'conn done',
+                'put_request': 'put req',
+                'put_success': 'put ok',
+                'get_request': 'get req',
+                'get_success': 'get ok',
+                'get_not_found': 'get 404',
+                'update_request': 'update req',
+                'update_success': 'update ok',
+                'subscribe_request': 'sub req',
+                'subscribed': 'subscribed',
+                'broadcast_emitted': 'broadcast',
+            };
+            return labels[eventType] || eventType;
         }
 
         function locationToXY(location) {
@@ -1727,7 +1826,18 @@
         }
 
         function showTransactionDetail(tx) {
-            selectedTransaction = tx;
+            // Toggle: clicking same transaction clears the filter
+            if (selectedTxId === tx.tx_id) {
+                selectedTxId = null;
+                selectedTransaction = null;
+            } else {
+                selectedTransaction = tx;
+                selectedTxId = tx.tx_id;
+            }
+            updateFilterBar();
+            updateView();  // Refresh events list with filter
+            return;  // Events box now shows transaction details, no popup needed
+
             const container = document.getElementById('tx-detail-container');
             const titleEl = document.getElementById('tx-detail-title');
             const ganttEl = document.getElementById('tx-detail-gantt');
@@ -1758,25 +1868,52 @@
                 const txDuration = Math.max(txEnd - txStart, 1); // Avoid division by zero
 
                 let eventsHtml = '';
+                // Use transaction's operation type for dot color
+                const opType = tx.op || 'other';
                 sortedEvents.forEach((evt, idx) => {
                     const relativeTime = (evt.timestamp - txStart) / 1_000_000; // Convert to ms
-                    const barStart = (evt.timestamp - txStart) / txDuration;
-                    // Each event bar extends to the next event (or end)
-                    const nextTs = idx < sortedEvents.length - 1 ? sortedEvents[idx + 1].timestamp : txEnd;
-                    const barWidth = Math.max((nextTs - evt.timestamp) / txDuration, 0.05);
 
-                    // Determine event bar color
-                    let barClass = 'other';
-                    if (evt.event_type.includes('request')) barClass = 'request';
-                    else if (evt.event_type.includes('success')) barClass = 'success';
-                    else if (evt.event_type.includes('fail') || evt.event_type.includes('error')) barClass = 'failed';
+                    // Determine dot color: use op type, but mark failures red
+                    let dotClass = opType;
+                    if (evt.event_type.includes('fail') || evt.event_type.includes('error')) {
+                        dotClass = 'failed';
+                    }
+
+                    // Create descriptive label based on operation type and event
+                    let eventLabel = evt.event_type.replace(/_/g, ' ');
+                    if (opType === 'connect') {
+                        if (idx === 0 && !evt.peer_id) {
+                            eventLabel = 'Initiated';
+                        } else if (evt.peer_id) {
+                            eventLabel = `→ ${evt.peer_id.substring(0, 12)}`;
+                        }
+                    } else if (opType === 'put') {
+                        if (evt.event_type === 'put_request') eventLabel = 'Request sent';
+                        else if (evt.event_type === 'put_success') eventLabel = 'Stored ✓';
+                        else if (evt.event_type.includes('fail')) eventLabel = 'Failed ✗';
+                    } else if (opType === 'get') {
+                        if (evt.event_type === 'get_request') eventLabel = 'Request sent';
+                        else if (evt.event_type === 'get_success') eventLabel = 'Retrieved ✓';
+                        else if (evt.event_type === 'get_not_found') eventLabel = 'Not found';
+                        else if (evt.event_type.includes('fail')) eventLabel = 'Failed ✗';
+                    } else if (opType === 'update') {
+                        if (evt.event_type === 'update_request') eventLabel = 'Update sent';
+                        else if (evt.event_type === 'update_success') eventLabel = 'Updated ✓';
+                        else if (evt.event_type.includes('broadcast')) eventLabel = 'Broadcast';
+                    } else if (opType === 'subscribe') {
+                        if (evt.event_type === 'subscribe_request') eventLabel = 'Subscribe sent';
+                        else if (evt.event_type === 'subscribed') eventLabel = 'Subscribed ✓';
+                    }
+
+                    // For non-connect ops, show peer if available
+                    const showPeer = opType !== 'connect' && evt.peer_id;
+                    const peerInfo = showPeer ? `<span class="tx-event-peer">${evt.peer_id.substring(0, 12)}</span>` : '';
 
                     eventsHtml += `<div class="tx-event-row">
                         <span class="tx-event-time">+${relativeTime.toFixed(1)}ms</span>
-                        <span class="tx-event-type">${evt.event_type}</span>
-                        <div class="tx-event-bar-container">
-                            <div class="tx-event-bar ${barClass}" style="left:${barStart*100}%;width:${barWidth*100}%"></div>
-                        </div>
+                        <span class="tx-event-dot ${dotClass}"></span>
+                        <span class="tx-event-type">${eventLabel}</span>
+                        ${peerInfo}
                     </div>`;
                 });
 
@@ -1788,7 +1925,10 @@
 
         function closeTransactionDetail() {
             selectedTransaction = null;
+            selectedTxId = null;
             document.getElementById('tx-detail-container').classList.remove('visible');
+            updateFilterBar();
+            updateView();
         }
 
         function renderDetailTimeline() {
@@ -1847,48 +1987,28 @@
                     const events = tx.events || [];
                     if (events.length === 0) return;
 
-                    // Sort events by timestamp
-                    const sortedEvents = [...events].sort((a, b) => a.timestamp - b.timestamp);
-
-                    // Draw a connecting line for the transaction span
+                    // Calculate transaction position and width
                     const txStart = Math.max(windowStart, tx.start_ns);
                     const txEnd = Math.min(windowEnd, tx.end_ns || tx.start_ns);
-                    const lineStartPos = (txStart - windowStart) / windowDuration;
-                    const lineEndPos = (txEnd - windowStart) / windowDuration;
+                    const startPos = (txStart - windowStart) / windowDuration;
+                    const endPos = (txEnd - windowStart) / windowDuration;
 
-                    if (events.length > 1) {
-                        const line = document.createElement('div');
-                        line.className = 'tx-connector';
-                        line.style.cssText = `position:absolute;left:${lineStartPos*100}%;width:${(lineEndPos-lineStartPos)*100}%;top:8px;height:2px;background:var(--border-color);`;
-                        laneDiv.appendChild(line);
-                    }
+                    // Minimum width for visibility
+                    const minWidthPercent = 0.5;
+                    let widthPercent = (endPos - startPos) * 100;
+                    if (widthPercent < minWidthPercent) widthPercent = minWidthPercent;
 
-                    // Draw each event as a small bar
-                    sortedEvents.forEach((evt, idx) => {
-                        const evtPos = (evt.timestamp - windowStart) / windowDuration;
-                        if (evtPos < 0 || evtPos > 1) return;
+                    // Create pill-shaped transaction bar
+                    const txBar = document.createElement('div');
+                    const opClass = tx.op || 'other';
+                    const statusClass = tx.status === 'pending' ? ' pending' : tx.status === 'failed' ? ' failed' : '';
+                    txBar.className = `tx-bar ${opClass}${statusClass}`;
+                    txBar.style.cssText = `left:${startPos * 100}%;width:${widthPercent}%;top:1px;`;
 
-                        const evtBar = document.createElement('div');
-                        // Color based on event type
-                        let evtClass = tx.op || 'other';
-                        if (evt.event_type.includes('success')) evtClass = 'success';
-                        else if (evt.event_type.includes('fail') || evt.event_type.includes('error')) evtClass = 'failed';
-                        else if (evt.event_type.includes('request')) evtClass = tx.op || 'request';
-
-                        evtBar.className = `tx-event-marker ${evtClass}`;
-                        evtBar.style.left = `${evtPos * 100}%`;
-
-                        // Make first/last events slightly larger
-                        const isEndpoint = idx === 0 || idx === sortedEvents.length - 1;
-                        evtBar.style.width = isEndpoint ? '10px' : '6px';
-                        evtBar.style.height = isEndpoint ? '14px' : '10px';
-                        evtBar.style.top = isEndpoint ? '2px' : '4px';
-
-                        const evtType = evt.event_type.replace(/_/g, ' ');
-                        evtBar.title = `${evtType}\n${tx.op}: ${tx.contract || 'unknown'}`;
-                        evtBar.onclick = (e) => { e.stopPropagation(); showTransactionDetail(tx); };
-                        laneDiv.appendChild(evtBar);
-                    });
+                    const duration = tx.duration_ms ? `${tx.duration_ms.toFixed(1)}ms` : 'pending';
+                    txBar.title = `${tx.op}: ${tx.contract || 'no contract'}\nDuration: ${duration}\nEvents: ${events.length}`;
+                    txBar.onclick = (e) => { e.stopPropagation(); showTransactionDetail(tx); };
+                    laneDiv.appendChild(txBar);
                 });
                 lanesContainer.appendChild(laneDiv);
             });
@@ -1902,8 +2022,16 @@
         }
 
         function selectEvent(event) {
-            selectedEvent = event;
             highlightedPeers.clear();
+
+            // Toggle: clicking same event deselects it
+            if (selectedEvent === event) {
+                selectedEvent = null;
+                goLive();  // Return to live view when deselecting
+                return;
+            }
+
+            selectedEvent = event;
 
             if (event) {
                 // Move playhead to event time
@@ -1930,6 +2058,26 @@
                 selectedPeerId = null;
             } else {
                 selectedPeerId = peerId;
+            }
+            updateFilterBar();
+            updateView();
+        }
+
+        function togglePeerFilter(peerId) {
+            if (selectedPeerId === peerId) {
+                selectedPeerId = null;
+            } else {
+                selectedPeerId = peerId;
+            }
+            updateFilterBar();
+            updateView();
+        }
+
+        function toggleTxFilter(txId) {
+            if (selectedTxId === txId) {
+                selectedTxId = null;
+            } else {
+                selectedTxId = txId;
             }
             updateFilterBar();
             updateView();
@@ -1984,6 +2132,10 @@
                 chips.push(`<span class="filter-chip peer">Peer: ${selectedPeerId.substring(0, 12)}...<button class="filter-chip-close" onclick="clearPeerFilter()">×</button></span>`);
             }
 
+            if (selectedTxId) {
+                chips.push(`<span class="filter-chip tx">Tx: ${selectedTxId.substring(0, 8)}...<button class="filter-chip-close" onclick="clearTxFilter()">×</button></span>`);
+            }
+
             if (selectedContract && subscriptionData[selectedContract]) {
                 const shortKey = subscriptionData[selectedContract].short_key;
                 chips.push(`<span class="filter-chip contract">Contract: ${shortKey}<button class="filter-chip-close" onclick="clearContractFilter()">×</button></span>`);
@@ -2002,6 +2154,12 @@
             updateView();
         }
 
+        function clearTxFilter() {
+            selectedTxId = null;
+            updateFilterBar();
+            updateView();
+        }
+
         function clearContractFilter() {
             selectedContract = null;
             updateFilterBar();
@@ -2010,6 +2168,7 @@
 
         function clearAllFilters() {
             selectedPeerId = null;
+            selectedTxId = null;
             selectedContract = null;
             filterText = '';
             document.getElementById('filter-input').value = '';
@@ -2059,6 +2218,16 @@
             document.getElementById('sub-total').textContent = sub.total || 0;
         }
 
+        function updatePeerLifecycleStats() {
+            if (!peerLifecycle) return;
+
+            // Log version distribution for debugging
+            console.log('Version distribution:', peerLifecycle.versions);
+
+            // Could add UI elements to display this info later
+            // For now, the data is available in the peerLifecycle global
+        }
+
         function updateContractDropdown() {
             const menu = document.getElementById('contract-menu');
             const btnLabel = document.getElementById('contract-btn-label');
@@ -2089,20 +2258,43 @@
             const peers = new Map();
             const connections = new Set();
 
-            for (const event of allEvents) {
-                if (event.timestamp > targetTime) break;
+            // Activity window: ±5 minutes around target time
+            const ACTIVITY_WINDOW_NS = 5 * 60 * 1_000_000_000;
+            const windowStart = targetTime - ACTIVITY_WINDOW_NS;
+            const windowEnd = targetTime + ACTIVITY_WINDOW_NS;
 
-                if (event.peer_id && event.location !== undefined) {
-                    peers.set(event.peer_id, {
-                        location: event.location,
-                        ip_hash: event.peer_ip_hash
-                    });
+            // Find peers active near target time (have events within window)
+            // Also build peer info map from peer_presence for location data
+            const peerInfo = new Map();
+            for (const p of peerPresence) {
+                peerInfo.set(p.id, { location: p.location, ip_hash: p.ip_hash });
+            }
+
+            // Scan events to find active peers and connections
+            for (const event of allEvents) {
+                // Check if event is within activity window
+                const inWindow = event.timestamp >= windowStart && event.timestamp <= windowEnd;
+
+                if (inWindow && event.peer_id) {
+                    const info = peerInfo.get(event.peer_id);
+                    if (info) {
+                        peers.set(event.peer_id, info);
+                    } else if (event.location !== undefined) {
+                        peers.set(event.peer_id, {
+                            location: event.location,
+                            ip_hash: event.peer_ip_hash
+                        });
+                    }
                 }
 
-                if (event.connection) {
+                // Build connections from events up to target time
+                if (event.timestamp <= targetTime && event.connection) {
                     const key = [event.connection[0], event.connection[1]].sort().join('|');
                     connections.add(key);
                 }
+
+                // Stop scanning once past the window
+                if (event.timestamp > windowEnd) break;
             }
 
             return { peers, connections };
@@ -2609,8 +2801,29 @@
         }
 
         function updateView() {
-            // Always show time-windowed peers
-            const { peers, connections } = reconstructStateAtTime(currentTime);
+            let peers = new Map();
+            let connections = new Set();
+
+            // For live view, use direct state data (most accurate)
+            // For historical view (time scrubbing), reconstruct from events
+            if (isLive && initialStatePeers.length > 0) {
+                // Live mode: use current network state directly
+                for (const p of initialStatePeers) {
+                    peers.set(p.id, {
+                        location: p.location,
+                        ip_hash: p.ip_hash
+                    });
+                }
+                for (const conn of initialStateConnections) {
+                    const key = [conn[0], conn[1]].sort().join('|');
+                    connections.add(key);
+                }
+            } else {
+                // Historical mode: reconstruct from events
+                const reconstructed = reconstructStateAtTime(currentTime);
+                peers = reconstructed.peers;
+                connections = reconstructed.connections;
+            }
 
             // Get subscription subscribers for highlighting (if contract selected)
             let subscriberPeerIds = new Set();
@@ -2625,12 +2838,14 @@
 
             // Update topology subtitle
             const topoSubtitle = document.querySelector('.panel-subtitle');
-            if (selectedContract && subscriptionData[selectedContract]) {
-                const subData = subscriptionData[selectedContract];
-                const visibleSubs = [...subscriberPeerIds].filter(id => peers.has(id)).length;
-                topoSubtitle.textContent = `${visibleSubs}/${subData.subscribers.length} subscribers visible. Pink arrows show broadcast tree.`;
-            } else {
-                topoSubtitle.textContent = 'Peers arranged by their network location (0.0-1.0). Click a peer to filter events.';
+            if (topoSubtitle) {
+                if (selectedContract && subscriptionData[selectedContract]) {
+                    const subData = subscriptionData[selectedContract];
+                    const visibleSubs = [...subscriberPeerIds].filter(id => peers.has(id)).length;
+                    topoSubtitle.textContent = `${visibleSubs}/${subData.subscribers.length} subscribers visible. Pink arrows show broadcast tree.`;
+                } else {
+                    topoSubtitle.textContent = 'Peers arranged by their network location (0.0-1.0). Click a peer to filter events.';
+                }
             }
 
             // Filter events within the time window
@@ -2638,12 +2853,19 @@
                 Math.abs(e.timestamp - currentTime) < timeWindowNs
             );
 
-            // Filter by selected peer
+            // Filter by selected peer (check peer_id, from_peer, to_peer, and connection)
             if (selectedPeerId) {
                 nearbyEvents = nearbyEvents.filter(e =>
                     e.peer_id === selectedPeerId ||
+                    e.from_peer === selectedPeerId ||
+                    e.to_peer === selectedPeerId ||
                     (e.connection && (e.connection[0] === selectedPeerId || e.connection[1] === selectedPeerId))
                 );
+            }
+
+            // Filter by selected transaction
+            if (selectedTxId) {
+                nearbyEvents = nearbyEvents.filter(e => e.tx_id === selectedTxId);
             }
 
             // Filter by text input
@@ -2689,19 +2911,53 @@
                     </div>
                 `;
             } else {
-                eventsPanel.innerHTML = nearbyEvents.map((e, idx) => {
+                // Add sticky header row
+                const headerHtml = `
+                    <div class="events-header">
+                        <span class="header-time">Time</span>
+                        <span class="header-type">Type</span>
+                        <span class="header-peers">Peers (from → to)</span>
+                        <span class="header-tx">Tx</span>
+                    </div>
+                `;
+
+                const eventsHtml = nearbyEvents.map((e, idx) => {
                     const isSelected = selectedEvent && selectedEvent.timestamp === e.timestamp && selectedEvent.peer_id === e.peer_id;
                     const classes = ['event-item'];
                     if (isSelected) classes.push('selected');
+
+                    // Build peer display: from_peer → to_peer or just peer_id
+                    let peersHtml = '';
+                    const fromPeer = e.from_peer || e.peer_id;
+                    const toPeer = e.to_peer;
+                    const fromActive = selectedPeerId === fromPeer ? ' active' : '';
+                    const toActive = toPeer && selectedPeerId === toPeer ? ' active' : '';
+
+                    if (toPeer && toPeer !== fromPeer) {
+                        peersHtml = `
+                            <span class="event-filter-link${fromActive}" onclick="event.stopPropagation(); togglePeerFilter('${fromPeer}')">${fromPeer.substring(0, 12)}</span>
+                            <span class="event-arrow">→</span>
+                            <span class="event-filter-link${toActive}" onclick="event.stopPropagation(); togglePeerFilter('${toPeer}')">${toPeer.substring(0, 12)}</span>
+                        `;
+                    } else {
+                        peersHtml = `<span class="event-filter-link${fromActive}" onclick="event.stopPropagation(); togglePeerFilter('${fromPeer}')">${fromPeer.substring(0, 12)}</span>`;
+                    }
+
+                    // Transaction ID (shortened)
+                    const txActive = e.tx_id && selectedTxId === e.tx_id ? ' active' : '';
+                    const txHtml = e.tx_id ? `<span class="event-tx event-filter-link${txActive}" onclick="event.stopPropagation(); toggleTxFilter('${e.tx_id}')">${e.tx_id.substring(0, 8)}</span>` : '';
+
                     return `
                         <div class="${classes.join(' ')}" data-event-idx="${idx}" onclick="handleEventClick(${idx})">
                             <span class="event-time">${e.time_str}</span>
-                            <span class="event-badge ${getEventClass(e.event_type)}">${e.event_type}</span>
-                            <span class="event-peer">${e.peer_id}</span>
-                            ${e.contract ? `<span class="event-contract">${e.contract}</span>` : ''}
+                            <span class="event-badge ${getEventClass(e.event_type)}">${getEventLabel(e.event_type)}</span>
+                            <div class="event-peers">${peersHtml}</div>
+                            ${txHtml}
                         </div>
                     `;
                 }).reverse().join('');
+
+                eventsPanel.innerHTML = headerHtml + eventsHtml;
 
                 // Store events for click handler and topology visualization
                 displayedEvents = nearbyEvents;
@@ -2888,13 +3144,16 @@
                     yourIpHash = data.your_ip_hash;
                     console.log('You:', yourPeerId, '#' + yourIpHash);
 
-                    // Update legend
-                    document.getElementById('legend-you').style.display = 'flex';
-                    document.getElementById('your-hash').textContent = '#' + yourIpHash;
+                    // Update legend (if elements exist)
+                    const legendYou = document.getElementById('legend-you');
+                    const yourHash = document.getElementById('your-hash');
+                    if (legendYou) legendYou.style.display = 'flex';
+                    if (yourHash) yourHash.textContent = '#' + yourIpHash;
                 }
 
                 // Show legend
-                document.getElementById('topology-legend').style.display = 'flex';
+                const topoLegend = document.getElementById('topology-legend');
+                if (topoLegend) topoLegend.style.display = 'flex';
 
                 // Store subscription data
                 if (data.subscriptions) {
@@ -2910,6 +3169,29 @@
                     console.log('Op stats loaded');
                 }
 
+                // Store peer and connection data from state
+                if (data.peers) {
+                    initialStatePeers = data.peers;
+                    console.log('Peers from state:', initialStatePeers.length);
+                }
+                if (data.connections) {
+                    initialStateConnections = data.connections;
+                    console.log('Connections from state:', initialStateConnections.length);
+                }
+
+                // Store peer lifecycle data
+                if (data.peer_lifecycle) {
+                    peerLifecycle = data.peer_lifecycle;
+                    console.log('Peer lifecycle:', peerLifecycle.active_count, 'active,',
+                                peerLifecycle.gateway_count, 'gateways');
+                    updatePeerLifecycleStats();
+                }
+
+                // Trigger initial view update if we have peers
+                if (initialStatePeers.length > 0) {
+                    updateView();
+                }
+
             } else if (data.type === 'history') {
                 allEvents.length = 0;
                 allEvents.push(...data.events);
@@ -2920,6 +3202,12 @@
                 if (data.transactions) {
                     allTransactions = data.transactions;
                     console.log(`Loaded ${allTransactions.length} transactions`);
+                }
+
+                // Store peer presence for historical reconstruction
+                if (data.peer_presence) {
+                    peerPresence = data.peer_presence;
+                    console.log(`Loaded ${peerPresence.length} peer presence records`);
                 }
 
                 console.log(`Loaded ${allEvents.length} events`);

@@ -32,9 +32,17 @@ clients = set()
 peers = {}  # ip -> {id, location, last_seen, connections: set()}
 connections = set()  # frozenset({ip1, ip2})
 
+# Peer presence timeline for historical reconstruction
+# ip -> {id, ip_hash, location, first_seen_ns}
+peer_presence = {}
+
 # Subscription trees per contract
 # contract_key -> {subscribers: set(ip), broadcasts: [(from_ip, to_ip, timestamp)]}
 subscriptions = {}  # contract_key -> subscription data
+
+# Seeding state per contract
+# contract_key -> {is_seeding: bool, upstream: peer_str, downstream: [peer_str], downstream_count: int}
+seeding_state = {}  # contract_key -> seeding/subscription tree data
 
 # Operation statistics
 op_stats = {
@@ -43,6 +51,10 @@ op_stats = {
     "update": {"requests": 0, "successes": 0, "broadcasts": 0, "latencies": []},
     "subscribe": {"requests": 0, "successes": 0},
 }
+
+# Peer lifecycle tracking
+# peer_id -> {version, arch, os, os_version, is_gateway, startup_time, shutdown_time, graceful}
+peer_lifecycle = {}
 
 # Track pending operations by transaction ID for latency calculation
 # tx_id -> {"op": "put"|"get"|"update", "start_ns": timestamp}
@@ -114,83 +126,115 @@ def prune_old_transactions():
             del transactions[old_tx_id]
 
 
-def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None):
-    """Track an event as part of a transaction for timeline lanes."""
+def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None, body_type=None):
+    """Track an event as part of a transaction for timeline lanes.
+
+    All events with a valid transaction ID are tracked. Events are grouped by
+    transaction ID to show related events together in the timeline.
+    """
     if not tx_id or tx_id == "00000000000000000000000000":
         return  # Skip null transaction IDs
 
-    # Determine operation type from event
+    # Use body_type for more specific event type if available (especially for connect events)
+    display_event_type = body_type if body_type else event_type
+
+    # Determine operation type from event type prefix
     op_type = None
     is_start = False
     is_end = False
     status = None
 
-    if event_type == "put_request":
+    # Derive op_type from event_type prefix
+    if event_type.startswith("put_"):
         op_type = "put"
-        is_start = True
-    elif event_type == "put_success":
-        op_type = "put"
-        is_end = True
-        status = "success"
-    elif event_type == "get_request":
+        if event_type == "put_request":
+            is_start = True
+        elif event_type == "put_success":
+            is_end = True
+            status = "success"
+    elif event_type.startswith("get_"):
         op_type = "get"
-        is_start = True
-    elif event_type == "get_success":
-        op_type = "get"
-        is_end = True
-        status = "success"
-    elif event_type == "get_not_found":
-        op_type = "get"
-        is_end = True
-        status = "not_found"
-    elif event_type == "update_request":
+        if event_type == "get_request":
+            is_start = True
+        elif event_type == "get_success":
+            is_end = True
+            status = "success"
+        elif event_type == "get_not_found":
+            is_end = True
+            status = "not_found"
+    elif event_type.startswith("update_"):
         op_type = "update"
-        is_start = True
-    elif event_type == "update_success":
-        op_type = "update"
-        is_end = True
-        status = "success"
-    elif event_type == "subscribe_request":
+        if event_type == "update_request":
+            is_start = True
+        elif event_type == "update_success":
+            is_end = True
+            status = "success"
+    elif event_type.startswith("subscribe"):
         op_type = "subscribe"
+        if event_type == "subscribe_request":
+            is_start = True
+        elif event_type == "subscribed":
+            is_end = True
+            status = "success"
+    elif event_type.startswith("connect"):
+        op_type = "connect"
+        if event_type == "connect_request_sent":
+            is_start = True
+        elif event_type == "connect_connected":
+            is_end = True
+            status = "success"
+    elif event_type == "disconnect":
+        op_type = "disconnect"
         is_start = True
-    elif event_type == "subscribed":
-        op_type = "subscribe"
         is_end = True
-        status = "success"
-    elif event_type in ("broadcast_emitted", "update_broadcast_emitted"):
+        status = "complete"
+    elif "broadcast" in event_type:
         op_type = "broadcast"
+    else:
+        # For any other event type, use the prefix before underscore as op_type
+        parts = event_type.split("_")
+        op_type = parts[0] if parts else "other"
 
-    # Create or update transaction
+    # Create or update transaction - always create if we have a valid tx_id
     if tx_id not in transactions:
-        if is_start or op_type:  # Start new transaction
-            transactions[tx_id] = {
-                "op": op_type or "unknown",
-                "contract": contract_key,
-                "events": [],
-                "start_ns": timestamp,
-                "end_ns": None,
-                "status": "pending",
-            }
-            transaction_order.append(tx_id)
-            prune_old_transactions()
+        transactions[tx_id] = {
+            "op": op_type or "unknown",
+            "contract": contract_key,
+            "events": [],
+            "start_ns": timestamp,
+            "end_ns": None,
+            "status": "pending" if is_start and not is_end else "complete",
+        }
+        transaction_order.append(tx_id)
+        prune_old_transactions()
 
-    if tx_id in transactions:
-        tx = transactions[tx_id]
-        # Add event to transaction
-        tx["events"].append({
-            "timestamp": timestamp,
-            "event_type": event_type,
-            "peer_id": peer_id,
-        })
-        # Update end time and status
-        if is_end:
-            tx["end_ns"] = timestamp
-            tx["status"] = status or "complete"
-        elif timestamp > (tx["end_ns"] or 0):
-            tx["end_ns"] = timestamp
-        # Update contract if not set
-        if contract_key and not tx["contract"]:
-            tx["contract"] = contract_key
+    tx = transactions[tx_id]
+
+    # Add event to transaction (use display_event_type for more specific types)
+    tx["events"].append({
+        "timestamp": timestamp,
+        "event_type": display_event_type,
+        "peer_id": peer_id,
+    })
+
+    # Update operation type if we now have a more specific one
+    if op_type and tx["op"] == "unknown":
+        tx["op"] = op_type
+
+    # Update start time if this event is earlier
+    if timestamp < tx["start_ns"]:
+        tx["start_ns"] = timestamp
+
+    # Update end time and status
+    if is_end:
+        tx["end_ns"] = timestamp
+        tx["status"] = status or "complete"
+    elif timestamp > (tx["end_ns"] or 0):
+        tx["end_ns"] = timestamp
+
+    # Update contract if not set
+    if contract_key and not tx["contract"]:
+        tx["contract"] = contract_key
 
 
 def process_record(record, store_history=True):
@@ -213,6 +257,10 @@ def process_record(record, store_history=True):
     event_type = attrs.get("event_type") or body.get("type", "")
     if not event_type:
         return None
+
+    # Get body type for more specific event types (especially for connect events)
+    # event_type from attrs is generic ("connect"), body type is specific ("start_connection", "connected", "finished")
+    body_type = body.get("type", "")
 
     # Track operation statistics
     tx_id = body.get("id") or attrs.get("transaction_id")  # Transaction ID for correlating request/success
@@ -268,12 +316,121 @@ def process_record(record, store_history=True):
     elif event_type == "subscribed":
         op_stats["subscribe"]["successes"] += 1
 
+    # Handle new subscription tree telemetry events (v0.1.70+)
+    elif event_type == "seeding_started":
+        # Local client started subscribing to a contract
+        contract_key = body.get("key") or body.get("contract_key")
+        if contract_key:
+            if contract_key not in seeding_state:
+                seeding_state[contract_key] = {
+                    "is_seeding": False,
+                    "upstream": None,
+                    "downstream": [],
+                    "downstream_count": 0,
+                }
+            seeding_state[contract_key]["is_seeding"] = True
+
+    elif event_type == "seeding_stopped":
+        # Local client stopped subscribing (last client unsubscribed)
+        contract_key = body.get("key") or body.get("contract_key")
+        reason = body.get("reason", "Unknown")
+        if contract_key and contract_key in seeding_state:
+            seeding_state[contract_key]["is_seeding"] = False
+            seeding_state[contract_key]["stopped_reason"] = reason
+
+    elif event_type == "downstream_added":
+        # A downstream peer subscribed through us
+        contract_key = body.get("key") or body.get("contract_key")
+        subscriber = body.get("subscriber")
+        downstream_count = body.get("downstream_count", 0)
+        if contract_key:
+            if contract_key not in seeding_state:
+                seeding_state[contract_key] = {
+                    "is_seeding": False,
+                    "upstream": None,
+                    "downstream": [],
+                    "downstream_count": 0,
+                }
+            state = seeding_state[contract_key]
+            state["downstream_count"] = downstream_count
+            if subscriber and subscriber not in state["downstream"]:
+                state["downstream"].append(subscriber)
+
+    elif event_type == "downstream_removed":
+        # A downstream peer unsubscribed
+        contract_key = body.get("key") or body.get("contract_key")
+        subscriber = body.get("subscriber")
+        downstream_count = body.get("downstream_count", 0)
+        reason = body.get("reason", "Unknown")
+        if contract_key and contract_key in seeding_state:
+            state = seeding_state[contract_key]
+            state["downstream_count"] = downstream_count
+            if subscriber and subscriber in state["downstream"]:
+                state["downstream"].remove(subscriber)
+
+    elif event_type == "upstream_set":
+        # We subscribed to an upstream peer for this contract
+        contract_key = body.get("key") or body.get("contract_key")
+        upstream = body.get("upstream")
+        if contract_key:
+            if contract_key not in seeding_state:
+                seeding_state[contract_key] = {
+                    "is_seeding": False,
+                    "upstream": None,
+                    "downstream": [],
+                    "downstream_count": 0,
+                }
+            seeding_state[contract_key]["upstream"] = upstream
+
+    elif event_type == "unsubscribed":
+        # We unsubscribed from a contract (could be voluntary or upstream disconnected)
+        contract_key = body.get("key") or body.get("contract_key")
+        reason = body.get("reason", "Unknown")
+        upstream = body.get("upstream")
+        if contract_key and contract_key in seeding_state:
+            state = seeding_state[contract_key]
+            state["upstream"] = None
+            state["unsubscribed_reason"] = reason
+
+    elif event_type == "subscription_state":
+        # Full snapshot of subscription state for a contract
+        contract_key = body.get("key") or body.get("contract_key")
+        if contract_key:
+            seeding_state[contract_key] = {
+                "is_seeding": body.get("is_seeding", False),
+                "upstream": body.get("upstream"),
+                "downstream": body.get("downstream", []),
+                "downstream_count": body.get("downstream_count", 0),
+            }
+
+    elif event_type == "peer_startup":
+        # Track peer startup with version/arch/OS info
+        peer_id = attrs.get("peer_id", "")
+        if peer_id:
+            peer_lifecycle[peer_id] = {
+                "version": body.get("version", "unknown"),
+                "arch": body.get("arch", "unknown"),
+                "os": body.get("os", "unknown"),
+                "os_version": body.get("os_version"),
+                "is_gateway": body.get("is_gateway", False),
+                "startup_time": timestamp,
+                "shutdown_time": None,
+                "graceful": None,
+            }
+    elif event_type == "peer_shutdown":
+        # Track peer shutdown
+        peer_id = attrs.get("peer_id", "")
+        if peer_id and peer_id in peer_lifecycle:
+            peer_lifecycle[peer_id]["shutdown_time"] = timestamp
+            peer_lifecycle[peer_id]["graceful"] = body.get("graceful", False)
+            peer_lifecycle[peer_id]["shutdown_reason"] = body.get("reason")
+
     # Extract peer info
     this_peer_id, this_ip, this_loc = parse_peer_string(body.get("this_peer", ""))
     other_peer_id, other_ip, other_loc = None, None, None
 
     # Check various fields for other peer
-    for field in ["connected_peer", "target", "requester"]:
+    for field in ["connected_peer", "target", "requester", "subscriber", "upstream"]:
         if field in body:
             other_peer_id, other_ip, other_loc = parse_peer_string(body[field])
             if other_ip:
@@ -295,6 +452,15 @@ def process_record(record, store_history=True):
             else:
                 peers[ip]["location"] = loc
                 peers[ip]["last_seen"] = timestamp
+
+            # Track peer presence for historical reconstruction
+            if ip not in peer_presence:
+                peer_presence[ip] = {
+                    "id": anonymize_ip(ip),
+                    "ip_hash": ip_hash(ip),
+                    "location": loc,
+                    "first_seen": timestamp
+                }
 
     # Track connections (event_type is "connect" in attrs, "connected" in body)
     connection_added = None
@@ -358,10 +524,12 @@ def process_record(record, store_history=True):
         return None
 
     # Build event for client
+    # For connect events, use specific body_type (start_connection, connected, finished) instead of generic "connect"
+    display_event_type = body_type if (event_type == "connect" and body_type) else event_type
     event = {
         "type": "event",
         "timestamp": timestamp,
-        "event_type": event_type,
+        "event_type": display_event_type,
         "peer_id": anonymize_ip(display_ip),
         "peer_ip_hash": ip_hash(display_ip),
         "location": display_loc,
@@ -388,8 +556,8 @@ def process_record(record, store_history=True):
     # Include transaction ID for timeline lanes
     if tx_id and tx_id != "00000000000000000000000000":
         event["tx_id"] = tx_id
-        # Track this event as part of the transaction
-        track_transaction(tx_id, event_type, timestamp, event["peer_id"], contract_key)
+        # Track this event as part of the transaction (pass body_type for specific connect events)
+        track_transaction(tx_id, event_type, timestamp, event["peer_id"], contract_key, body_type)
 
     # Store in history buffer
     if store_history:
@@ -451,34 +619,72 @@ def get_operation_stats():
 def get_subscription_trees():
     """Get subscription tree data for all contracts."""
     result = {}
-    for contract_key, data in subscriptions.items():
-        # Convert sets to lists for JSON serialization
-        tree = {k: list(v) for k, v in data["tree"].items()}
-        if tree or data["subscribers"]:  # Only include contracts with actual data
+
+    # Get all contract keys from both sources
+    all_keys = set(subscriptions.keys()) | set(seeding_state.keys())
+
+    for contract_key in all_keys:
+        # Get broadcast tree data (from broadcast_emitted events)
+        sub_data = subscriptions.get(contract_key, {"subscribers": set(), "tree": {}})
+        tree = {k: list(v) for k, v in sub_data["tree"].items()}
+
+        # Get seeding/subscription state (from new v0.1.70 events)
+        seed_data = seeding_state.get(contract_key, {})
+
+        # Only include contracts with actual data
+        if tree or sub_data["subscribers"] or seed_data:
             result[contract_key] = {
-                "subscribers": list(data["subscribers"]),
+                "subscribers": list(sub_data["subscribers"]),
                 "tree": tree,
                 "short_key": contract_key[:12] + "...",
+                # New seeding state fields
+                "is_seeding": seed_data.get("is_seeding", False),
+                "upstream": seed_data.get("upstream"),
+                "downstream": seed_data.get("downstream", []),
+                "downstream_count": seed_data.get("downstream_count", 0),
             }
     return result
 
 
 def get_network_state():
     """Get current network state for new clients."""
+    import time
+    now_ns = time.time_ns()
+    # Consider peers stale if not seen in last 5 minutes
+    STALE_THRESHOLD_NS = 5 * 60 * 1_000_000_000
+
+    # Filter to only recently active peers
+    active_peer_ips = set()
     peer_list = []
     for ip, data in peers.items():
         if is_public_ip(ip):
-            peer_list.append({
-                "id": data["id"],
-                "ip_hash": data.get("ip_hash", ip_hash(ip)),
-                "location": data["location"],
-            })
+            last_seen = data.get("last_seen", 0)
+            if now_ns - last_seen < STALE_THRESHOLD_NS:
+                active_peer_ips.add(ip)
+                peer_list.append({
+                    "id": data["id"],
+                    "ip_hash": data.get("ip_hash", ip_hash(ip)),
+                    "location": data["location"],
+                })
 
+    # Only include connections between active peers
     conn_list = []
     for conn in connections:
         ips = list(conn)
-        if len(ips) == 2 and is_public_ip(ips[0]) and is_public_ip(ips[1]):
+        if len(ips) == 2 and ips[0] in active_peer_ips and ips[1] in active_peer_ips:
             conn_list.append([anonymize_ip(ips[0]), anonymize_ip(ips[1])])
+
+    # Get active peers from lifecycle data (those with startup but no shutdown)
+    active_peers = {
+        pid: data for pid, data in peer_lifecycle.items()
+        if data.get("shutdown_time") is None
+    }
+
+    # Aggregate version stats
+    version_counts = {}
+    for data in active_peers.values():
+        v = data.get("version", "unknown")
+        version_counts[v] = version_counts.get(v, 0) + 1
 
     return {
         "type": "state",
@@ -486,6 +692,12 @@ def get_network_state():
         "connections": conn_list,
         "subscriptions": get_subscription_trees(),
         "op_stats": get_operation_stats(),
+        "peer_lifecycle": {
+            "active_count": len(active_peers),
+            "gateway_count": sum(1 for d in active_peers.values() if d.get("is_gateway")),
+            "versions": version_counts,
+            "peers": list(active_peers.values())[:50],  # Limit to last 50 for display
+        },
     }
 
 
@@ -518,13 +730,20 @@ def get_transactions_list():
 def get_history():
     """Get event history for time-travel feature."""
     prune_old_events()
+    # Sort events by timestamp for proper timeline display
+    sorted_events = sorted(event_history, key=lambda e: e["timestamp"])
+
+    # Sort peer presence by first_seen for historical reconstruction
+    sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
+
     return {
         "type": "history",
-        "events": list(event_history),
+        "events": sorted_events,
         "transactions": get_transactions_list(),
+        "peer_presence": sorted_presence,
         "time_range": {
-            "start": event_history[0]["timestamp"] if event_history else 0,
-            "end": event_history[-1]["timestamp"] if event_history else 0,
+            "start": sorted_events[0]["timestamp"] if sorted_events else 0,
+            "end": sorted_events[-1]["timestamp"] if sorted_events else 0,
         }
     }
 
@@ -570,14 +789,27 @@ GATEWAY_IP = "5.9.111.215"
 GATEWAY_PEER_ID = anonymize_ip(GATEWAY_IP)
 GATEWAY_IP_HASH = ip_hash(GATEWAY_IP)
 
+# Store client IPs from X-Forwarded-For headers (keyed by connection id)
+client_real_ips = {}
+
+
+async def process_request(connection, request):
+    """Capture X-Forwarded-For header before WebSocket handshake."""
+    # Store the real client IP for later use in handle_client
+    forwarded_for = request.headers.get("X-Forwarded-For", "")
+    if forwarded_for:
+        real_ip = forwarded_for.split(",")[0].strip()
+        client_real_ips[id(connection)] = real_ip
+    return None  # Continue with normal WebSocket handling
+
 
 async def handle_client(websocket):
     """Handle a WebSocket client connection."""
     clients.add(websocket)
 
-    # Get client IP for self-identification
-    client_ip = None
-    if websocket.remote_address:
+    # Get client IP - check stored X-Forwarded-For first, then fall back to remote_address
+    client_ip = client_real_ips.pop(id(websocket), None)
+    if not client_ip and websocket.remote_address:
         client_ip = websocket.remote_address[0]
     client_ip_hash = ip_hash(client_ip) if client_ip else ""
     client_peer_id = anonymize_ip(client_ip) if client_ip else ""
@@ -646,9 +878,17 @@ async def main():
     # Load existing state
     await load_initial_state()
 
-    # Start WebSocket server
+    # Start WebSocket server with compression enabled
+    # permessage-deflate provides ~40x compression for JSON data
     print(f"Starting WebSocket server on port {WS_PORT}...")
-    async with websockets.serve(handle_client, "0.0.0.0", WS_PORT):
+    async with websockets.serve(
+        handle_client,
+        "0.0.0.0",
+        WS_PORT,
+        compression="deflate",  # Enable per-message deflate compression
+        max_size=50 * 1024 * 1024,  # 50MB max message size for large history
+        process_request=process_request,  # Capture X-Forwarded-For headers
+    ):
         # Start log tailer
         await tail_log()
 
