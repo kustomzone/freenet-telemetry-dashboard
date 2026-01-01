@@ -706,11 +706,15 @@ def get_operation_stats():
     }
 
 
-def get_subscription_trees():
+def get_subscription_trees(active_peer_ids=None):
     """Get subscription tree data for all contracts.
 
     Returns per-peer subscription state so the UI can show which peer
     has which role (seeding, upstream, downstream) in the subscription tree.
+
+    Args:
+        active_peer_ids: Set of currently active telemetry peer_ids. If provided,
+                        only include peers in this set (filters out stale/test peers).
     """
     result = {}
 
@@ -726,12 +730,16 @@ def get_subscription_trees():
         # seeding_state[contract_key] is now {peer_id -> state}
         peer_states = seeding_state.get(contract_key, {})
 
-        # Compute aggregate stats across all peers for this contract
+        # Compute aggregate stats across only active peers (if filter provided)
         total_downstream = 0
         any_seeding = False
         peers_with_data = []
 
         for peer_id, state in peer_states.items():
+            # Skip peers not in active set (if filtering enabled)
+            if active_peer_ids is not None and peer_id not in active_peer_ids:
+                continue
+
             if state.get("is_seeding"):
                 any_seeding = True
             total_downstream += state.get("downstream_count", 0)
@@ -743,8 +751,8 @@ def get_subscription_trees():
                 "downstream_count": state.get("downstream_count", 0),
             })
 
-        # Only include contracts with actual data
-        if tree or sub_data["subscribers"] or peer_states:
+        # Only include contracts with actual data from active peers
+        if tree or sub_data["subscribers"] or peers_with_data:
             result[contract_key] = {
                 "subscribers": list(sub_data["subscribers"]),
                 "tree": tree,
@@ -754,7 +762,7 @@ def get_subscription_trees():
                 # Aggregate stats for quick display
                 "total_downstream": total_downstream,
                 "any_seeding": any_seeding,
-                "peer_count": len(peer_states),
+                "peer_count": len(peers_with_data),
             }
     return result
 
@@ -833,7 +841,7 @@ def get_network_state():
         "type": "state",
         "peers": peer_list,
         "connections": conn_list,
-        "subscriptions": get_subscription_trees(),
+        "subscriptions": get_subscription_trees(active_peer_ids),
         "contract_states": filtered_contract_states,
         "op_stats": get_operation_stats(),
         "peer_lifecycle": {

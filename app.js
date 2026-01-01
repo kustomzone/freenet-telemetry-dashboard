@@ -1277,7 +1277,7 @@
                     svg.appendChild(labelText);
                 }
 
-                // Label
+                // Label (inside ring - peer hash)
                 if (peers.size <= 12) {
                     const angle = peer.location * 2 * Math.PI - Math.PI / 2;
                     const labelRadius = RADIUS - 30;
@@ -1294,6 +1294,34 @@
                     text.setAttribute('dominant-baseline', 'middle');
                     text.textContent = `#${peer.ip_hash || id.substring(5, 11)}`;
                     svg.appendChild(text);
+                }
+
+                // Location label (outside ring) - show peer's location like 0.35
+                // Skip if too close to fixed markers (0, 0.25, 0.5, 0.75) to avoid overlap
+                const fixedMarkers = [0, 0.25, 0.5, 0.75];
+                const minDistance = 0.03;  // Minimum distance from fixed markers
+                const nearFixedMarker = fixedMarkers.some(m =>
+                    Math.abs(peer.location - m) < minDistance ||
+                    Math.abs(peer.location - m + 1) < minDistance ||  // Handle wrap around 0/1
+                    Math.abs(peer.location - m - 1) < minDistance
+                );
+
+                if (!nearFixedMarker && peers.size <= 20) {
+                    const angle = peer.location * 2 * Math.PI - Math.PI / 2;
+                    const outerRadius = RADIUS + 25;
+                    const ox = CENTER + outerRadius * Math.cos(angle);
+                    const oy = CENTER + outerRadius * Math.sin(angle);
+
+                    const locText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                    locText.setAttribute('x', ox);
+                    locText.setAttribute('y', oy);
+                    locText.setAttribute('fill', isNonSubscriber ? '#3a3f47' : '#00d4aa');
+                    locText.setAttribute('font-size', '10');
+                    locText.setAttribute('font-family', 'JetBrains Mono, monospace');
+                    locText.setAttribute('text-anchor', 'middle');
+                    locText.setAttribute('dominant-baseline', 'middle');
+                    locText.textContent = peer.location.toFixed(2);
+                    svg.appendChild(locText);
                 }
             });
 
