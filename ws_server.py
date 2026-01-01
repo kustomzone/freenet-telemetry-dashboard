@@ -544,9 +544,9 @@ def process_record(record, store_history=True):
                 # Update peer_id if we didn't have it before
                 peer_presence[ip]["peer_id"] = peer_id
 
-    # Track connections (event_type is "connect" in attrs, "connected" in body)
+    # Track connections (event_type in attrs can be "connect", "connected", or "connect_connected")
     connection_added = None
-    if event_type in ("connect", "connected") and this_ip and other_ip:
+    if event_type in ("connect", "connected", "connect_connected") and this_ip and other_ip:
         if is_public_ip(this_ip) and is_public_ip(other_ip):
             conn = frozenset({this_ip, other_ip})
             if conn not in connections:
