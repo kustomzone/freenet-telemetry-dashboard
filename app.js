@@ -1119,32 +1119,46 @@
                 let glowColor = 'rgba(0, 127, 255, 0.2)';
                 let label = '';
                 let peerStateHash = null;
+                let isNonSubscriber = false;  // Track if peer is not a subscriber (for hollow rendering)
 
-                // Check for state hash when a contract is selected
-                // Note: contractStates is keyed by telemetry peer_id, not anonymized id
-                if (selectedContract && contractStates[selectedContract] && peer.peer_id) {
-                    const peerState = contractStates[selectedContract][peer.peer_id];
-                    if (peerState && peerState.hash) {
-                        peerStateHash = peerState.hash;
-                        const colors = hashToColor(peerStateHash);
-                        fillColor = colors.fill;
-                        glowColor = colors.glow;
+                // When a contract is selected, show subscribers prominently
+                if (selectedContract) {
+                    if (isSubscriber) {
+                        // Subscriber - check for state hash to color by sync state
+                        if (contractStates[selectedContract] && peer.peer_id) {
+                            const peerState = contractStates[selectedContract][peer.peer_id];
+                            if (peerState && peerState.hash) {
+                                peerStateHash = peerState.hash;
+                                const colors = hashToColor(peerStateHash);
+                                fillColor = colors.fill;
+                                glowColor = colors.glow;
+                            } else {
+                                // Subscriber but no state hash - use pink
+                                fillColor = '#f472b6';
+                                glowColor = 'rgba(244, 114, 182, 0.3)';
+                            }
+                        } else {
+                            // Subscriber but no state data - use pink
+                            fillColor = '#f472b6';
+                            glowColor = 'rgba(244, 114, 182, 0.3)';
+                        }
                     } else {
-                        // Peer doesn't have state for this contract - dim it
-                        fillColor = '#3a3f47';
-                        glowColor = 'rgba(58, 63, 71, 0.2)';
+                        // Not a subscriber - mark for hollow rendering
+                        isNonSubscriber = true;
+                        fillColor = 'transparent';
+                        glowColor = 'rgba(58, 63, 71, 0.1)';
                     }
                 }
 
                 if (isGateway) {
-                    if (!selectedContract) {
-                        fillColor = '#f59e0b';  // Amber for gateway
+                    if (!selectedContract || isSubscriber) {
+                        fillColor = isNonSubscriber ? 'transparent' : '#f59e0b';  // Amber for gateway
                         glowColor = 'rgba(245, 158, 11, 0.3)';
                     }
                     label = 'GW';
                 } else if (isYou) {
-                    if (!selectedContract) {
-                        fillColor = '#10b981';  // Emerald for you
+                    if (!selectedContract || isSubscriber) {
+                        fillColor = isNonSubscriber ? 'transparent' : '#10b981';  // Emerald for you
                         glowColor = 'rgba(16, 185, 129, 0.3)';
                     }
                     label = 'YOU';
@@ -1193,8 +1207,17 @@
                 circle.setAttribute('r', nodeSize);
                 circle.setAttribute('fill', fillColor);
                 circle.setAttribute('class', 'peer-node');
-                circle.setAttribute('filter', 'url(#glow)');
+                if (!isNonSubscriber) {
+                    circle.setAttribute('filter', 'url(#glow)');
+                }
                 circle.setAttribute('style', 'pointer-events: none;');
+
+                // Non-subscribers get hollow dotted outline when contract is selected
+                if (isNonSubscriber) {
+                    circle.setAttribute('stroke', '#484f58');
+                    circle.setAttribute('stroke-width', '1.5');
+                    circle.setAttribute('stroke-dasharray', '3,2');
+                }
 
                 const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
                 const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
@@ -1594,8 +1617,15 @@
             if (topoSubtitle) {
                 if (selectedContract && contractData[selectedContract]) {
                     const subData = contractData[selectedContract];
+                    const totalSubs = subData.subscribers?.length || 0;
                     const visibleSubs = [...subscriberPeerIds].filter(id => peers.has(id)).length;
-                    topoSubtitle.textContent = `${visibleSubs}/${subData.subscribers.length} subscribers visible. Pink arrows show broadcast tree.`;
+                    if (totalSubs === 0) {
+                        topoSubtitle.textContent = 'No subscribers for this contract. Dotted circles = non-subscribers.';
+                    } else if (visibleSubs === 0) {
+                        topoSubtitle.textContent = `${totalSubs} subscribers (none visible in current view). Dotted circles = non-subscribers.`;
+                    } else {
+                        topoSubtitle.textContent = `${visibleSubs}/${totalSubs} subscribers visible (pink/colored). Dotted = non-subscribers.`;
+                    }
                 } else {
                     topoSubtitle.textContent = 'Peers arranged by their network location (0.0-1.0). Click a peer to filter events.';
                 }
