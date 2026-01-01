@@ -1836,9 +1836,6 @@
                 dragMode = 'move'; dragStartX = getClientX(e);
                 const edges = getWindowEdges(); dragStartLeft = edges.left; dragStartRight = edges.right;
                 playhead.style.cursor = 'grabbing';
-                // Debug: visual feedback for touch
-                playhead.style.background = 'rgba(255, 100, 100, 0.3)';
-                console.log('startMove fired, dragMode:', dragMode, 'event type:', e.type);
                 e.preventDefault(); e.stopPropagation();
             }
             playhead.addEventListener('mousedown', startMove);
@@ -1850,7 +1847,6 @@
                 if (!dragMode) return;
                 // Prevent scroll during drag on touch devices
                 if (e.cancelable) e.preventDefault();
-                console.log('handleDragMove, event type:', e.type, 'touches:', e.touches?.length);
                 const clientX = getClientX(e);
                 const rect = timeline.getBoundingClientRect();
                 const timelineWidth = rect.width - 32;
@@ -1884,13 +1880,10 @@
             document.addEventListener('mousemove', handleDragMove);
             document.addEventListener('touchmove', handleDragMove, { passive: false });
 
-            function handleDragEnd(e) {
-                console.log('handleDragEnd, event type:', e?.type, 'dragMode was:', dragMode);
+            function handleDragEnd() {
                 if (dragMode) {
                     justDragged = true;
                     if (dragMode === 'move') playhead.style.cursor = 'grab';
-                    // Reset debug color
-                    playhead.style.background = 'rgba(255, 255, 255, 0.08)';
                     dragMode = null;
                     setTimeout(() => { justDragged = false; }, 100);
                 }
