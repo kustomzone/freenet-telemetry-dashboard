@@ -1300,15 +1300,22 @@
             // Center stats
             const centerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
 
+            // When contract selected, show subscriber count; otherwise show peer count
+            const visibleSubscribers = selectedContract ? [...subscriberPeerIds].filter(id => peers.has(id)).length : 0;
+            const displayCount = selectedContract ? visibleSubscribers : peers.size;
+            const displayLabel = selectedContract
+                ? (visibleSubscribers > 0 ? 'SUBSCRIBERS' : 'PEERS')
+                : 'PEERS';
+
             const countText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             countText.setAttribute('x', CENTER);
             countText.setAttribute('y', CENTER - 8);
-            countText.setAttribute('fill', '#00d4aa');
+            countText.setAttribute('fill', selectedContract && visibleSubscribers === 0 ? '#484f58' : '#00d4aa');
             countText.setAttribute('font-size', '36');
             countText.setAttribute('font-family', 'JetBrains Mono, monospace');
             countText.setAttribute('font-weight', '300');
             countText.setAttribute('text-anchor', 'middle');
-            countText.textContent = peers.size;
+            countText.textContent = displayCount;
             centerGroup.appendChild(countText);
 
             const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
@@ -1320,7 +1327,7 @@
             labelText.setAttribute('text-anchor', 'middle');
             labelText.setAttribute('text-transform', 'uppercase');
             labelText.setAttribute('letter-spacing', '2');
-            labelText.textContent = selectedContract ? 'SUBSCRIBERS' : 'PEERS';
+            labelText.textContent = displayLabel;
             centerGroup.appendChild(labelText);
 
             svg.appendChild(centerGroup);
