@@ -1213,8 +1213,8 @@
                     glowColor = 'rgba(251, 191, 36, 0.3)';
                 }
 
-                const nodeSize = (isHighlighted || isPeerSelected || isGateway || isYou || isSubscriber) ? 10 : 8;
-                const glowSize = (isHighlighted || isPeerSelected || isGateway || isYou) ? 18 : 14;
+                const nodeSize = (isHighlighted || isPeerSelected || isGateway || isYou || isSubscriber) ? 5 : 4;
+                const glowSize = (isHighlighted || isPeerSelected || isGateway || isYou) ? 9 : 7;
 
                 // Outer glow
                 const glow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
