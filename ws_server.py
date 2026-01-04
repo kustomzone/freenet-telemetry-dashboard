@@ -12,14 +12,158 @@ import json
 import hashlib
 import re
 import time
+import os
 from datetime import datetime
 from pathlib import Path
 from collections import deque
 
 import websockets
 
+# Optional OpenAI for name sanitization
+try:
+    from openai import OpenAI
+    OPENAI_AVAILABLE = True
+except ImportError:
+    OPENAI_AVAILABLE = False
+
 TELEMETRY_LOG = Path("/var/log/freenet-telemetry/logs.jsonl")
 WS_PORT = 3134
+PEER_NAMES_FILE = Path("/var/www/freenet-dashboard/peer_names.json")
+
+# Load OpenAI API key from environment or .env
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
+if not OPENAI_API_KEY:
+    env_file = Path("/home/ian/code/mediator/main/.env")
+    if env_file.exists():
+        for line in env_file.read_text().splitlines():
+            if line.startswith("OPENAI_API_KEY="):
+                OPENAI_API_KEY = line.split("=", 1)[1].strip()
+                break
+
+# Peer names storage: ip_hash -> name
+peer_names = {}
+
+# Rate limiting: ip_hash -> [timestamp1, timestamp2, ...] (last N changes within window)
+name_change_timestamps = {}
+NAME_CHANGE_LIMIT = 5  # Max changes per window
+NAME_CHANGE_WINDOW = 3600  # 1 hour in seconds
+
+
+def check_rate_limit(ip_hash: str) -> tuple[bool, int]:
+    """Check if peer can change name. Returns (allowed, seconds_until_allowed)."""
+    now = time.time()
+
+    if ip_hash not in name_change_timestamps:
+        return True, 0
+
+    # Filter to only timestamps within the window
+    recent = [t for t in name_change_timestamps[ip_hash] if now - t < NAME_CHANGE_WINDOW]
+    name_change_timestamps[ip_hash] = recent
+
+    if len(recent) < NAME_CHANGE_LIMIT:
+        return True, 0
+
+    # Find when the oldest one expires
+    oldest = min(recent)
+    wait_time = int(NAME_CHANGE_WINDOW - (now - oldest)) + 1
+    return False, wait_time
+
+
+def record_name_change(ip_hash: str):
+    """Record a name change for rate limiting."""
+    now = time.time()
+    if ip_hash not in name_change_timestamps:
+        name_change_timestamps[ip_hash] = []
+    name_change_timestamps[ip_hash].append(now)
+
+
+def load_peer_names():
+    """Load peer names from file."""
+    global peer_names
+    if PEER_NAMES_FILE.exists():
+        try:
+            peer_names = json.loads(PEER_NAMES_FILE.read_text())
+        except Exception as e:
+            print(f"Error loading peer names: {e}")
+            peer_names = {}
+
+
+def save_peer_names():
+    """Save peer names to file."""
+    try:
+        PEER_NAMES_FILE.write_text(json.dumps(peer_names, indent=2))
+    except Exception as e:
+        print(f"Error saving peer names: {e}")
+
+
+async def sanitize_name(name: str) -> tuple[str, bool]:
+    """
+    Use OpenAI to sanitize a peer name, making it safe-for-work.
+    Returns (sanitized_name, was_modified).
+    """
+    if not name or len(name) > 30:
+        return name[:30] if name else "", True
+
+    # Basic sanitization
+    name = name.strip()
+    if not name:
+        return "", True
+
+    if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
+        # Without OpenAI, just do basic filtering
+        # Only allow alphanumeric, spaces, and common punctuation including /
+        sanitized = re.sub(r'[^\w\s\-_.!/]', '', name)[:20]
+        return sanitized, sanitized != name
+
+    try:
+        print(f"[sanitize_name] Checking name: {name!r}")
+        client = OpenAI(api_key=OPENAI_API_KEY)
+        # First, check if the name is NSFW
+        response = await asyncio.to_thread(
+            client.chat.completions.create,
+            model="gpt-4o-mini",
+            messages=[{
+                "role": "system",
+                "content": """You are an NSFW detector. Respond with ONLY "safe" or "nsfw".
+
+A name is NSFW only if it contains:
+- Explicit sexual terms (not innuendo, actual explicit words)
+- Racial slurs or hate speech
+- Direct threats of violence
+
+These are all SAFE (not NSFW):
+- Normal names, words, phrases
+- Technical terms, paths like "user/admin"
+- Mild words: ass, damn, hell, crap, suck
+- Edgy but not explicit: BadAss, hell_yeah, Destroyer
+
+Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate speech."""
+            }, {
+                "role": "user",
+                "content": f"Is this username NSFW? Username: {name}"
+            }],
+            max_tokens=10,
+            temperature=0.0
+        )
+
+        llm_response = response.choices[0].message.content.strip().lower()
+        print(f"[sanitize_name] LLM response: {llm_response!r}")
+        is_nsfw = "nsfw" in llm_response
+
+        if not is_nsfw:
+            # Safe - return exactly as provided
+            print(f"[sanitize_name] Safe, returning unchanged: {name[:20]!r}")
+            return name[:20], False
+        else:
+            # NSFW - reject it
+            print(f"[sanitize_name] NSFW detected, rejecting")
+            return "[inappropriate]", True
+    except Exception as e:
+        print(f"[sanitize_name] OpenAI error: {e}")
+        # Fallback to basic filtering - allow common username chars including /
+        sanitized = re.sub(r'[^\w\s\-_.!/]', '', name)[:20]
+        return sanitized, True
+
 
 # Event history buffer (last 2 hours)
 MAX_HISTORY_AGE_NS = 2 * 60 * 60 * 1_000_000_000  # 2 hours in nanoseconds
@@ -31,6 +175,15 @@ clients = set()
 # Network state (current/live)
 peers = {}  # ip -> {id, location, last_seen, connections: set()}
 connections = set()  # frozenset({ip1, ip2})
+
+# Track IP <-> peer_id mappings for liveness tracking
+ip_to_peer_id = {}  # ip -> peer_id (from body fields like target, this_peer)
+peer_id_to_ip = {}  # peer_id -> ip (reverse mapping for updating last_seen from any event)
+
+# Track attrs_peer_id (the telemetry emitter) -> ip for lifecycle matching
+# This is different from body peer_id - attrs_peer_id is the peer sending telemetry,
+# while body peer_id is parsed from fields like "target" which is how OTHER peers see them
+attrs_peer_id_to_ip = {}  # attrs peer_id -> ip
 
 # Peer presence timeline for historical reconstruction
 # ip -> {id, ip_hash, location, first_seen_ns}
@@ -87,9 +240,14 @@ pending_ops = {}
 
 # Transaction tracking - store full event sequences for timeline lanes
 # tx_id -> {"op": type, "contract": key, "events": [...], "start_ns": ts, "end_ns": ts, "status": "pending"|"success"|"failed"}
-MAX_TRANSACTIONS = 500  # Keep last N transactions
+MAX_TRANSACTIONS = 2500  # Keep last N transactions (~2 hours at ~18 tx/min)
 transactions = {}  # tx_id -> transaction data
 transaction_order = []  # List of tx_ids in order for pruning
+
+# Transfer events (LEDBAT transport_snapshot) for data transfer visualization
+# List of {timestamp_ns, bytes_sent, bytes_received, transfers_completed, avg_transfer_time_ms, peak_throughput_bps, ...}
+MAX_TRANSFER_EVENTS = 1000
+transfer_events = []
 
 # Pattern to parse peer strings like: "PeerId@IP:port (@ location)"
 PEER_PATTERN = re.compile(r'(\w+)@(\d+\.\d+\.\d+\.\d+):(\d+)\s*\(@\s*([\d.]+)\)')
@@ -119,6 +277,30 @@ def is_public_ip(ip: str) -> bool:
     if ip.startswith("0.") or ip == "localhost":
         return False
     return True
+
+
+def cleanup_stale_peer_id(old_peer_id: str):
+    """Remove stale data for an old peer_id when a peer reconnects with new ID.
+
+    When a peer restarts, it gets a new peer_id but keeps the same IP. The old
+    peer_id's data in seeding_state and contract_states becomes stale and should
+    be removed to avoid showing ghost peers in the contracts tab.
+    """
+    # Clean up seeding_state
+    for contract_key in list(seeding_state.keys()):
+        if old_peer_id in seeding_state[contract_key]:
+            del seeding_state[contract_key][old_peer_id]
+        # Remove empty contracts
+        if not seeding_state[contract_key]:
+            del seeding_state[contract_key]
+
+    # Clean up contract_states
+    for contract_key in list(contract_states.keys()):
+        if old_peer_id in contract_states[contract_key]:
+            del contract_states[contract_key][old_peer_id]
+        # Remove empty contracts
+        if not contract_states[contract_key]:
+            del contract_states[contract_key]
 
 
 def parse_peer_string(peer_str):
@@ -313,6 +495,13 @@ def process_record(record, store_history=True):
             if event_peer_ip:
                 break  # Got an IP, stop looking
 
+    # ROBUST LIVENESS: Update last_seen for any event from a known peer_id
+    # This is the most reliable way to track peer liveness since peer_id is in every event's attrs
+    if event_peer_id and event_peer_id in peer_id_to_ip:
+        ip = peer_id_to_ip[event_peer_id]
+        if ip in peers:
+            peers[ip]["last_seen"] = timestamp
+
     # Update contract state on relevant events (skip simulated peers)
     if contract_key and event_peer_id and (event_peer_ip is None or is_public_ip(event_peer_ip)):
         if event_type == "put_success" and state_hash:
@@ -325,6 +514,9 @@ def process_record(record, store_history=True):
             update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
         elif event_type == "broadcast_received" and state_hash:
             update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
+        elif event_type == "broadcast_applied" and state_hash_after:
+            # broadcast_applied is the definitive post-merge state - takes precedence
+            update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
 
     if event_type == "put_request":
         op_stats["put"]["requests"] += 1
@@ -497,6 +689,27 @@ def process_record(record, store_history=True):
             peer_lifecycle[peer_id]["graceful"] = body.get("graceful", False)
             peer_lifecycle[peer_id]["shutdown_reason"] = body.get("reason")
 
+    # Detect gateways from connection_type field in connect events
+    # Gateways report connection_type: "gateway" when they accept connections
+    if event_type == "connect_connected" and body.get("connection_type") == "gateway":
+        peer_id = attrs.get("peer_id", "")
+        if peer_id:
+            if peer_id not in peer_lifecycle:
+                # Create minimal lifecycle entry for gateway
+                peer_lifecycle[peer_id] = {
+                    "version": "unknown",
+                    "arch": "unknown",
+                    "os": "unknown",
+                    "os_version": None,
+                    "is_gateway": True,
+                    "startup_time": timestamp,
+                    "shutdown_time": None,
+                    "graceful": None,
+                }
+            else:
+                # Update existing entry to mark as gateway
+                peer_lifecycle[peer_id]["is_gateway"] = True
+
     # Extract peer info
     # Use attrs peer_id for "this" peer (matches lifecycle peer_id)
     attrs_peer_id = attrs.get("peer_id", "")
@@ -511,9 +724,35 @@ def process_record(record, store_history=True):
             if other_ip:
                 break
 
+    # Update last_seen for known peers from address fields (keeps gateways visible during quiet periods)
+    for addr_field in ["from_addr", "to_addr", "peer_addr", "this_peer_addr", "from_peer_addr", "connected_peer_addr"]:
+        addr = body.get(addr_field, "")
+        if addr and ":" in addr:
+            ip = addr.split(":")[0]
+            if ip and is_public_ip(ip) and ip in peers:
+                peers[ip]["last_seen"] = timestamp
+
+    # Track attrs_peer_id -> IP mapping when we can associate them
+    # This lets us link lifecycle data (keyed by attrs_peer_id) to topology peers (keyed by IP)
+    if attrs_peer_id:
+        # From this_peer_addr or this_peer parsed IP
+        if this_ip and is_public_ip(this_ip):
+            attrs_peer_id_to_ip[attrs_peer_id] = this_ip
+        # Also check body address fields that might indicate the sender's IP
+        for addr_field in ["this_peer_addr", "from_peer_addr"]:
+            addr = body.get(addr_field, "")
+            if addr and ":" in addr:
+                addr_ip = addr.split(":")[0]
+                if is_public_ip(addr_ip):
+                    attrs_peer_id_to_ip[attrs_peer_id] = addr_ip
+                    break
+
     # Update peer state
     updated_peers = []
     for ip, loc, peer_id in [(this_ip, this_loc, attrs_peer_id), (other_ip, other_loc, other_peer_id)]:
+        # Update last_seen for known peers even without location (keeps them visible)
+        if ip and is_public_ip(ip) and ip in peers:
+            peers[ip]["last_seen"] = timestamp
         if ip and is_public_ip(ip) and loc is not None:
             if ip not in peers:
                 peers[ip] = {
@@ -525,11 +764,24 @@ def process_record(record, store_history=True):
                     "peer_id": peer_id,  # Store telemetry peer_id for contract_states matching
                 }
                 updated_peers.append(ip)
+                # Track IP <-> peer_id mappings
+                if peer_id:
+                    ip_to_peer_id[ip] = peer_id
+                    peer_id_to_ip[peer_id] = ip
             else:
                 peers[ip]["location"] = loc
                 peers[ip]["last_seen"] = timestamp
                 if peer_id:
-                    peers[ip]["peer_id"] = peer_id  # Update peer_id if available
+                    # Check if peer_id changed (peer restarted)
+                    old_peer_id = ip_to_peer_id.get(ip)
+                    if old_peer_id and old_peer_id != peer_id:
+                        # Peer restarted with new ID - clean up old data
+                        cleanup_stale_peer_id(old_peer_id)
+                        # Remove old reverse mapping
+                        peer_id_to_ip.pop(old_peer_id, None)
+                    peers[ip]["peer_id"] = peer_id
+                    ip_to_peer_id[ip] = peer_id
+                    peer_id_to_ip[peer_id] = ip
 
             # Track peer presence for historical reconstruction
             if ip not in peer_presence:
@@ -771,8 +1023,22 @@ def get_network_state():
     """Get current network state for new clients."""
     import time
     now_ns = time.time_ns()
-    # Consider peers stale if not seen in last 5 minutes
-    STALE_THRESHOLD_NS = 5 * 60 * 1_000_000_000
+    # Consider peers stale if not seen in last 30 minutes (generous for stable gateways)
+    STALE_THRESHOLD_NS = 30 * 60 * 1_000_000_000
+
+    # Build reverse lookup: IP -> attrs_peer_id(s) that sent events with this IP
+    ip_to_attrs_peer_ids = {}
+    for attrs_pid, attrs_ip in attrs_peer_id_to_ip.items():
+        if attrs_ip not in ip_to_attrs_peer_ids:
+            ip_to_attrs_peer_ids[attrs_ip] = set()
+        ip_to_attrs_peer_ids[attrs_ip].add(attrs_pid)
+
+    # Get active peers from lifecycle data (those with startup but no shutdown)
+    # Do this early so we can check is_gateway for topology peers
+    active_lifecycle = {
+        pid: data for pid, data in peer_lifecycle.items()
+        if data.get("shutdown_time") is None
+    }
 
     # Filter to only recently active peers
     active_peer_ips = set()
@@ -786,11 +1052,34 @@ def get_network_state():
                 # Collect telemetry peer_id for contract_states matching
                 if data.get("peer_id"):
                     active_peer_ids.add(data["peer_id"])
+
+                # Check if this peer is a gateway by multiple methods
+                is_gateway = False
+
+                # Method 1: Known production gateway IPs (these may not have peer_startup in telemetry)
+                KNOWN_GATEWAY_IPS = {"5.9.111.215", "100.27.151.80"}  # nova, vega
+                if ip in KNOWN_GATEWAY_IPS:
+                    is_gateway = True
+
+                # Method 2: Check if body field peer_id is in lifecycle (unlikely to match)
+                if not is_gateway:
+                    body_peer_id = data.get("peer_id")
+                    if body_peer_id and body_peer_id in active_lifecycle:
+                        is_gateway = active_lifecycle[body_peer_id].get("is_gateway", False)
+
+                # Method 3: Check attrs_peer_ids associated with this IP
+                if not is_gateway and ip in ip_to_attrs_peer_ids:
+                    for attrs_pid in ip_to_attrs_peer_ids[ip]:
+                        if attrs_pid in active_lifecycle and active_lifecycle[attrs_pid].get("is_gateway"):
+                            is_gateway = True
+                            break
+
                 peer_list.append({
                     "id": data["id"],
                     "ip_hash": data.get("ip_hash", ip_hash(ip)),
                     "location": data["location"],
                     "peer_id": data.get("peer_id"),  # Include for frontend reference
+                    "is_gateway": is_gateway,  # Gateway flag from lifecycle data
                 })
 
     # Only include connections between active peers
@@ -800,15 +1089,9 @@ def get_network_state():
         if len(ips) == 2 and ips[0] in active_peer_ips and ips[1] in active_peer_ips:
             conn_list.append([anonymize_ip(ips[0]), anonymize_ip(ips[1])])
 
-    # Get active peers from lifecycle data (those with startup but no shutdown)
-    active_peers = {
-        pid: data for pid, data in peer_lifecycle.items()
-        if data.get("shutdown_time") is None
-    }
-
-    # Aggregate version stats
+    # Aggregate version stats (using active_lifecycle defined earlier)
     version_counts = {}
-    for data in active_peers.values():
+    for data in active_lifecycle.values():
         v = data.get("version", "unknown")
         version_counts[v] = version_counts.get(v, 0) + 1
 
@@ -827,13 +1110,13 @@ def get_network_state():
     # then fill remaining slots with other active peers
     topology_peer_ids = set(active_peer_ids)
     topology_lifecycle = [
-        {"peer_id": pid, **active_peers[pid]}
+        {"peer_id": pid, **active_lifecycle[pid]}
         for pid in topology_peer_ids
-        if pid in active_peers
+        if pid in active_lifecycle
     ]
     other_lifecycle = [
         {"peer_id": pid, **data}
-        for pid, data in active_peers.items()
+        for pid, data in active_lifecycle.items()
         if pid not in topology_peer_ids
     ][:50 - len(topology_lifecycle)]
 
@@ -845,11 +1128,12 @@ def get_network_state():
         "contract_states": filtered_contract_states,
         "op_stats": get_operation_stats(),
         "peer_lifecycle": {
-            "active_count": len(active_peers),
-            "gateway_count": sum(1 for d in active_peers.values() if d.get("is_gateway")),
+            "active_count": len(active_lifecycle),
+            "gateway_count": sum(1 for d in active_lifecycle.values() if d.get("is_gateway")),
             "versions": version_counts,
             "peers": topology_lifecycle + other_lifecycle,
         },
+        "peer_names": peer_names,  # ip_hash -> name
     }
 
 
@@ -879,11 +1163,17 @@ def get_transactions_list():
     return result
 
 
+MAX_HISTORY_EVENTS = 50000  # Limit events sent to clients on connect (~2.5 hours, compresses well)
+
 def get_history():
     """Get event history for time-travel feature."""
     prune_old_events()
     # Sort events by timestamp for proper timeline display
     sorted_events = sorted(event_history, key=lambda e: e["timestamp"])
+
+    # Limit to last N events to avoid huge payloads
+    if len(sorted_events) > MAX_HISTORY_EVENTS:
+        sorted_events = sorted_events[-MAX_HISTORY_EVENTS:]
 
     # Sort peer presence by first_seen for historical reconstruction
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
@@ -908,33 +1198,53 @@ async def broadcast(message):
 
 
 async def tail_log():
-    """Tail the telemetry log and broadcast new events."""
-    # Wait for file to exist
-    while not TELEMETRY_LOG.exists():
-        await asyncio.sleep(1)
+    """Tail the telemetry log and broadcast new events.
 
-    # Start at end of file
-    with open(TELEMETRY_LOG, 'r') as f:
-        f.seek(0, 2)  # Seek to end
+    Handles log rotation by detecting inode changes and reopening the file.
+    """
+    import os
 
-        while True:
-            line = f.readline()
-            if not line:
-                await asyncio.sleep(0.1)
-                continue
+    while True:
+        # Wait for file to exist
+        while not TELEMETRY_LOG.exists():
+            await asyncio.sleep(1)
 
-            try:
-                batch = json.loads(line)
-                for resource_log in batch.get("resourceLogs", []):
-                    for scope_log in resource_log.get("scopeLogs", []):
-                        for record in scope_log.get("logRecords", []):
-                            event = process_record(record, store_history=True)
-                            if event:
-                                await broadcast(event)
-            except json.JSONDecodeError:
-                continue
-            except Exception as e:
-                print(f"Error processing line: {e}")
+        # Get initial inode
+        current_inode = os.stat(TELEMETRY_LOG).st_ino
+        print(f"Tailing {TELEMETRY_LOG} (inode {current_inode})")
+
+        # Start at end of file
+        with open(TELEMETRY_LOG, 'r') as f:
+            f.seek(0, 2)  # Seek to end
+
+            while True:
+                # Check for log rotation (inode change)
+                try:
+                    new_inode = os.stat(TELEMETRY_LOG).st_ino
+                    if new_inode != current_inode:
+                        print(f"Log rotation detected (inode {current_inode} -> {new_inode}), reopening...")
+                        break  # Break inner loop to reopen file
+                except FileNotFoundError:
+                    print("Log file disappeared, waiting for new file...")
+                    break  # Break to wait for new file
+
+                line = f.readline()
+                if not line:
+                    await asyncio.sleep(0.1)
+                    continue
+
+                try:
+                    batch = json.loads(line)
+                    for resource_log in batch.get("resourceLogs", []):
+                        for scope_log in resource_log.get("scopeLogs", []):
+                            for record in scope_log.get("logRecords", []):
+                                event = process_record(record, store_history=True)
+                                if event:
+                                    await broadcast(event)
+                except json.JSONDecodeError:
+                    continue
+                except Exception as e:
+                    print(f"Error processing line: {e}")
 
 
 GATEWAY_IP = "5.9.111.215"
@@ -975,6 +1285,10 @@ async def handle_client(websocket):
         state["your_peer_id"] = client_peer_id
         state["gateway_peer_id"] = GATEWAY_PEER_ID
         state["gateway_ip_hash"] = GATEWAY_IP_HASH
+        # Check if client IP matches a peer in the network
+        is_peer = client_ip in peers if client_ip else False
+        state["you_are_peer"] = is_peer
+        state["your_name"] = peer_names.get(client_ip_hash) if client_ip_hash else None
         await websocket.send(json.dumps(state))
 
         # Send event history for time-travel
@@ -983,8 +1297,59 @@ async def handle_client(websocket):
 
         # Keep connection alive and handle messages
         async for message in websocket:
-            # Could handle client messages here (e.g., request specific time range)
-            pass
+            try:
+                msg = json.loads(message)
+                msg_type = msg.get("type")
+
+                if msg_type == "set_peer_name":
+                    # User wants to name their peer
+                    name = msg.get("name", "").strip()
+                    if client_ip_hash and name:
+                        # Check rate limit first
+                        allowed, wait_time = check_rate_limit(client_ip_hash)
+                        if not allowed:
+                            await websocket.send(json.dumps({
+                                "type": "name_set_result",
+                                "success": False,
+                                "error": f"Too many changes. Try again in {wait_time // 60} min"
+                            }))
+                            continue
+
+                        # Sanitize the name using OpenAI
+                        sanitized, was_modified = await sanitize_name(name)
+                        if sanitized:
+                            peer_names[client_ip_hash] = sanitized
+                            save_peer_names()
+                            record_name_change(client_ip_hash)
+                            # Broadcast the name update to all clients
+                            update_msg = json.dumps({
+                                "type": "peer_name_update",
+                                "ip_hash": client_ip_hash,
+                                "name": sanitized,
+                                "was_modified": was_modified
+                            })
+                            await asyncio.gather(*[c.send(update_msg) for c in clients], return_exceptions=True)
+                            # Also send confirmation to this client
+                            await websocket.send(json.dumps({
+                                "type": "name_set_result",
+                                "success": True,
+                                "name": sanitized,
+                                "was_modified": was_modified
+                            }))
+                        else:
+                            await websocket.send(json.dumps({
+                                "type": "name_set_result",
+                                "success": False,
+                                "error": "Invalid name"
+                            }))
+                    elif not client_ip_hash:
+                        await websocket.send(json.dumps({
+                            "type": "name_set_result",
+                            "success": False,
+                            "error": "Cannot identify your peer"
+                        }))
+            except json.JSONDecodeError:
+                pass
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
@@ -1025,11 +1390,17 @@ async def load_initial_state():
     print(f"Event history: {len(event_history)} events in buffer")
     print(f"Contract states: {len(contract_states)} contracts")
     for ck, ps in list(contract_states.items())[:3]:
-        print(f"  {ck[:16]}... has {len(ps)} peers")
+        print(f"  {ck[:20]}... has {len(ps)} peers")
+        for pid, state in list(ps.items())[:2]:
+            print(f"    peer_id={pid}: hash={state.get('hash', 'none')[:12]}")
 
 
 async def main():
     """Main entry point."""
+    # Load peer names
+    load_peer_names()
+    print(f"Loaded {len(peer_names)} peer names")
+
     # Load existing state
     await load_initial_state()
 

@@ -14,6 +14,9 @@
         let gatewayPeerId = null;   // Gateway peer ID
         let yourPeerId = null;      // User's own peer ID
         let yourIpHash = null;      // User's IP hash
+        let youArePeer = false;     // Whether user's IP matches a network peer
+        let yourName = null;        // User's peer name (if set)
+        let peerNames = {};         // ip_hash -> name for all peers
         let contractData = {};  // contract_key -> contract data (subscriptions, states, etc.)
         let contractStates = {};  // contract_key -> {peer_id -> {hash, timestamp}}
         let selectedContract = null; // Currently selected contract
@@ -38,7 +41,7 @@
             if (eventType.includes('connect') || eventType === 'start_connection' || eventType === 'finished') return 'connect';
             if (eventType.includes('put')) return 'put';
             if (eventType.includes('get')) return 'get';
-            if (eventType.includes('update')) return 'update';
+            if (eventType.includes('update') || eventType.includes('broadcast')) return 'update';
             if (eventType.includes('subscrib')) return 'subscribe';
             return 'other';
         }
@@ -59,6 +62,7 @@
                 'subscribe_request': 'sub req',
                 'subscribed': 'subscribed',
                 'broadcast_emitted': 'broadcast',
+                'broadcast_applied': 'applied',
             };
             return labels[eventType] || eventType;
         }
@@ -132,9 +136,18 @@
             if (selectedTxId === tx.tx_id) {
                 selectedTxId = null;
                 selectedTransaction = null;
+                highlightedPeers.clear();
             } else {
                 selectedTransaction = tx;
                 selectedTxId = tx.tx_id;
+                // Highlight all peers involved in this transaction
+                highlightedPeers.clear();
+                const events = tx.events || [];
+                events.forEach(evt => {
+                    if (evt.peer_id) highlightedPeers.add(evt.peer_id);
+                    if (evt.from_peer) highlightedPeers.add(evt.from_peer);
+                    if (evt.to_peer) highlightedPeers.add(evt.to_peer);
+                });
                 // Switch to Events tab to show filtered events
                 switchTab('events');
             }
@@ -236,6 +249,54 @@
             updateView();
         }
 
+        // Peer naming prompt
+        function showPeerNamingPrompt() {
+            // Create modal overlay
+            const overlay = document.createElement('div');
+            overlay.id = 'peer-name-overlay';
+            overlay.className = 'peer-name-overlay';
+            overlay.innerHTML = `
+                <div class="peer-name-modal">
+                    <div class="peer-name-header">Name Your Peer</div>
+                    <div class="peer-name-body">
+                        <p>You're running a Freenet peer! Give it a name that others will see on the network dashboard.</p>
+                        <input type="text" id="peer-name-input" class="peer-name-input" placeholder="e.g., SpaceCowboy, Node42, PizzaNode" maxlength="20" autofocus>
+                        <div class="peer-name-hint">Max 20 characters. Keep it friendly!</div>
+                    </div>
+                    <div class="peer-name-footer">
+                        <button class="peer-name-btn secondary" onclick="closePeerNamingPrompt()">Maybe Later</button>
+                        <button class="peer-name-btn primary" onclick="submitPeerName()">Set Name</button>
+                    </div>
+                </div>
+            `;
+            document.body.appendChild(overlay);
+
+            // Focus input and handle enter key
+            const input = document.getElementById('peer-name-input');
+            input.focus();
+            input.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter') submitPeerName();
+                if (e.key === 'Escape') closePeerNamingPrompt();
+            });
+        }
+
+        function closePeerNamingPrompt() {
+            const overlay = document.getElementById('peer-name-overlay');
+            if (overlay) overlay.remove();
+        }
+
+        function submitPeerName() {
+            const input = document.getElementById('peer-name-input');
+            const name = input?.value?.trim();
+            if (!name) return;
+
+            // Send to server
+            if (ws && ws.readyState === WebSocket.OPEN) {
+                ws.send(JSON.stringify({ type: 'set_peer_name', name }));
+            }
+            closePeerNamingPrompt();
+        }
+
         function renderDetailTimeline() {
             const windowSize = timeWindowNs * 2;
             let windowStart = currentTime - timeWindowNs;
@@ -271,24 +332,30 @@
                 tx.end_ns >= windowStart && tx.start_ns <= windowEnd && tx.events && tx.events.length > 0
             );
 
-            // Pack transactions into lanes (each tx gets its own lane row)
-            const lanes = [];
+            // Organize by operation type to match main timeline lanes: PUT, GET, UPD, SUB, CONN
+            const opOrder = ['put', 'get', 'update', 'subscribe', 'connect'];
+            const lanesByOp = { put: [], get: [], update: [], subscribe: [], connect: [], other: [] };
             windowTx.forEach(tx => {
-                let laneIdx = lanes.findIndex(lane => lane[lane.length - 1].end_ns + 100_000_000 < tx.start_ns); // 100ms gap
-                if (laneIdx === -1) { laneIdx = lanes.length; lanes.push([]); }
-                lanes[laneIdx].push(tx);
+                const op = tx.op || 'other';
+                const targetLane = lanesByOp[op] || lanesByOp.other;
+                targetLane.push(tx);
             });
 
             const lanesContainer = document.getElementById('timeline-lanes');
             lanesContainer.innerHTML = '';
-            const laneHeight = 20, maxLanes = 4;
+            const laneHeight = 18;
+            let currentTop = 0;
 
-            lanes.slice(0, maxLanes).forEach((lane, laneIdx) => {
+            opOrder.forEach(op => {
+                const txList = lanesByOp[op];
+                if (txList.length === 0) return;
+
                 const laneDiv = document.createElement('div');
                 laneDiv.className = 'tx-lane';
-                laneDiv.style.top = `${laneIdx * laneHeight}px`;
+                laneDiv.style.top = `${currentTop}px`;
+                currentTop += laneHeight;
 
-                lane.forEach(tx => {
+                txList.forEach(tx => {
                     const events = tx.events || [];
                     if (events.length === 0) return;
 
@@ -298,32 +365,42 @@
                     const startPos = (txStart - windowStart) / windowDuration;
                     const endPos = (txEnd - windowStart) / windowDuration;
 
-                    // Minimum width for visibility
-                    const minWidthPercent = 0.5;
-                    let widthPercent = (endPos - startPos) * 100;
-                    if (widthPercent < minWidthPercent) widthPercent = minWidthPercent;
-
-                    // Create pill-shaped transaction bar
-                    const txBar = document.createElement('div');
                     const opClass = tx.op || 'other';
                     const statusClass = tx.status === 'pending' ? ' pending' : tx.status === 'failed' ? ' failed' : '';
-                    txBar.className = `tx-bar ${opClass}${statusClass}`;
-                    txBar.style.cssText = `left:${startPos * 100}%;width:${widthPercent}%;top:1px;`;
-
                     const duration = tx.duration_ms ? `${tx.duration_ms.toFixed(1)}ms` : 'pending';
-                    txBar.title = `${tx.op}: ${tx.contract || 'no contract'}\nDuration: ${duration}\nEvents: ${events.length}`;
-                    txBar.onclick = (e) => { e.stopPropagation(); showTransactionDetail(tx); };
-                    laneDiv.appendChild(txBar);
+                    const tooltip = `${tx.op}: ${tx.contract || 'no contract'}\nDuration: ${duration}\nEvents: ${events.length}`;
+
+                    // Create container for the transaction
+                    const txContainer = document.createElement('div');
+                    txContainer.className = `tx-container ${opClass}${statusClass}`;
+                    txContainer.style.cssText = `left:${startPos * 100}%;width:${(endPos - startPos) * 100}%;`;
+                    txContainer.title = tooltip;
+                    txContainer.onclick = (e) => { e.stopPropagation(); showTransactionDetail(tx); };
+
+                    // Thin line showing transaction duration
+                    const txLine = document.createElement('div');
+                    txLine.className = `tx-line ${opClass}`;
+                    txContainer.appendChild(txLine);
+
+                    // Event pills positioned along the transaction
+                    events.forEach(evt => {
+                        const evtTime = evt.timestamp;  // Already in nanoseconds
+                        if (!evtTime || evtTime < windowStart || evtTime > windowEnd) return;
+
+                        // Position within the transaction container (0-100%)
+                        const txDuration = txEnd - txStart;
+                        const evtPos = txDuration > 0 ? ((evtTime - txStart) / txDuration) * 100 : 50;
+
+                        const pill = document.createElement('div');
+                        pill.className = `tx-pill ${opClass}`;
+                        pill.style.left = `${Math.max(0, Math.min(100, evtPos))}%`;
+                        txContainer.appendChild(pill);
+                    });
+
+                    laneDiv.appendChild(txContainer);
                 });
                 lanesContainer.appendChild(laneDiv);
             });
-
-            if (lanes.length > maxLanes) {
-                const overflow = document.createElement('div');
-                overflow.style.cssText = 'position:absolute;bottom:0;right:0;font-size:10px;color:var(--text-muted)';
-                overflow.textContent = `+${lanes.length - maxLanes} more lanes`;
-                lanesContainer.appendChild(overflow);
-            }
         }
 
         function selectEvent(event) {
@@ -614,82 +691,28 @@
             const list = document.getElementById('contracts-list');
             const allContracts = Object.keys(contractData);
 
-            // TODO: Replace this activity-based filtering with proper state reconstruction
-            // once periodic subscription_state snapshots are implemented (see GitHub issue #2491).
-            // Current approach: show contracts with subscription-related events in time window.
-
-            // Determine time window for filtering
-            const WINDOW_NS = 10 * 60 * 1_000_000_000; // 10 minutes in nanoseconds
-            let windowStart, windowEnd;
-
-            if (isLive) {
-                // Live mode: show contracts active in last 10 minutes OR with current state
-                windowEnd = Date.now() * 1_000_000;
-                windowStart = windowEnd - WINDOW_NS;
-            } else {
-                // Historical mode: show contracts with events in ±5 min around current time
-                windowStart = currentTime - (WINDOW_NS / 2);
-                windowEnd = currentTime + (WINDOW_NS / 2);
-            }
-
-            // Find contracts with subscription-related events in the time window
-            const subscriptionEventTypes = [
-                'subscribe_request', 'subscribed', 'seeding_started', 'seeding_stopped',
-                'downstream_added', 'downstream_removed', 'upstream_set', 'unsubscribed',
-                'update_request', 'update_success', 'broadcast_emitted', 'subscription_state'
-            ];
-
-            const activeContractKeys = new Set();
-            for (const event of allEvents) {
-                if (event.timestamp >= windowStart && event.timestamp <= windowEnd) {
-                    // Check if it's a subscription-related event with a contract
-                    if (event.contract_full && subscriptionEventTypes.some(t => event.event_type?.includes(t))) {
-                        activeContractKeys.add(event.contract_full);
-                    }
-                }
-            }
-
-            // In live mode, also include contracts with current active state
-            if (isLive) {
-                for (const key of allContracts) {
-                    const data = contractData[key];
-                    // Use new aggregate fields
-                    if (data.any_seeding || data.total_downstream > 0 || (data.peer_states?.length > 0)) {
-                        activeContractKeys.add(key);
-                    }
-                }
-            }
-
-            // Filter to only active contracts that we have data for
-            const activeContracts = allContracts.filter(key => activeContractKeys.has(key));
-
-            // Apply search filter
-            let filteredContracts = activeContracts;
+            // Show all contracts, only filtered by search text
+            let filteredContracts = allContracts;
             if (contractSearchText) {
                 const searchLower = contractSearchText.toLowerCase();
-                filteredContracts = activeContracts.filter(key =>
+                filteredContracts = allContracts.filter(key =>
                     key.toLowerCase().startsWith(searchLower)
                 );
             }
 
-            // Update tab count to show filtered/active/total
+            // Update tab count
             const countLabel = document.getElementById('contract-tab-count');
             if (filteredContracts.length === allContracts.length) {
                 countLabel.textContent = allContracts.length;
-            } else if (filteredContracts.length === activeContracts.length) {
-                countLabel.textContent = `${activeContracts.length}/${allContracts.length}`;
             } else {
-                countLabel.textContent = `${filteredContracts.length}/${activeContracts.length}`;
+                countLabel.textContent = `${filteredContracts.length}/${allContracts.length}`;
             }
 
             if (filteredContracts.length === 0) {
                 list.innerHTML = `
                     <div class="empty-state">
                         <div class="empty-state-icon">&#128230;</div>
-                        <div>${contractSearchText ? 'No matching contracts' : (isLive ? 'No contracts with activity' : 'No contracts at this time')}</div>
-                        <div style="font-size: 0.8em; color: var(--text-muted); margin-top: 8px;">
-                            ${allContracts.length} total contracts tracked
-                        </div>
+                        <div>${contractSearchText ? 'No matching contracts' : 'No contracts tracked'}</div>
                     </div>
                 `;
                 return;
@@ -729,10 +752,16 @@
                 // Build stats display
                 let stats = [];
 
-                // Sync status indicator
+                // Sync status indicator with color swatches for diverged states
                 if (peerStateHashes.length > 0) {
                     if (isDiverged) {
-                        stats.push(`<span class="sync-indicator diverged">&#9888; ${uniqueHashes.size} states</span>`);
+                        // Create color swatches for each unique state
+                        const swatches = [...uniqueHashes].slice(0, 6).map(hash => {
+                            const color = hashToColor(hash);
+                            return `<span class="state-swatch" style="background:${color.fill}" title="${hash.substring(0,8)}"></span>`;
+                        }).join('');
+                        const extra = uniqueHashes.size > 6 ? `+${uniqueHashes.size - 6}` : '';
+                        stats.push(`<span class="sync-indicator diverged">&#9888; ${uniqueHashes.size} states ${swatches}${extra}</span>`);
                     } else {
                         stats.push(`<span class="sync-indicator synced">&#10003; Synced</span>`);
                     }
@@ -1107,10 +1136,16 @@
             // Draw peers
             peers.forEach((peer, id) => {
                 const pos = locationToXY(peer.location);
-                const isHighlighted = highlightedPeers.has(id);
-                const isEventSelected = selectedEvent && selectedEvent.peer_id === id;
+                // Check both anonymized ID (id) and telemetry ID (peer.peer_id) for highlighting
+                const isHighlighted = highlightedPeers.has(id) || highlightedPeers.has(peer.peer_id);
+                const isEventSelected = selectedEvent && (selectedEvent.peer_id === id || selectedEvent.peer_id === peer.peer_id);
                 const isPeerSelected = selectedPeerId === id;
-                const isGateway = id === gatewayPeerId;
+                // Check if peer is a gateway by multiple methods:
+                // 1. Direct is_gateway flag from server state (most reliable)
+                // 2. Lifecycle data lookup
+                // 3. Legacy gatewayPeerId match
+                const lifecyclePeer = peerLifecycle?.peers?.find(p => p.peer_id === peer.peer_id);
+                const isGateway = peer.is_gateway || lifecyclePeer?.is_gateway || id === gatewayPeerId;
                 const isYou = id === yourPeerId;
                 const isSubscriber = subscriberPeerIds.has(id);
 
@@ -1124,24 +1159,17 @@
                 // When a contract is selected, show subscribers prominently
                 if (selectedContract) {
                     if (isSubscriber) {
-                        // Subscriber - check for state hash to color by sync state
+                        // Subscriber - get state hash for inner indicator circle
+                        // contractStates is keyed by telemetry peer ID (peer.peer_id)
                         if (contractStates[selectedContract] && peer.peer_id) {
                             const peerState = contractStates[selectedContract][peer.peer_id];
                             if (peerState && peerState.hash) {
                                 peerStateHash = peerState.hash;
-                                const colors = hashToColor(peerStateHash);
-                                fillColor = colors.fill;
-                                glowColor = colors.glow;
-                            } else {
-                                // Subscriber but no state hash - use pink
-                                fillColor = '#f472b6';
-                                glowColor = 'rgba(244, 114, 182, 0.3)';
                             }
-                        } else {
-                            // Subscriber but no state data - use pink
-                            fillColor = '#f472b6';
-                            glowColor = 'rgba(244, 114, 182, 0.3)';
                         }
+                        // Subscriber base color is pink (state shown via inner circle)
+                        fillColor = '#f472b6';
+                        glowColor = 'rgba(244, 114, 182, 0.3)';
                     } else {
                         // Not a subscriber - mark for hollow rendering
                         isNonSubscriber = true;
@@ -1150,18 +1178,24 @@
                     }
                 }
 
+                // Check for peer name first
+                const peerName = peer.ip_hash ? peerNames[peer.ip_hash] : null;
+
                 if (isGateway) {
                     if (!selectedContract || isSubscriber) {
                         fillColor = isNonSubscriber ? 'transparent' : '#f59e0b';  // Amber for gateway
                         glowColor = 'rgba(245, 158, 11, 0.3)';
                     }
-                    label = 'GW';
+                    label = peerName || 'GW';
                 } else if (isYou) {
                     if (!selectedContract || isSubscriber) {
                         fillColor = isNonSubscriber ? 'transparent' : '#10b981';  // Emerald for you
                         glowColor = 'rgba(16, 185, 129, 0.3)';
                     }
-                    label = 'YOU';
+                    label = peerName || 'YOU';
+                } else if (peerName) {
+                    // Named peer - show the name
+                    label = peerName;
                 } else if (isSubscriber && !selectedContract) {
                     fillColor = '#f472b6';  // Pink for subscriber
                     glowColor = 'rgba(244, 114, 182, 0.3)';
@@ -1197,7 +1231,14 @@
                 clickTarget.setAttribute('r', '20');
                 clickTarget.setAttribute('fill', 'transparent');
                 clickTarget.setAttribute('style', 'cursor: pointer;');
-                clickTarget.onclick = () => selectPeer(id);
+                clickTarget.onclick = () => {
+                    if (isYou && youArePeer && !peerName) {
+                        // Clicking your own peer (without a name) opens the naming dialog
+                        showPeerNamingPrompt();
+                    } else {
+                        selectPeer(id);
+                    }
+                };
                 svg.appendChild(clickTarget);
 
                 // Main circle
@@ -1221,7 +1262,8 @@
 
                 const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
                 const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-                let tooltipText = `${id}${peerType}\n#${peer.ip_hash || ''}\nLocation: ${peer.location.toFixed(4)}`;
+                const peerIdentifier = peerName || (peer.ip_hash ? `#${peer.ip_hash}` : '');
+                let tooltipText = `${id}${peerType}\n${peerIdentifier}\nLocation: ${peer.location.toFixed(4)}`;
 
                 // Add OS/version info from peer lifecycle data
                 // Try peer.peer_id first, then fall back to topology's peer_id for this anonymized ID
@@ -1263,7 +1305,36 @@
                 clickTarget.appendChild(title);
                 svg.appendChild(circle);
 
-                // Add label for gateway/you
+                // Inner state indicator square (when contract selected and peer has state)
+                // Rendered AFTER circle so it appears on top
+                if (peerStateHash && selectedContract) {
+                    const stateColors = hashToColor(peerStateHash);
+                    const squareSize = nodeSize * 0.7;  // 70% of peer node size
+
+                    // White border for contrast
+                    const borderRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    borderRect.setAttribute('x', pos.x - squareSize/2 - 1);
+                    borderRect.setAttribute('y', pos.y - squareSize/2 - 1);
+                    borderRect.setAttribute('width', squareSize + 2);
+                    borderRect.setAttribute('height', squareSize + 2);
+                    borderRect.setAttribute('fill', 'white');
+                    borderRect.setAttribute('rx', '2');
+                    borderRect.setAttribute('style', 'pointer-events: none;');
+                    svg.appendChild(borderRect);
+
+                    // Colored state indicator square
+                    const stateRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    stateRect.setAttribute('x', pos.x - squareSize/2);
+                    stateRect.setAttribute('y', pos.y - squareSize/2);
+                    stateRect.setAttribute('width', squareSize);
+                    stateRect.setAttribute('height', squareSize);
+                    stateRect.setAttribute('fill', stateColors.fill);
+                    stateRect.setAttribute('rx', '1');
+                    stateRect.setAttribute('style', 'pointer-events: none;');
+                    svg.appendChild(stateRect);
+                }
+
+                // Add label for gateway/you/named peers
                 if (label && peers.size <= 15) {
                     const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
                     labelText.setAttribute('x', pos.x);
@@ -1274,11 +1345,17 @@
                     labelText.setAttribute('font-weight', '600');
                     labelText.setAttribute('text-anchor', 'middle');
                     labelText.textContent = label;
+                    // Make label clickable for user's own peer to edit name
+                    if (isYou && youArePeer && peerName) {
+                        labelText.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
+                        labelText.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
+                    }
                     svg.appendChild(labelText);
                 }
 
-                // Label (inside ring - peer hash)
-                if (peers.size <= 12) {
+                // Label (inside ring - peer hash) - skip if already has outside label
+                const hasOutsideLabel = label && peers.size <= 15;
+                if (peers.size <= 12 && !hasOutsideLabel) {
                     const angle = peer.location * 2 * Math.PI - Math.PI / 2;
                     const labelRadius = RADIUS - 30;
                     const lx = CENTER + labelRadius * Math.cos(angle);
@@ -1292,12 +1369,18 @@
                     text.setAttribute('font-family', 'JetBrains Mono, monospace');
                     text.setAttribute('text-anchor', 'middle');
                     text.setAttribute('dominant-baseline', 'middle');
-                    text.textContent = `#${peer.ip_hash || id.substring(5, 11)}`;
+                    text.textContent = peerName || `#${peer.ip_hash || id.substring(5, 11)}`;
+                    // Make inside-ring label clickable for user's own peer to edit name
+                    if (isYou && youArePeer && peerName) {
+                        text.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
+                        text.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
+                    }
                     svg.appendChild(text);
                 }
 
                 // Location label (outside ring) - show peer's location like 0.35
                 // Skip if too close to fixed markers (0, 0.25, 0.5, 0.75) to avoid overlap
+                // Also skip if this peer has a label (YOU/GW) to avoid overlap
                 const fixedMarkers = [0, 0.25, 0.5, 0.75];
                 const minDistance = 0.03;  // Minimum distance from fixed markers
                 const nearFixedMarker = fixedMarkers.some(m =>
@@ -1305,8 +1388,9 @@
                     Math.abs(peer.location - m + 1) < minDistance ||  // Handle wrap around 0/1
                     Math.abs(peer.location - m - 1) < minDistance
                 );
+                const hasSpecialLabel = label && peers.size <= 15;  // Same condition as label rendering
 
-                if (!nearFixedMarker && peers.size <= 20) {
+                if (!nearFixedMarker && !hasSpecialLabel && peers.size <= 20) {
                     const angle = peer.location * 2 * Math.PI - Math.PI / 2;
                     const outerRadius = RADIUS + 25;
                     const ox = CENTER + outerRadius * Math.cos(angle);
@@ -1504,7 +1588,7 @@
                 let laneType = 'connect';
                 if (type.includes('put')) laneType = 'put';
                 else if (type.includes('get')) laneType = 'get';
-                else if (type.includes('update')) laneType = 'update';
+                else if (type.includes('update') || type.includes('broadcast')) laneType = 'update';
                 else if (type.includes('subscrib')) laneType = 'subscribe';
                 else if (!type.includes('connect')) return; // Skip other events
 
@@ -1567,14 +1651,15 @@
 
             const duration = timeRange.end - timeRange.start;
             const timeline = document.getElementById('timeline');
-            const timelineWidth = timeline.offsetWidth - 32; // Account for padding
+            // Events area: left: 50px, right: 16px, so width = timeline.offsetWidth - 66
+            const eventsAreaWidth = timeline.offsetWidth - 66;
 
-            // Calculate window width as percentage
+            // Calculate window width as percentage of time range
             const windowDuration = timeWindowNs * 2; // total window size
             let windowWidthPercent = (windowDuration / duration) * 100;
 
             // Ensure minimum width
-            const minWidthPercent = (MIN_PLAYHEAD_WIDTH_PX / timelineWidth) * 100;
+            const minWidthPercent = (MIN_PLAYHEAD_WIDTH_PX / eventsAreaWidth) * 100;
             windowWidthPercent = Math.max(windowWidthPercent, minWidthPercent);
 
             // Cap at 100%
@@ -1588,9 +1673,12 @@
             let leftPos = clampedCenter * 100 - windowWidthPercent / 2;
             leftPos = Math.max(0, Math.min(leftPos, 100 - windowWidthPercent));
 
+            // Convert to pixels relative to the events area (which starts at 50px)
             const playhead = document.getElementById('playhead');
-            playhead.style.left = `calc(${leftPos}% + 16px)`;
-            playhead.style.width = `${windowWidthPercent}%`;
+            const leftPx = (leftPos / 100) * eventsAreaWidth + 50;
+            const widthPx = (windowWidthPercent / 100) * eventsAreaWidth;
+            playhead.style.left = `${leftPx}px`;
+            playhead.style.width = `${widthPx}px`;
 
             document.getElementById('playhead-time').textContent = formatTime(currentTime);
             document.getElementById('playhead-date').textContent = formatDate(currentTime);
@@ -1637,9 +1725,26 @@
             }
 
             // Get subscription subscribers for highlighting (if contract selected)
+            // Need to map telemetry peer_ids from peer_states to topology anonymized IDs
             let subscriberPeerIds = new Set();
             if (selectedContract && contractData[selectedContract]) {
-                subscriberPeerIds = new Set(contractData[selectedContract].subscribers);
+                const subData = contractData[selectedContract];
+                // Add from old subscribers list (IP-based IDs)
+                if (subData.subscribers) {
+                    subData.subscribers.forEach(id => subscriberPeerIds.add(id));
+                }
+                // Add from new peer_states (telemetry peer_ids) - map to topology IDs
+                if (subData.peer_states) {
+                    subData.peer_states.forEach(ps => {
+                        // Find topology peer with matching telemetry peer_id
+                        for (const [topoId, topoPeer] of peers) {
+                            if (topoPeer.peer_id === ps.peer_id) {
+                                subscriberPeerIds.add(topoId);
+                                break;
+                            }
+                        }
+                    });
+                }
             }
 
             updateRingSVG(peers, connections, subscriberPeerIds);
@@ -1848,7 +1953,8 @@
 
             function getTimeFromX(clientX) {
                 const rect = timeline.getBoundingClientRect();
-                const pos = Math.max(0, Math.min(1, (clientX - rect.left - 16) / (rect.width - 32)));
+                // Events area starts at 50px from left, width = rect.width - 66
+                const pos = Math.max(0, Math.min(1, (clientX - rect.left - 50) / (rect.width - 66)));
                 return timeRange.start + pos * (timeRange.end - timeRange.start);
             }
 
@@ -1914,10 +2020,11 @@
                 if (e.cancelable) e.preventDefault();
                 const clientX = getClientX(e);
                 const rect = timeline.getBoundingClientRect();
-                const timelineWidth = rect.width - 32;
+                // Events area: left: 50px, right: 16px, so width = rect.width - 66
+                const eventsAreaWidth = rect.width - 66;
                 const duration = timeRange.end - timeRange.start;
                 const deltaX = clientX - dragStartX;
-                const deltaNs = (deltaX / timelineWidth) * duration;
+                const deltaNs = (deltaX / eventsAreaWidth) * duration;
 
                 if (dragMode === 'move') {
                     const windowSize = dragStartRight - dragStartLeft;
@@ -1998,13 +2105,26 @@
                 if (data.your_peer_id) {
                     yourPeerId = data.your_peer_id;
                     yourIpHash = data.your_ip_hash;
-                    console.log('You:', yourPeerId, '#' + yourIpHash);
+                    youArePeer = data.you_are_peer || false;
+                    yourName = data.your_name || null;
+                    console.log('You:', yourPeerId, '#' + yourIpHash, youArePeer ? '(peer)' : '', yourName || '');
 
                     // Update legend (if elements exist)
                     const legendYou = document.getElementById('legend-you');
                     const yourHash = document.getElementById('your-hash');
                     if (legendYou) legendYou.style.display = 'flex';
                     if (yourHash) yourHash.textContent = '#' + yourIpHash;
+
+                    // If user is a peer without a name, show naming prompt after a short delay
+                    if (youArePeer && !yourName) {
+                        setTimeout(() => showPeerNamingPrompt(), 2000);
+                    }
+                }
+
+                // Store peer names
+                if (data.peer_names) {
+                    peerNames = data.peer_names;
+                    console.log('Peer names:', Object.keys(peerNames).length);
                 }
 
                 // Show legend
@@ -2069,7 +2189,13 @@
                     // Build transaction map for quick lookup
                     transactionMap.clear();
                     allTransactions.forEach((tx, idx) => transactionMap.set(tx.tx_id, idx));
-                    console.log(`Loaded ${allTransactions.length} transactions`);
+                    // Debug: show transaction time range
+                    if (allTransactions.length > 0) {
+                        const txTimes = allTransactions.map(t => t.start_ns).filter(t => t);
+                        const minTx = new Date(Math.min(...txTimes) / 1_000_000);
+                        const maxTx = new Date(Math.max(...txTimes) / 1_000_000);
+                        console.log(`Loaded ${allTransactions.length} transactions from ${minTx.toLocaleTimeString()} to ${maxTx.toLocaleTimeString()}`);
+                    }
                 }
 
                 // Store peer presence for historical reconstruction
@@ -2078,7 +2204,13 @@
                     console.log(`Loaded ${peerPresence.length} peer presence records`);
                 }
 
-                console.log(`Loaded ${allEvents.length} events`);
+                // Debug: show event time range
+                if (allEvents.length > 0) {
+                    const evtTimes = allEvents.map(e => e.timestamp).filter(t => t);
+                    const minEvt = new Date(Math.min(...evtTimes) / 1_000_000);
+                    const maxEvt = new Date(Math.max(...evtTimes) / 1_000_000);
+                    console.log(`Loaded ${allEvents.length} events from ${minEvt.toLocaleTimeString()} to ${maxEvt.toLocaleTimeString()}`);
+                }
 
                 renderTimeline();
                 renderRuler();
@@ -2113,6 +2245,22 @@
                 if (isLive) {
                     currentTime = data.timestamp;
                     updateView();
+                }
+            } else if (data.type === 'peer_name_update') {
+                // Another peer set their name
+                peerNames[data.ip_hash] = data.name;
+                console.log(`Peer ${data.ip_hash} named: ${data.name}${data.was_modified ? ' (adjusted)' : ''}`);
+                updateView();  // Refresh topology to show new name
+            } else if (data.type === 'name_set_result') {
+                if (data.success) {
+                    yourName = data.name;
+                    peerNames[yourIpHash] = data.name;
+                    if (data.was_modified) {
+                        console.log(`Your name was adjusted to: ${data.name}`);
+                    }
+                    updateView();
+                } else {
+                    console.error('Failed to set name:', data.error);
                 }
             }
         }
