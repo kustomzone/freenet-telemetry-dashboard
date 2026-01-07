@@ -552,6 +552,14 @@
             color: var(--color-connect);
         }
 
+        .contract-stat.activity {
+            color: var(--color-put);
+        }
+
+        .contract-stat.last-update {
+            color: var(--text-muted);
+        }
+
         .contract-peer-info {
             font-size: 0.75em;
             color: var(--text-muted);
@@ -914,7 +922,7 @@
         }
 
         .legend-line.message {
-            background: var(--color-put);
+            background: linear-gradient(90deg, var(--color-get), var(--color-put), var(--color-update));
             position: relative;
         }
         .legend-line.message::after {
@@ -971,23 +979,29 @@
             margin-left: auto;
         }
 
-        /* Subscription arrow styles */
+        /* Subscription link styles (bidirectional, no arrows) */
+        .subscription-link {
+            stroke: #f472b6;
+            stroke-width: 2.5;
+            fill: none;
+            opacity: 0.9;
+        }
+
+        /* Proximity link styles (dashed cyan for connected peers sharing contract) */
+        .proximity-link {
+            stroke: #22d3ee;
+            stroke-width: 2;
+            fill: none;
+            opacity: 0.7;
+            stroke-dasharray: 4 3;
+        }
+
+        /* Legacy subscription arrow (for backwards compat, no arrowhead) */
         .subscription-arrow {
             stroke: var(--color-subscribe);
             stroke-width: 2;
             fill: none;
             opacity: 0.7;
-            marker-end: url(#arrowhead);
-        }
-
-        .subscription-arrow.animated {
-            stroke-dasharray: 8 4;
-            animation: flowPink 1s linear infinite;
-        }
-
-        @keyframes flowPink {
-            from { stroke-dashoffset: 12; }
-            to { stroke-dashoffset: 0; }
         }
 
         /* Message flow arrow styles */
