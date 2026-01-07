@@ -1,0 +1,239 @@
+        /* Header */
+        .header {
+            text-align: center;
+            margin-bottom: 8px;
+        }
+
+        .header-brand {
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+        }
+
+        .header-logo {
+            width: 32px;
+            height: 32px;
+        }
+
+        .header h1 {
+            font-family: var(--font-mono);
+            font-size: 1.5em;
+            font-weight: 600;
+            letter-spacing: -0.02em;
+            background: linear-gradient(135deg, var(--accent-light) 0%, var(--accent-primary) 50%, var(--accent-dark) 100%);
+            background-size: 200% auto;
+            -webkit-background-clip: text;
+            -webkit-text-fill-color: transparent;
+            background-clip: text;
+            animation: shimmer 8s linear infinite;
+        }
+
+        @keyframes shimmer {
+            0% { background-position: 0% center; }
+            100% { background-position: 200% center; }
+        }
+
+        .status-badge {
+            display: inline-flex;
+            align-items: center;
+            gap: 8px;
+            margin-top: 12px;
+            padding: 6px 16px;
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 20px;
+            font-family: var(--font-mono);
+            font-size: 0.8em;
+            font-weight: 500;
+            backdrop-filter: blur(10px);
+        }
+
+        .status-dot {
+            width: 8px;
+            height: 8px;
+            border-radius: 50%;
+            background: var(--text-muted);
+        }
+
+        .status-dot.live {
+            background: var(--accent-primary);
+            box-shadow: 0 0 12px var(--accent-glow);
+            animation: pulse-glow 2s ease-in-out infinite;
+        }
+
+        .status-dot.historical {
+            background: var(--color-put);
+            box-shadow: 0 0 12px rgba(251, 191, 36, 0.4);
+        }
+
+        .status-dot.disconnected {
+            background: var(--color-error);
+        }
+
+        @keyframes pulse-glow {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.7; transform: scale(1.2); }
+        }
+
+        /* Stats Grid */
+        .stats {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+            margin-bottom: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .stats { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .stat {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 8px;
+            text-align: center;
+            backdrop-filter: blur(10px);
+            transition: all 0.3s ease;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .stat::before {
+            content: '';
+            position: absolute;
+            top: 0;
+            left: 0;
+            right: 0;
+            height: 2px;
+            background: linear-gradient(90deg, transparent, var(--accent-primary), transparent);
+            opacity: 0;
+            transition: opacity 0.3s;
+        }
+
+        .stat:hover {
+            border-color: var(--border-glow);
+            transform: translateY(-2px);
+        }
+
+        .stat:hover::before {
+            opacity: 1;
+        }
+
+        .stat-value {
+            font-family: var(--font-mono);
+            font-size: 1.6em;
+            font-weight: 300;
+            color: var(--accent-primary);
+            line-height: 1;
+            letter-spacing: -0.02em;
+        }
+
+        .stat-label {
+            font-size: 0.7em;
+            font-weight: 500;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.1em;
+            margin-top: 4px;
+        }
+
+        .stat-hint {
+            font-size: 0.6em;
+            color: var(--text-muted);
+            margin-top: 2px;
+            font-weight: 400;
+            letter-spacing: 0;
+            text-transform: none;
+        }
+
+        /* Operation Stats */
+        .op-stats-row {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 8px;
+            margin-bottom: 12px;
+        }
+
+        @media (max-width: 768px) {
+            .op-stats-row { grid-template-columns: repeat(2, 1fr); }
+        }
+
+        .op-stat {
+            background: var(--bg-panel);
+            border: 1px solid var(--border-color);
+            border-radius: 10px;
+            padding: 10px 12px;
+            backdrop-filter: blur(10px);
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        .op-stat-icon {
+            width: 28px;
+            height: 28px;
+            border-radius: 6px;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            font-size: 0.9em;
+            flex-shrink: 0;
+        }
+
+        .op-stat-icon.put { background: rgba(251, 191, 36, 0.15); color: var(--color-put); }
+        .op-stat-icon.get { background: rgba(52, 211, 153, 0.15); color: var(--color-get); }
+        .op-stat-icon.update { background: rgba(167, 139, 250, 0.15); color: var(--color-update); }
+        .op-stat-icon.subscribe { background: rgba(244, 114, 182, 0.15); color: var(--color-subscribe); }
+
+        .op-stat-content {
+            flex: 1;
+            min-width: 0;
+        }
+
+        .op-stat-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: baseline;
+            margin-bottom: 4px;
+        }
+
+        .op-stat-name {
+            font-family: var(--font-mono);
+            font-size: 0.75em;
+            font-weight: 600;
+            color: var(--text-secondary);
+            text-transform: uppercase;
+            letter-spacing: 0.05em;
+        }
+
+        .op-stat-rate {
+            font-family: var(--font-mono);
+            font-size: 0.85em;
+            font-weight: 500;
+        }
+
+        .op-stat-rate.good { color: var(--color-get); }
+        .op-stat-rate.warn { color: var(--color-put); }
+        .op-stat-rate.bad { color: var(--color-error); }
+
+        .op-stat-details {
+            display: flex;
+            gap: 12px;
+            font-family: var(--font-mono);
+            font-size: 0.7em;
+            color: var(--text-muted);
+        }
+
+        .op-stat-detail {
+            display: flex;
+            align-items: center;
+            gap: 4px;
+        }
+
+        .op-stat-detail .label {
+            opacity: 0.7;
+        }
+
+        /* Dashboard Grid */

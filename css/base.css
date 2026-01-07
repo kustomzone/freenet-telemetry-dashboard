@@ -1,0 +1,86 @@
+        :root {
+            --bg-primary: #06080c;
+            --bg-secondary: #0d1117;
+            --bg-tertiary: #161b22;
+            --bg-panel: rgba(13, 17, 23, 0.8);
+            --border-color: rgba(48, 54, 61, 0.6);
+            --border-glow: rgba(0, 127, 255, 0.2);
+
+            --text-primary: #e6edf3;
+            --text-secondary: #8b949e;
+            --text-muted: #484f58;
+
+            /* Freenet brand colors */
+            --accent-primary: #007FFF;
+            --accent-light: #7ecfef;
+            --accent-dark: #0052cc;
+            --accent-glow: rgba(0, 127, 255, 0.4);
+
+            --color-connect: #7ecfef;
+            --color-put: #fbbf24;
+            --color-get: #34d399;
+            --color-update: #a78bfa;
+            --color-subscribe: #f472b6;
+            --color-error: #f87171;
+
+            --font-mono: 'JetBrains Mono', 'SF Mono', Monaco, monospace;
+            --font-sans: 'Space Grotesk', -apple-system, BlinkMacSystemFont, sans-serif;
+        }
+
+        * { margin: 0; padding: 0; box-sizing: border-box; }
+
+        body {
+            font-family: var(--font-sans);
+            background: var(--bg-primary);
+            color: var(--text-primary);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Atmospheric background */
+        body::before {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background:
+                radial-gradient(ellipse at 50% 0%, rgba(0, 127, 255, 0.08) 0%, transparent 50%),
+                radial-gradient(ellipse at 80% 50%, rgba(126, 207, 239, 0.05) 0%, transparent 40%),
+                radial-gradient(ellipse at 20% 80%, rgba(0, 82, 204, 0.05) 0%, transparent 40%);
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        /* Grid overlay */
+        body::after {
+            content: '';
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background-image:
+                linear-gradient(rgba(255,255,255,0.02) 1px, transparent 1px),
+                linear-gradient(90deg, rgba(255,255,255,0.02) 1px, transparent 1px);
+            background-size: 50px 50px;
+            pointer-events: none;
+            z-index: 0;
+        }
+
+        .main-content {
+            flex: 1;
+            padding: 12px 24px;
+            padding-bottom: 400px;
+            position: relative;
+            z-index: 1;
+        }
+
+        .container {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+

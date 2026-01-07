@@ -1,0 +1,106 @@
+        /* Peer Naming Modal */
+        .peer-name-overlay {
+            position: fixed;
+            top: 0;
+            left: 0;
+            right: 0;
+            bottom: 0;
+            background: rgba(0, 0, 0, 0.7);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            z-index: 10000;
+            backdrop-filter: blur(4px);
+        }
+
+        .peer-name-modal {
+            background: var(--bg-secondary);
+            border: 1px solid var(--border-color);
+            border-radius: 12px;
+            width: 90%;
+            max-width: 400px;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.5);
+        }
+
+        .peer-name-header {
+            padding: 16px 20px;
+            font-family: var(--font-heading);
+            font-size: 1.1em;
+            font-weight: 600;
+            border-bottom: 1px solid var(--border-color);
+            color: var(--text-primary);
+        }
+
+        .peer-name-body {
+            padding: 20px;
+        }
+
+        .peer-name-body p {
+            margin: 0 0 16px 0;
+            color: var(--text-secondary);
+            line-height: 1.5;
+        }
+
+        .peer-name-input {
+            width: 100%;
+            padding: 12px 16px;
+            font-family: var(--font-mono);
+            font-size: 1em;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 8px;
+            color: var(--text-primary);
+            box-sizing: border-box;
+        }
+
+        .peer-name-input:focus {
+            outline: none;
+            border-color: var(--accent-color);
+        }
+
+        .peer-name-hint {
+            margin-top: 8px;
+            font-size: 0.85em;
+            color: var(--text-muted);
+        }
+
+        .peer-name-footer {
+            padding: 16px 20px;
+            border-top: 1px solid var(--border-color);
+            display: flex;
+            justify-content: flex-end;
+            gap: 12px;
+        }
+
+        .peer-name-btn {
+            padding: 10px 20px;
+            font-family: var(--font-heading);
+            font-size: 0.9em;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            transition: all 0.15s;
+        }
+
+        .peer-name-btn.secondary {
+            background: var(--bg-tertiary);
+            color: var(--text-secondary);
+        }
+
+        .peer-name-btn.secondary:hover {
+            background: var(--bg-primary);
+        }
+
+        .peer-name-btn.primary {
+            background: var(--accent-color);
+            color: white;
+        }
+
+        .peer-name-btn.primary:hover {
+            filter: brightness(1.1);
+        }
+
+        /* ============================================
+           RESPONSIVE STYLES
+           ============================================ */
+
