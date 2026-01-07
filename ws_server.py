@@ -798,6 +798,7 @@ def process_record(record, store_history=True):
 
     # Track connections (event_type in attrs can be "connect", "connected", or "connect_connected")
     connection_added = None
+    connection_removed = None
     if event_type in ("connect", "connected", "connect_connected") and this_ip and other_ip:
         if is_public_ip(this_ip) and is_public_ip(other_ip):
             conn = frozenset({this_ip, other_ip})
@@ -808,6 +809,23 @@ def process_record(record, store_history=True):
                 if other_ip in peers:
                     peers[other_ip]["connections"].add(this_ip)
                 connection_added = (anonymize_ip(this_ip), anonymize_ip(other_ip))
+
+    # Handle disconnect events - remove connection from tracking
+    elif event_type == "disconnect":
+        # Get the disconnected peer's address from the body
+        from_peer_addr = body.get("from_peer_addr", "")
+        if from_peer_addr and ":" in from_peer_addr:
+            disconnected_ip = from_peer_addr.split(":")[0]
+            # this_ip is the peer reporting the disconnect
+            if this_ip and disconnected_ip and is_public_ip(this_ip) and is_public_ip(disconnected_ip):
+                conn = frozenset({this_ip, disconnected_ip})
+                if conn in connections:
+                    connections.discard(conn)
+                    if this_ip in peers:
+                        peers[this_ip]["connections"].discard(disconnected_ip)
+                    if disconnected_ip in peers:
+                        peers[disconnected_ip]["connections"].discard(this_ip)
+                    connection_removed = (anonymize_ip(this_ip), anonymize_ip(disconnected_ip))
 
     # Track subscription tree data FIRST (before potentially returning None)
     contract_key = body.get("contract_key") or body.get("key")
@@ -881,6 +899,10 @@ def process_record(record, store_history=True):
     # Include connection info if new connection
     if connection_added:
         event["connection"] = connection_added
+
+    # Include disconnection info if connection removed
+    if connection_removed:
+        event["disconnection"] = connection_removed
 
     # Include contract info if present
     if contract_key:
