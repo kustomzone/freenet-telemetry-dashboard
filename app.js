@@ -1008,7 +1008,8 @@
                 }
 
                 if (latestHash) {
-                    statsRow1.push(`<span class="state-hash" title="Current state hash">[${latestHash}]</span>`);
+                    const shortHash = latestHash.substring(0, 6);
+                    statsRow1.push(`<span class="state-hash" title="Full state hash: ${latestHash}">[${shortHash}]</span>`);
                 }
 
                 // Row 2: Network stats - simplified subscription info
