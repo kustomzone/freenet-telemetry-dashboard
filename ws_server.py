@@ -8,16 +8,21 @@ Supports time-travel by buffering event history.
 """
 
 import asyncio
-import json
 import hashlib
 import re
 import time
 import os
+import secrets
 from datetime import datetime
 from pathlib import Path
 from collections import deque
 
+import orjson
+import uvloop
 import websockets
+
+# Use uvloop for faster event loop
+uvloop.install()
 
 # Optional OpenAI for name sanitization
 try:
@@ -29,6 +34,10 @@ except ImportError:
 TELEMETRY_LOG = Path("/var/log/freenet-telemetry/logs.jsonl")
 WS_PORT = 3134
 PEER_NAMES_FILE = Path("/var/www/freenet-dashboard/peer_names.json")
+
+# Connection limits - reserve slots for returning users and peers
+MAX_CLIENTS = 300           # Total max connections
+PRIORITY_RESERVED = 50      # Slots reserved for priority users (returning visitors + peers)
 
 # Load OpenAI API key from environment or .env
 OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")
@@ -82,7 +91,7 @@ def load_peer_names():
     global peer_names
     if PEER_NAMES_FILE.exists():
         try:
-            peer_names = json.loads(PEER_NAMES_FILE.read_text())
+            peer_names = orjson.loads(PEER_NAMES_FILE.read_bytes())
         except Exception as e:
             print(f"Error loading peer names: {e}")
             peer_names = {}
@@ -91,7 +100,8 @@ def load_peer_names():
 def save_peer_names():
     """Save peer names to file."""
     try:
-        PEER_NAMES_FILE.write_text(json.dumps(peer_names, indent=2))
+        # Use OPT_INDENT_2 for readable output
+        PEER_NAMES_FILE.write_bytes(orjson.dumps(peer_names, option=orjson.OPT_INDENT_2))
     except Exception as e:
         print(f"Error saving peer names: {e}")
 
@@ -457,8 +467,8 @@ def process_record(record, store_history=True):
     body = {}
     if body_str:
         try:
-            body = json.loads(body_str)
-        except json.JSONDecodeError:
+            body = orjson.loads(body_str)
+        except orjson.JSONDecodeError:
             pass
 
     event_type = attrs.get("event_type") or body.get("type", "")
@@ -667,10 +677,18 @@ def process_record(record, store_history=True):
                 "downstream_count": body.get("downstream_count", 0),
             }
 
-    elif event_type == "peer_startup":
-        # Track peer startup with version/arch/OS info
+    # Extract reporting peer's IP early to filter out test/CI data
+    # We only want production network data (public IPs)
+    reporting_ip = body.get("this_peer_addr", "").split(":")[0] if body.get("this_peer_addr") else None
+    if not reporting_ip:
+        # Try parsing from this_peer field
+        _, reporting_ip, _ = parse_peer_string(body.get("this_peer", ""))
+    is_production_peer = reporting_ip and is_public_ip(reporting_ip)
+
+    if event_type == "peer_startup":
+        # Track peer startup with version/arch/OS info (only for production peers)
         peer_id = attrs.get("peer_id", "")
-        if peer_id:
+        if peer_id and is_production_peer:
             peer_lifecycle[peer_id] = {
                 "version": body.get("version", "unknown"),
                 "arch": body.get("arch", "unknown"),
@@ -691,7 +709,8 @@ def process_record(record, store_history=True):
 
     # Detect gateways from connection_type field in connect events
     # Gateways report connection_type: "gateway" when they accept connections
-    if event_type == "connect_connected" and body.get("connection_type") == "gateway":
+    # Only track production gateways (public IPs)
+    if event_type == "connect_connected" and body.get("connection_type") == "gateway" and is_production_peer:
         peer_id = attrs.get("peer_id", "")
         if peer_id:
             if peer_id not in peer_lifecycle:
@@ -1212,10 +1231,15 @@ def get_history():
     }
 
 
+def json_encode(obj):
+    """Fast JSON encoding using orjson, returns string for WebSocket text frames."""
+    return orjson.dumps(obj).decode('utf-8')
+
+
 async def broadcast(message):
     """Send message to all connected clients."""
     if clients:
-        msg = json.dumps(message)
+        msg = json_encode(message)
         await asyncio.gather(*[client.send(msg) for client in clients], return_exceptions=True)
 
 
@@ -1256,14 +1280,14 @@ async def tail_log():
                     continue
 
                 try:
-                    batch = json.loads(line)
+                    batch = orjson.loads(line)
                     for resource_log in batch.get("resourceLogs", []):
                         for scope_log in resource_log.get("scopeLogs", []):
                             for record in scope_log.get("logRecords", []):
                                 event = process_record(record, store_history=True)
                                 if event:
                                     await broadcast(event)
-                except json.JSONDecodeError:
+                except orjson.JSONDecodeError:
                     continue
                 except Exception as e:
                     print(f"Error processing line: {e}")
@@ -1273,26 +1297,65 @@ GATEWAY_IP = "5.9.111.215"
 GATEWAY_PEER_ID = anonymize_ip(GATEWAY_IP)
 GATEWAY_IP_HASH = ip_hash(GATEWAY_IP)
 
-# Store client IPs from X-Forwarded-For headers (keyed by connection id)
+# Store client IPs and priority status from request headers (keyed by connection id)
 client_real_ips = {}
+client_priority = {}  # connection id -> bool (is priority user)
 
 
 async def process_request(connection, request):
-    """Capture X-Forwarded-For header before WebSocket handshake."""
+    """Capture X-Forwarded-For header and priority token before WebSocket handshake."""
     # Store the real client IP for later use in handle_client
     forwarded_for = request.headers.get("X-Forwarded-For", "")
     if forwarded_for:
         real_ip = forwarded_for.split(",")[0].strip()
         client_real_ips[id(connection)] = real_ip
+
+    # Check for returning user token in query params
+    # URL format: /ws?token=<hash>
+    is_priority = False
+    if request.path and "?" in request.path:
+        query = request.path.split("?", 1)[1]
+        for param in query.split("&"):
+            if param.startswith("token="):
+                token = param.split("=", 1)[1]
+                # Valid token = 16 hex chars (we'll generate these on first connect)
+                if len(token) == 16 and all(c in "0123456789abcdef" for c in token):
+                    is_priority = True
+                    break
+
+    # Also mark as priority if client IP is a known peer
+    real_ip = client_real_ips.get(id(connection))
+    if real_ip and real_ip in peers:
+        is_priority = True
+
+    client_priority[id(connection)] = is_priority
     return None  # Continue with normal WebSocket handling
 
 
 async def handle_client(websocket):
     """Handle a WebSocket client connection."""
+    conn_id = id(websocket)
+    is_priority = client_priority.pop(conn_id, False)
+
+    # Connection limiting with priority reservation
+    current_clients = len(clients)
+    general_limit = MAX_CLIENTS - PRIORITY_RESERVED
+
+    if current_clients >= MAX_CLIENTS:
+        # At absolute capacity - reject everyone
+        print(f"Connection rejected: at absolute capacity ({MAX_CLIENTS} clients)")
+        await websocket.close(1013, "Server at capacity, please try again later")
+        return
+    elif current_clients >= general_limit and not is_priority:
+        # General slots full, only priority users allowed
+        print(f"Connection rejected: general capacity reached ({current_clients} clients, non-priority)")
+        await websocket.close(1013, "Server busy - returning users have priority. Please try again later")
+        return
+
     clients.add(websocket)
 
     # Get client IP - check stored X-Forwarded-For first, then fall back to remote_address
-    client_ip = client_real_ips.pop(id(websocket), None)
+    client_ip = client_real_ips.pop(conn_id, None)
     if not client_ip and websocket.remote_address:
         client_ip = websocket.remote_address[0]
     client_ip_hash = ip_hash(client_ip) if client_ip else ""
@@ -1311,16 +1374,18 @@ async def handle_client(websocket):
         is_peer = client_ip in peers if client_ip else False
         state["you_are_peer"] = is_peer
         state["your_name"] = peer_names.get(client_ip_hash) if client_ip_hash else None
-        await websocket.send(json.dumps(state))
+        # Generate priority token for returning user recognition
+        state["priority_token"] = secrets.token_hex(8)  # 16 hex chars
+        await websocket.send(json_encode(state))
 
         # Send event history for time-travel
         history = get_history()
-        await websocket.send(json.dumps(history))
+        await websocket.send(json_encode(history))
 
         # Keep connection alive and handle messages
         async for message in websocket:
             try:
-                msg = json.loads(message)
+                msg = orjson.loads(message)
                 msg_type = msg.get("type")
 
                 if msg_type == "set_peer_name":
@@ -1330,7 +1395,7 @@ async def handle_client(websocket):
                         # Check rate limit first
                         allowed, wait_time = check_rate_limit(client_ip_hash)
                         if not allowed:
-                            await websocket.send(json.dumps({
+                            await websocket.send(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
                                 "error": f"Too many changes. Try again in {wait_time // 60} min"
@@ -1344,7 +1409,7 @@ async def handle_client(websocket):
                             save_peer_names()
                             record_name_change(client_ip_hash)
                             # Broadcast the name update to all clients
-                            update_msg = json.dumps({
+                            update_msg = json_encode({
                                 "type": "peer_name_update",
                                 "ip_hash": client_ip_hash,
                                 "name": sanitized,
@@ -1352,25 +1417,25 @@ async def handle_client(websocket):
                             })
                             await asyncio.gather(*[c.send(update_msg) for c in clients], return_exceptions=True)
                             # Also send confirmation to this client
-                            await websocket.send(json.dumps({
+                            await websocket.send(json_encode({
                                 "type": "name_set_result",
                                 "success": True,
                                 "name": sanitized,
                                 "was_modified": was_modified
                             }))
                         else:
-                            await websocket.send(json.dumps({
+                            await websocket.send(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
                                 "error": "Invalid name"
                             }))
                     elif not client_ip_hash:
-                        await websocket.send(json.dumps({
+                        await websocket.send(json_encode({
                             "type": "name_set_result",
                             "success": False,
                             "error": "Cannot identify your peer"
                         }))
-            except json.JSONDecodeError:
+            except orjson.JSONDecodeError:
                 pass
     except websockets.exceptions.ConnectionClosed:
         pass
@@ -1394,7 +1459,7 @@ async def load_initial_state():
             if not line.strip():
                 continue
             try:
-                batch = json.loads(line)
+                batch = orjson.loads(line)
                 for resource_log in batch.get("resourceLogs", []):
                     for scope_log in resource_log.get("scopeLogs", []):
                         for record in scope_log.get("logRecords", []):
