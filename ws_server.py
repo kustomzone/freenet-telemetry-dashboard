@@ -677,8 +677,7 @@ def process_record(record, store_history=True):
                 "downstream_count": body.get("downstream_count", 0),
             }
 
-    # Extract reporting peer's IP early to filter out test/CI data
-    # We only want production network data (public IPs)
+    # Extract reporting peer's IP to help filter test/CI data
     reporting_ip = body.get("this_peer_addr", "").split(":")[0] if body.get("this_peer_addr") else None
     if not reporting_ip:
         # Try parsing from this_peer field
@@ -686,9 +685,11 @@ def process_record(record, store_history=True):
     is_production_peer = reporting_ip and is_public_ip(reporting_ip)
 
     if event_type == "peer_startup":
-        # Track peer startup with version/arch/OS info (only for production peers)
+        # Track peer startup with version/arch/OS info
+        # Note: peer_startup doesn't have IP info, so we store unconditionally
+        # and filter later when building topology/stats
         peer_id = attrs.get("peer_id", "")
-        if peer_id and is_production_peer:
+        if peer_id:
             peer_lifecycle[peer_id] = {
                 "version": body.get("version", "unknown"),
                 "arch": body.get("arch", "unknown"),
@@ -1075,10 +1076,12 @@ def get_network_state():
         ip_to_attrs_peer_ids[attrs_ip].add(attrs_pid)
 
     # Get active peers from lifecycle data (those with startup but no shutdown)
+    # Only include peers we've seen on public IPs (filters out CI/test peers)
     # Do this early so we can check is_gateway for topology peers
+    production_peer_ids = {pid for pid, ip in attrs_peer_id_to_ip.items() if is_public_ip(ip)}
     active_lifecycle = {
         pid: data for pid, data in peer_lifecycle.items()
-        if data.get("shutdown_time") is None
+        if data.get("shutdown_time") is None and pid in production_peer_ids
     }
 
     # Filter to only recently active peers
