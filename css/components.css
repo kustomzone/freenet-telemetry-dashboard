@@ -507,3 +507,270 @@
         .event-legend-dot.update { background: var(--color-update); }
         .event-legend-dot.subscribe { background: var(--color-subscribe); }
 
+
+/* ============================================
+   Stat Chart (Compact Transfer Scatter Plot)
+   ============================================ */
+
+/* Topology Overlay Charts (transfer scatter plot, etc.) */
+.topology-overlay {
+    position: absolute;
+    background: rgba(15, 20, 25, 0.85);
+    border: 1px solid rgba(255, 255, 255, 0.1);
+    border-radius: 4px;
+    padding: 4px 6px;
+    z-index: 10;
+    box-shadow:
+        0 0 20px rgba(0, 0, 0, 0.8),
+        0 0 40px rgba(0, 20, 40, 0.4),
+        inset 0 0 20px rgba(0, 0, 0, 0.3);
+}
+
+.dist-overlay {
+    bottom: 8px;
+    right: 8px;
+    width: 70px;
+    height: 115px;
+    padding: 4px 6px;
+    display: flex;
+    flex-direction: column;
+    cursor: pointer;
+}
+
+.dist-overlay:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.dist-overlay.zoomed {
+    position: fixed;
+    bottom: auto;
+    right: auto;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 300px;
+    height: 420px;
+    z-index: 1000;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+}
+
+.dist-overlay .title-long {
+    display: none;
+}
+
+.dist-overlay.zoomed .title-short {
+    display: none;
+}
+
+.dist-overlay.zoomed .title-long {
+    display: inline;
+}
+
+.dist-overlay.zoomed .overlay-title {
+    font-size: 12px;
+}
+
+.dist-overlay.zoomed .overlay-footer .axis-label-left,
+.dist-overlay.zoomed .overlay-footer .axis-label-right {
+    font-size: 10px;
+}
+
+.dist-chart-wrapper {
+    flex: 1;
+    display: flex;
+    min-height: 0;
+}
+
+.dist-axis-y {
+    display: flex;
+    flex-direction: column;
+    justify-content: space-between;
+    padding-right: 3px;
+    font-family: var(--font-mono);
+    font-size: 6px;
+    color: var(--text-muted);
+}
+
+.dist-overlay.zoomed .dist-axis-y {
+    font-size: 10px;
+    padding-right: 6px;
+}
+
+.dist-chart {
+    flex: 1;
+    position: relative;
+    min-height: 0;
+}
+
+.dist-chart canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.transfer-overlay {
+    bottom: 8px;
+    left: 8px;
+    width: 134px;
+    height: 115px;
+    padding: 4px 6px;
+    cursor: pointer;
+    display: flex;
+    flex-direction: column;
+}
+
+.transfer-overlay:hover {
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.6);
+}
+
+.transfer-overlay.zoomed {
+    position: fixed;
+    bottom: auto;
+    left: 50%;
+    top: 50%;
+    transform: translate(-50%, -50%);
+    width: 420px;
+    height: 420px;
+    z-index: 1000;
+    box-shadow: 0 8px 32px rgba(0, 0, 0, 0.8);
+}
+
+.transfer-overlay.zoomed .overlay-title {
+    font-size: 12px;
+}
+
+.transfer-overlay.zoomed .overlay-legend .dot {
+    width: 8px;
+    height: 8px;
+}
+
+.transfer-overlay.zoomed .axis-label {
+    font-size: 9px;
+}
+
+.overlay-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 2px;
+    line-height: 1;
+}
+
+.overlay-title {
+    font-family: var(--font-mono);
+    font-size: 7px;
+    color: var(--text-secondary);
+    text-transform: lowercase;
+}
+
+.overlay-chart {
+    flex: 1;
+    min-height: 0;
+    position: relative;
+}
+
+.overlay-chart canvas {
+    width: 100%;
+    height: 100%;
+}
+
+.overlay-footer {
+    display: flex;
+    justify-content: space-between;
+    padding-top: 2px;
+}
+
+.overlay-footer .axis-label-left,
+.overlay-footer .axis-label-right {
+    font-family: var(--font-mono);
+    font-size: 6px;
+    color: var(--text-muted);
+}
+
+/* Short/long labels for transfer overlay */
+.transfer-overlay .title-long,
+.transfer-overlay .label-long {
+    display: none;
+}
+
+.transfer-overlay.zoomed .title-short,
+.transfer-overlay.zoomed .label-short {
+    display: none;
+}
+
+.transfer-overlay.zoomed .title-long,
+.transfer-overlay.zoomed .label-long {
+    display: inline;
+}
+
+.transfer-overlay.zoomed .overlay-footer .axis-label-left,
+.transfer-overlay.zoomed .overlay-footer .axis-label-right {
+    font-size: 10px;
+}
+
+.transfer-backdrop {
+    display: none;
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(0, 0, 0, 0.7);
+    z-index: 999;
+}
+
+.transfer-backdrop.visible {
+    display: block;
+}
+
+.zoom-hint {
+    display: none;
+}
+
+.transfer-overlay.zoomed .zoom-hint {
+    display: block;
+    position: absolute;
+    bottom: 4px;
+    right: 8px;
+    font-size: 11px;
+    color: var(--text-muted);
+    opacity: 0.6;
+}
+
+.overlay-chart {
+    flex: 1;
+    position: relative;
+    min-width: 0;
+}
+
+.overlay-chart canvas {
+    position: absolute;
+    top: 0;
+    left: 0;
+    width: 100%;
+    height: 100%;
+}
+
+.transfer-tooltip {
+    position: fixed;
+    display: none;
+    background: var(--bg-tertiary);
+    border: 1px solid var(--border-color);
+    border-radius: 6px;
+    padding: 8px 12px;
+    font-size: 0.8rem;
+    color: var(--text-primary);
+    z-index: 1100;
+    pointer-events: none;
+    box-shadow: 0 4px 12px rgba(0, 0, 0, 0.3);
+    max-width: 220px;
+}
+
+.transfer-tooltip div {
+    margin: 2px 0;
+}
+
+.transfer-tooltip .issues {
+    color: var(--color-warning, #f0a020);
+    font-size: 0.75rem;
+    margin-top: 4px;
+}

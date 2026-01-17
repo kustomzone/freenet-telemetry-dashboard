@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/styles.css?v=20260106m">
+    <link rel="stylesheet" href="css/styles.css?v=20260115n">
 </head>
 <body>
     <div class="main-content">
@@ -46,61 +46,6 @@
                 </div>
             </div>
 
-            <!-- Operation Stats -->
-            <div class="op-stats-row" id="op-stats-row">
-                <div class="op-stat" title="Store new data on the network">
-                    <div class="op-stat-icon put">&#8593;</div>
-                    <div class="op-stat-content">
-                        <div class="op-stat-header">
-                            <span class="op-stat-name">PUT</span>
-                            <span class="op-stat-rate" id="put-rate">--%</span>
-                        </div>
-                        <div class="op-stat-details">
-                            <span class="op-stat-detail"><span id="put-total">-</span> stored</span>
-                            <span class="op-stat-detail"><span id="put-p50">-</span> median time</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="op-stat" title="Retrieve data from the network">
-                    <div class="op-stat-icon get">&#8595;</div>
-                    <div class="op-stat-content">
-                        <div class="op-stat-header">
-                            <span class="op-stat-name">GET</span>
-                            <span class="op-stat-rate" id="get-rate">--%</span>
-                        </div>
-                        <div class="op-stat-details">
-                            <span class="op-stat-detail"><span id="get-total">-</span> retrieved</span>
-                            <span class="op-stat-detail"><span id="get-miss">-</span> not found</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="op-stat" title="Modify existing data and notify subscribers">
-                    <div class="op-stat-icon update">&#8635;</div>
-                    <div class="op-stat-content">
-                        <div class="op-stat-header">
-                            <span class="op-stat-name">UPDATE</span>
-                            <span class="op-stat-rate" id="update-rate">--%</span>
-                        </div>
-                        <div class="op-stat-details">
-                            <span class="op-stat-detail"><span id="update-total">-</span> updates</span>
-                            <span class="op-stat-detail"><span id="update-bcast">-</span> notifications sent</span>
-                        </div>
-                    </div>
-                </div>
-                <div class="op-stat" title="Watch for changes to specific data">
-                    <div class="op-stat-icon subscribe">&#9733;</div>
-                    <div class="op-stat-content">
-                        <div class="op-stat-header">
-                            <span class="op-stat-name">SUBSCRIBE</span>
-                            <span class="op-stat-rate" id="sub-rate"></span>
-                        </div>
-                        <div class="op-stat-details">
-                            <span class="op-stat-detail"><span id="sub-total">-</span> watchers</span>
-                        </div>
-                    </div>
-                </div>
-            </div>
-
             <div class="dashboard">
                 <div class="panel">
                     <div class="panel-header">
@@ -121,6 +66,34 @@
                             <div>Loading network state...</div>
                         </div>
                     </div>
+                    <!-- Overlay charts (positioned relative to panel) -->
+                    <div class="transfer-backdrop" id="transfer-backdrop"></div>
+                    <div class="topology-overlay dist-overlay" id="dist-chart-container" title="Connection distance distribution">
+                        <div class="overlay-header">
+                            <span class="overlay-title"><span class="title-short">distance</span><span class="title-long">connection distance</span></span>
+                        </div>
+                        <div class="dist-chart-wrapper">
+                            <div class="dist-axis-y">
+                                <span>0</span>
+                                <span>.5</span>
+                            </div>
+                            <div class="dist-chart" id="dist-chart"></div>
+                        </div>
+                    </div>
+                    <div class="topology-overlay transfer-overlay" id="transfer-chart-container" title="Click to zoom">
+                        <div class="overlay-header">
+                            <span class="overlay-title"><span class="title-short">speeds</span><span class="title-long">transfer speeds</span></span>
+                        </div>
+                        <div class="overlay-chart" id="transfer-chart">
+                            <canvas id="transfer-canvas"></canvas>
+                        </div>
+                        <div class="overlay-footer">
+                            <span class="axis-label-left"><span class="label-short">slow</span><span class="label-long">100K/s</span></span>
+                            <span class="axis-label-right"><span class="label-short">fast</span><span class="label-long">500M/s</span></span>
+                        </div>
+                        <span class="zoom-hint" id="zoom-hint">click to zoom</span>
+                    </div>
+                    <div class="transfer-tooltip" id="transfer-tooltip"></div>
                 </div>
 
                 <div class="panel">
@@ -246,6 +219,6 @@
         <kbd>&#8592;</kbd><kbd>&#8594;</kbd> Step &nbsp; <kbd>L</kbd> Go Live
     </div>
 
-    <script type="module" src="js/app.js?v=20260107a"></script>
+    <script type="module" src="js/app.js?v=20260115n"></script>
 </body>
 </html>

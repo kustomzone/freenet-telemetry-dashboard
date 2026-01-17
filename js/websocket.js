@@ -4,6 +4,7 @@
  */
 
 import { state } from './state.js';
+import { addTransferEvents, addTransferEvent } from './transfers.js';
 import { formatLatency, getRateClass } from './utils.js';
 
 /**
@@ -12,12 +13,20 @@ import { formatLatency, getRateClass } from './utils.js';
  */
 export function connect(callbacks) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    const wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    let wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+
+    // Include priority token if we have one (returning user)
+    const token = localStorage.getItem('dashboard_priority_token');
+    if (token) {
+        wsUrl += `?token=${token}`;
+    }
+
     state.ws = new WebSocket(wsUrl);
 
     state.ws.onopen = () => {
         document.getElementById('status-dot').className = 'status-dot live';
         document.getElementById('status-text').textContent = 'Live';
+        hideCapacityMessage();
         if (state.reconnectTimeout) {
             clearTimeout(state.reconnectTimeout);
             state.reconnectTimeout = null;
@@ -32,13 +41,54 @@ export function connect(callbacks) {
         }
     };
 
-    state.ws.onclose = () => {
+    state.ws.onclose = (event) => {
         document.getElementById('status-dot').className = 'status-dot disconnected';
-        document.getElementById('status-text').textContent = 'Reconnecting...';
-        state.reconnectTimeout = setTimeout(() => connect(callbacks), 3000);
+
+        // Check for capacity rejection (close code 1013 = Try Again Later)
+        if (event.code === 1013) {
+            document.getElementById('status-text').textContent = 'Server busy';
+            showCapacityMessage(event.reason || 'Server at capacity');
+            // Retry with longer delay when at capacity
+            state.reconnectTimeout = setTimeout(() => connect(callbacks), 10000);
+        } else {
+            document.getElementById('status-text').textContent = 'Reconnecting...';
+            state.reconnectTimeout = setTimeout(() => connect(callbacks), 3000);
+        }
     };
 
     state.ws.onerror = () => state.ws.close();
+}
+
+/**
+ * Show capacity/busy message to user
+ */
+function showCapacityMessage(reason) {
+    let msg = document.getElementById('capacity-message');
+    if (!msg) {
+        msg = document.createElement('div');
+        msg.id = 'capacity-message';
+        msg.className = 'capacity-message';
+        document.body.appendChild(msg);
+    }
+    msg.innerHTML = `
+        <div class="capacity-content">
+            <div class="capacity-icon">⏳</div>
+            <div class="capacity-text">
+                <strong>Dashboard is busy</strong><br>
+                ${reason}<br>
+                <small>Retrying automatically...</small>
+            </div>
+        </div>
+    `;
+    msg.style.display = 'flex';
+}
+
+/**
+ * Hide capacity message
+ */
+function hideCapacityMessage() {
+    const msg = document.getElementById('capacity-message');
+    if (msg) msg.style.display = 'none';
 }
 
 /**
@@ -49,6 +99,11 @@ export function connect(callbacks) {
 function handleMessage(data, callbacks) {
     if (data.type === 'state') {
         console.log('Received initial state');
+
+        // Store priority token for future reconnects (returning user priority)
+        if (data.priority_token) {
+            localStorage.setItem('dashboard_priority_token', data.priority_token);
+        }
 
         // Extract gateway and user identification
         if (data.gateway_peer_id) {
@@ -105,6 +160,12 @@ function handleMessage(data, callbacks) {
             state.opStats = data.op_stats;
             updateOpStats();
             console.log('Op stats loaded');
+        }
+
+        // Load initial transfer events for scatter plot
+        if (data.transfers) {
+            addTransferEvents(data.transfers);
+            console.log('Transfers loaded:', data.transfers.length);
         }
 
         // Store peer and connection data
@@ -187,6 +248,9 @@ function handleMessage(data, callbacks) {
             callbacks.updateView();
         }
 
+    } else if (data.type === 'transfer') {
+        // Real-time transfer event for scatter plot
+        addTransferEvent(data);
     } else if (data.type === 'peer_name_update') {
         state.peerNames[data.ip_hash] = data.name;
         console.log(`Peer ${data.ip_hash} named: ${data.name}${data.was_modified ? ' (adjusted)' : ''}`);
@@ -208,34 +272,11 @@ function handleMessage(data, callbacks) {
 
 /**
  * Update operation statistics display
+ * Note: op-stats panel was removed; function kept for compatibility but does nothing
  */
 function updateOpStats() {
-    if (!state.opStats) return;
-
-    // PUT
-    const put = state.opStats.put;
-    document.getElementById('put-rate').textContent = put.success_rate !== null ? put.success_rate + '%' : '-';
-    document.getElementById('put-rate').className = 'op-stat-rate ' + getRateClass(put.success_rate);
-    document.getElementById('put-total').textContent = put.total || 0;
-    document.getElementById('put-p50').textContent = formatLatency(put.latency?.p50);
-
-    // GET
-    const get = state.opStats.get;
-    document.getElementById('get-rate').textContent = get.success_rate !== null ? get.success_rate + '%' : '-';
-    document.getElementById('get-rate').className = 'op-stat-rate ' + getRateClass(get.success_rate);
-    document.getElementById('get-total').textContent = get.total || 0;
-    document.getElementById('get-miss').textContent = get.not_found || 0;
-
-    // UPDATE
-    const update = state.opStats.update;
-    document.getElementById('update-rate').textContent = update.success_rate !== null ? update.success_rate + '%' : '-';
-    document.getElementById('update-rate').className = 'op-stat-rate ' + getRateClass(update.success_rate);
-    document.getElementById('update-total').textContent = update.total || 0;
-    document.getElementById('update-bcast').textContent = update.broadcasts || 0;
-
-    // SUBSCRIBE
-    const sub = state.opStats.subscribe;
-    document.getElementById('sub-total').textContent = sub.total || 0;
+    // Op stats panel was removed in favor of transfer scatter plot
+    // Keeping function to avoid breaking code that calls it
 }
 
 /**

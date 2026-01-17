@@ -293,6 +293,23 @@ export function updatePlayhead() {
     playhead.style.left = `${leftPx}px`;
     playhead.style.width = `${widthPx}px`;
 
+    // Calculate where currentTime actually falls within the (possibly clamped) window
+    // This ensures the center line points to currentTime, not just the geometric center
+    const windowSize = state.timeWindowNs * 2;
+    let windowStart = state.currentTime - state.timeWindowNs;
+    let windowEnd = state.currentTime + state.timeWindowNs;
+    if (windowStart < state.timeRange.start) {
+        windowStart = state.timeRange.start;
+        windowEnd = Math.min(state.timeRange.end, state.timeRange.start + windowSize);
+    }
+    if (windowEnd > state.timeRange.end) {
+        windowEnd = state.timeRange.end;
+        windowStart = Math.max(state.timeRange.start, state.timeRange.end - windowSize);
+    }
+    const actualWindowDuration = windowEnd - windowStart;
+    const currentTimeInWindow = actualWindowDuration > 0 ? (state.currentTime - windowStart) / actualWindowDuration : 0.5;
+    playhead.style.setProperty('--center-line-position', `${currentTimeInWindow * 100}%`);
+
     document.getElementById('playhead-time').textContent = formatTime(state.currentTime);
     document.getElementById('playhead-date').textContent = formatDate(state.currentTime);
     document.getElementById('time-display').textContent = formatTime(state.currentTime).split(' ')[0];

@@ -2198,3 +2198,52 @@
                 -webkit-overflow-scrolling: touch;
             }
         }
+
+/* Capacity/busy message overlay */
+.capacity-message {
+    position: fixed;
+    top: 0;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    background: rgba(6, 8, 12, 0.95);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    z-index: 10000;
+    backdrop-filter: blur(4px);
+}
+
+.capacity-content {
+    text-align: center;
+    padding: 2rem;
+    background: var(--bg-secondary);
+    border: 1px solid var(--border-color);
+    border-radius: 12px;
+    max-width: 400px;
+}
+
+.capacity-icon {
+    font-size: 3rem;
+    margin-bottom: 1rem;
+    animation: pulse 2s ease-in-out infinite;
+}
+
+.capacity-text {
+    color: var(--text-primary);
+    line-height: 1.6;
+}
+
+.capacity-text strong {
+    color: var(--accent-primary);
+    font-size: 1.2rem;
+}
+
+.capacity-text small {
+    color: var(--text-secondary);
+}
+
+@keyframes pulse {
+    0%, 100% { opacity: 1; }
+    50% { opacity: 0.5; }
+}

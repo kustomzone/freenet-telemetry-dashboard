@@ -5,9 +5,9 @@
 
 // Layout constants
 export const SVG_SIZE = 450;
-export const SVG_WIDTH = 530;  // Extra width for distance chart
+export const SVG_WIDTH = SVG_SIZE;  // No extra width needed
 export const CENTER = SVG_SIZE / 2;
-export const RADIUS = 175;
+export const RADIUS = 195;  // Larger ring now that dist chart is an overlay
 
 // Main state object - mutable
 export const state = {

@@ -328,9 +328,9 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
         }
     });
 
-    // Draw distance distribution mini-chart
+    // Draw distance distribution mini-chart (into HTML overlay)
     if (connectionDistances.length > 0) {
-        drawDistanceChart(svg, connectionDistances);
+        drawDistanceChartOverlay(connectionDistances);
     }
 
     // Draw highlighted connection for hovered event
@@ -381,118 +381,147 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     container.appendChild(svg);
 }
 
-// Helper: Draw distance distribution chart
-function drawDistanceChart(svg, connectionDistances) {
-    const chartW = 55;
-    const chartH = 180;
-    const chartX = SVG_SIZE + 15;
-    const chartY = (SVG_SIZE - chartH) / 2;
-    const plotW = 35;
-    const plotX = chartX + 16;
+// Distance chart state
+let distChartZoomed = false;
+let distChartInitialized = false;
+let lastConnectionDistances = [];
 
-    const chartBg = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-    chartBg.setAttribute('x', chartX);
-    chartBg.setAttribute('y', chartY);
-    chartBg.setAttribute('width', chartW);
-    chartBg.setAttribute('height', chartH);
-    chartBg.setAttribute('rx', '4');
-    chartBg.setAttribute('fill', 'rgba(15, 20, 25, 0.85)');
-    chartBg.setAttribute('stroke', 'rgba(255,255,255,0.1)');
-    chartBg.setAttribute('stroke-width', '1');
+// Helper: Set up dist chart click handler
+function setupDistChartZoom() {
+    if (distChartInitialized) return;
 
-    const chartTooltip = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-    chartTooltip.textContent = 'Connection distance distribution. Dots show actual peer connections. Curve shows expected 1/d small-world distribution.';
-    chartBg.appendChild(chartTooltip);
-    svg.appendChild(chartBg);
+    const container = document.getElementById('dist-chart-container');
+    const backdrop = document.getElementById('transfer-backdrop');
 
-    const chartTitle = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    chartTitle.setAttribute('x', chartX + chartW / 2);
-    chartTitle.setAttribute('y', chartY - 4);
-    chartTitle.setAttribute('fill', '#8b949e');
-    chartTitle.setAttribute('font-size', '9');
-    chartTitle.setAttribute('font-family', 'JetBrains Mono, monospace');
-    chartTitle.setAttribute('text-anchor', 'middle');
-    chartTitle.textContent = 'dist';
-    svg.appendChild(chartTitle);
+    if (container) {
+        container.addEventListener('click', (e) => {
+            e.stopPropagation(); // Prevent backdrop click when clicking chart
+            distChartZoomed = !distChartZoomed;
+            container.classList.toggle('zoomed', distChartZoomed);
+            container.title = distChartZoomed ? 'Click to close' : 'Connection distance distribution';
+            if (backdrop) backdrop.classList.toggle('visible', distChartZoomed);
 
-    const avgDist = connectionDistances.reduce((a, b) => a + b, 0) / connectionDistances.length;
-    const statsText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    statsText.setAttribute('x', chartX + chartW / 2);
-    statsText.setAttribute('y', chartY + chartH + 12);
-    statsText.setAttribute('fill', '#6e7681');
-    statsText.setAttribute('font-size', '8');
-    statsText.setAttribute('font-family', 'JetBrains Mono, monospace');
-    statsText.setAttribute('text-anchor', 'middle');
-    statsText.textContent = 'avg=' + avgDist.toFixed(2);
-    svg.appendChild(statsText);
+            // Re-render immediately
+            if (lastConnectionDistances.length > 0) {
+                renderDistChart(lastConnectionDistances);
+            }
+        });
 
-    // Draw 1/d curve
-    const curvePoints = [];
-    const minDist = 0.02;
-    for (let i = 0; i <= 30; i++) {
-        const d = minDist + (0.5 - minDist) * (i / 30);
-        const y = chartY + 4 + (d / 0.5) * (chartH - 8);
-        const density = 1 / d;
-        const maxDensity = 1 / minDist;
-        const x = plotX + (density / maxDensity) * (plotW - 4);
-        curvePoints.push((i === 0 ? 'M' : 'L') + ' ' + x + ' ' + y);
+        // Close on backdrop click
+        if (backdrop) {
+            backdrop.addEventListener('click', () => {
+                if (distChartZoomed) {
+                    distChartZoomed = false;
+                    container.classList.remove('zoomed');
+                    container.title = 'Connection distance distribution';
+                    backdrop.classList.remove('visible');
+                    if (lastConnectionDistances.length > 0) {
+                        renderDistChart(lastConnectionDistances);
+                    }
+                }
+            });
+        }
+
+        distChartInitialized = true;
     }
-    const curve = document.createElementNS('http://www.w3.org/2000/svg', 'path');
-    curve.setAttribute('d', curvePoints.join(' '));
-    curve.setAttribute('fill', 'none');
-    curve.setAttribute('stroke', 'rgba(0, 212, 170, 0.25)');
-    curve.setAttribute('stroke-width', '1.5');
-    svg.appendChild(curve);
+}
 
-    // Axis
-    const axisLine = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-    axisLine.setAttribute('x1', plotX);
-    axisLine.setAttribute('y1', chartY + 4);
-    axisLine.setAttribute('x2', plotX);
-    axisLine.setAttribute('y2', chartY + chartH - 4);
-    axisLine.setAttribute('stroke', 'rgba(255,255,255,0.2)');
-    axisLine.setAttribute('stroke-width', '1');
-    svg.appendChild(axisLine);
+// Helper: Draw distance distribution chart into HTML overlay
+function drawDistanceChartOverlay(connectionDistances) {
+    setupDistChartZoom();
+    lastConnectionDistances = connectionDistances;
+    renderDistChart(connectionDistances);
+}
 
-    ['0', '.25', '.5'].forEach((label, i) => {
-        const ly = chartY + 6 + (i / 2) * (chartH - 12);
-        const axisLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-        axisLabel.setAttribute('x', chartX + 4);
-        axisLabel.setAttribute('y', ly + 3);
-        axisLabel.setAttribute('fill', '#484f58');
-        axisLabel.setAttribute('font-size', '8');
-        axisLabel.setAttribute('font-family', 'JetBrains Mono, monospace');
-        axisLabel.textContent = label;
-        svg.appendChild(axisLabel);
+function renderDistChart(connectionDistances) {
+    const container = document.getElementById('dist-chart');
+    if (!container) return;
+
+    const width = container.offsetWidth || 50;
+    const height = container.offsetHeight || 80;
+
+    // Create or reuse canvas
+    let canvas = container.querySelector('canvas');
+    if (!canvas) {
+        canvas = document.createElement('canvas');
+        canvas.style.width = '100%';
+        canvas.style.height = '100%';
+        container.appendChild(canvas);
+    }
+
+    const dpr = window.devicePixelRatio || 1;
+    canvas.width = Math.round(width * dpr);
+    canvas.height = Math.round(height * dpr);
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    if (connectionDistances.length === 0) return;
+
+    // Sort distances for adaptive binning
+    const sorted = [...connectionDistances].sort((a, b) => a - b);
+    const total = sorted.length;
+
+    // Create adaptive bins - each bin has roughly equal number of points
+    // but we also want to show the actual distance range
+    const targetBins = distChartZoomed ? 20 : 12;
+    const bins = [];
+
+    // Use fixed distance ranges but track counts for adaptive width
+    const binSize = 0.5 / targetBins;
+    for (let i = 0; i < targetBins; i++) {
+        bins.push({
+            start: i * binSize,
+            end: (i + 1) * binSize,
+            count: 0
+        });
+    }
+
+    // Count distances in each bin
+    let maxCount = 0;
+    sorted.forEach(d => {
+        const idx = Math.min(Math.floor(d / binSize), targetBins - 1);
+        bins[idx].count++;
+        maxCount = Math.max(maxCount, bins[idx].count);
     });
 
-    // Dots
-    const sortedDists = [...connectionDistances].sort((a, b) => a - b);
-    const processedBins = new Map();
-    const dotRadius = 2.5;
-    const binSize = 0.02;
+    if (maxCount === 0) return;
 
-    sortedDists.forEach(d => {
-        const binKey = Math.floor(d / binSize);
-        const countInBin = processedBins.get(binKey) || 0;
-        processedBins.set(binKey, countInBin + 1);
+    // Calculate total count for width proportions
+    const totalCount = sorted.length;
 
-        const y = chartY + 4 + (d / 0.5) * (chartH - 8);
-        const stackOffset = countInBin * (dotRadius * 2 + 1);
-        const x = plotX + dotRadius + 2 + stackOffset;
+    // Draw bars with adaptive widths (width proportional to count)
+    // Y position is still based on distance range
+    const baseBarHeight = height / targetBins;
+    const minBarWidth = distChartZoomed ? 3 : 2;
+    const maxBarWidth = width - 4;
 
-        const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        dot.setAttribute('cx', Math.min(x, chartX + chartW - dotRadius - 2));
-        dot.setAttribute('cy', y);
-        dot.setAttribute('r', dotRadius);
-        dot.setAttribute('fill', '#a78bfa');
-        dot.setAttribute('opacity', '0.85');
+    for (let i = 0; i < targetBins; i++) {
+        const bin = bins[i];
+        if (bin.count === 0) continue;
 
-        const dotTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        dotTitle.textContent = 'Distance: ' + d.toFixed(3);
-        dot.appendChild(dotTitle);
-        svg.appendChild(dot);
-    });
+        const y = i * baseBarHeight;
+
+        // Width proportional to count (density)
+        const widthRatio = bin.count / maxCount;
+        const barWidth = minBarWidth + widthRatio * (maxBarWidth - minBarWidth);
+
+        // Height slightly varies with density too
+        const heightRatio = 0.7 + 0.3 * widthRatio;
+        const barHeight = baseBarHeight * heightRatio;
+        const yOffset = (baseBarHeight - barHeight) / 2;
+
+        // Purple gradient - brighter for denser bins
+        const lightness = 45 + widthRatio * 20;
+        const alpha = 0.5 + widthRatio * 0.4;
+        const gradient = ctx.createLinearGradient(0, y, barWidth, y);
+        gradient.addColorStop(0, `hsla(265, 60%, ${lightness}%, ${alpha * 0.8})`);
+        gradient.addColorStop(1, `hsla(265, 70%, ${lightness + 10}%, ${alpha})`);
+        ctx.fillStyle = gradient;
+
+        ctx.fillRect(2, y + yOffset, barWidth, barHeight - 1);
+    }
 }
 
 // Helper: Draw peers on the ring

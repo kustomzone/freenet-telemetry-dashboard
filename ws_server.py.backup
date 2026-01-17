@@ -579,31 +579,6 @@ def process_record(record, store_history=True):
     elif event_type == "subscribed":
         op_stats["subscribe"]["successes"] += 1
 
-    # Handle transfer_completed events for congestion control visualization
-    elif event_type == "transfer_completed":
-        peer_addr = body.get("peer_addr", "")
-        peer_ip = peer_addr.split(":")[0] if peer_addr else ""
-        if peer_ip and is_public_ip(peer_ip):
-            transfer_event = {
-                "type": "transfer",
-                "timestamp": timestamp,
-                "peer_id": anonymize_ip(peer_ip),
-                "direction": body.get("direction", "Send"),
-                "bytes": body.get("bytes_transferred", 0),
-                "elapsed_ms": body.get("elapsed_ms", 0),
-                "throughput_bps": body.get("avg_throughput_bps", 0),
-                "cwnd": body.get("final_cwnd_bytes", 0),
-                "rtt_ms": body.get("final_srtt_ms", 0),
-                "slowdowns": body.get("slowdowns_triggered", 0),
-                "timeouts": body.get("total_timeouts", 0),
-            }
-            transfer_events.append(transfer_event)
-            # Keep only last MAX_TRANSFER_EVENTS
-            if len(transfer_events) > MAX_TRANSFER_EVENTS:
-                transfer_events.pop(0)
-            # Return transfer event for real-time broadcasting
-            return transfer_event
-
     # Handle new subscription tree telemetry events (v0.1.70+)
     # Each event is reported by a specific peer - we track state per (contract, peer)
     # Get the reporting peer's ID from attrs or body
@@ -1189,7 +1164,6 @@ def get_network_state():
             "peers": topology_lifecycle + other_lifecycle,
         },
         "peer_names": peer_names,  # ip_hash -> name
-        "transfers": transfer_events[-200:],  # Last 200 transfer events for scatter plot
     }
 
 
@@ -1490,7 +1464,6 @@ async def load_initial_state():
 
     print(f"Loaded {count} records. Found {len(peers)} peers, {len(connections)} connections.")
     print(f"Event history: {len(event_history)} events in buffer")
-    print(f"Transfer events: {len(transfer_events)} transfers for scatter plot")
     print(f"Contract states: {len(contract_states)} contracts")
     for ck, ps in list(contract_states.items())[:3]:
         print(f"  {ck[:20]}... has {len(ps)} peers")

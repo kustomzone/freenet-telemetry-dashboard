@@ -30,6 +30,7 @@ import {
     connect, showPeerNamingPrompt, closePeerNamingPrompt,
     reconstructStateAtTime
 } from './websocket.js';
+import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferChart } from './transfers.js';
 
 // ============================================================================
 // Main Application Functions
@@ -236,5 +237,8 @@ connect({
 
 // Mark URL as loaded after initial setup
 markURLLoaded();
+
+// Initialize transfer chart
+initTransferChart();
 
 console.log('Freenet Dashboard initialized (modular)');
