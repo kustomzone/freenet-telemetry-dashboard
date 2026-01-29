@@ -488,7 +488,8 @@ def process_record(record, store_history=True):
     state_hash_after = body.get("state_hash_after")
 
     # Get contract key for state tracking
-    contract_key = body.get("contract_key") or body.get("key")
+    # Telemetry may use "contract_key", "key", or "instance_id" depending on event type
+    contract_key = body.get("contract_key") or body.get("key") or body.get("instance_id")
 
     # Get peer_id and IP for state tracking
     # Check multiple fields that might contain peer info: this_peer, requester, target
@@ -859,7 +860,8 @@ def process_record(record, store_history=True):
                     connection_removed = (anonymize_ip(this_ip), anonymize_ip(disconnected_ip))
 
     # Track subscription tree data FIRST (before potentially returning None)
-    contract_key = body.get("contract_key") or body.get("key")
+    # Use same pattern as line 492 - telemetry may use any of these field names
+    contract_key = body.get("contract_key") or body.get("key") or body.get("instance_id")
     if contract_key:
         if contract_key not in subscriptions:
             subscriptions[contract_key] = {
@@ -869,14 +871,20 @@ def process_record(record, store_history=True):
 
         sub_data = subscriptions[contract_key]
 
-        # Track subscribed events
-        if event_type == "subscribed":
-            if this_ip and is_public_ip(this_ip):
-                sub_data["subscribers"].add(anonymize_ip(this_ip))
+        # Track subscribed events (telemetry uses "subscribe_success" not "subscribed")
+        # Use event_peer_ip which is extracted from requester/target/this_peer fields (line 495-507)
+        if event_type in ("subscribed", "subscribe_success"):
+            # Try this_ip first (from this_peer field), then event_peer_ip (from requester/target)
+            subscriber_ip = this_ip or event_peer_ip
+            if subscriber_ip and is_public_ip(subscriber_ip):
+                sub_data["subscribers"].add(anonymize_ip(subscriber_ip))
 
-        # Track broadcast tree from broadcast_emitted events
+        # Track broadcast tree from broadcast events
+        # Telemetry may use various names: broadcast_emitted, update_broadcast_emitted,
+        # update_broadcast_received, update_broadcast_applied
         body_type = body.get("type", "")
-        if event_type in ("broadcast_emitted", "update_broadcast_emitted") or body_type == "broadcast_emitted":
+        if event_type in ("broadcast_emitted", "update_broadcast_emitted",
+                          "update_broadcast_received", "update_broadcast_applied") or body_type == "broadcast_emitted":
             broadcast_to = body.get("broadcast_to", [])
             sender_str = body.get("sender", "")
             _, sender_ip, _ = parse_peer_string(sender_str)
@@ -1258,6 +1266,36 @@ async def broadcast(message):
         await asyncio.gather(*[client.send(msg) for client in clients], return_exceptions=True)
 
 
+# Event batching for performance (reduces WebSocket message frequency)
+EVENT_BATCH_INTERVAL_MS = 200  # Flush events every 200ms
+event_buffer = []
+event_buffer_lock = asyncio.Lock()
+
+
+async def buffer_event(event):
+    """Add event to buffer for batched sending."""
+    async with event_buffer_lock:
+        event_buffer.append(event)
+
+
+async def flush_event_buffer():
+    """Periodically flush buffered events to clients."""
+    global event_buffer
+    while True:
+        await asyncio.sleep(EVENT_BATCH_INTERVAL_MS / 1000)
+
+        async with event_buffer_lock:
+            if not event_buffer:
+                continue
+            events_to_send = event_buffer
+            event_buffer = []
+
+        if clients and events_to_send:
+            # Send as batch message
+            batch_msg = json_encode({"type": "event_batch", "events": events_to_send})
+            await asyncio.gather(*[client.send(batch_msg) for client in clients], return_exceptions=True)
+
+
 async def tail_log():
     """Tail the telemetry log and broadcast new events.
 
@@ -1301,7 +1339,7 @@ async def tail_log():
                             for record in scope_log.get("logRecords", []):
                                 event = process_record(record, store_history=True)
                                 if event:
-                                    await broadcast(event)
+                                    await buffer_event(event)  # Buffer for batched sending
                 except orjson.JSONDecodeError:
                     continue
                 except Exception as e:
@@ -1518,8 +1556,11 @@ async def main():
         max_size=50 * 1024 * 1024,  # 50MB max message size for large history
         process_request=process_request,  # Capture X-Forwarded-For headers
     ):
-        # Start log tailer
-        await tail_log()
+        # Start log tailer and event buffer flusher concurrently
+        await asyncio.gather(
+            tail_log(),
+            flush_event_buffer()
+        )
 
 
 if __name__ == "__main__":

@@ -40,7 +40,7 @@
         let lastSvgState = null;  // Serialized state for comparison
         let lastEventsState = null;  // Cache for events panel
         let lastSvgRebuildTime = 0;  // Throttle SVG rebuilds (expensive)
-        const SVG_REBUILD_INTERVAL_MS = 500;  // Max 2 SVG rebuilds per second
+        const SVG_REBUILD_INTERVAL_MS = 1000;  // Max 1 SVG rebuild per second (topology doesn't change fast)
 
         // Performance: Cache filtered events (avoid filtering 28k events every frame)
         let cachedNearbyEvents = [];
@@ -48,6 +48,11 @@
 
         // Performance: Cache detail timeline state
         let lastDetailTimelineKey = null;
+
+        // Performance: Canvas overlay for lightweight hover effects (separate from heavy SVG)
+        let hoverCanvas = null;
+        let hoverCtx = null;
+        let lastHoverState = null;
 
         const SVG_SIZE = 450;
         const SVG_WIDTH = 530;  // Extra width for chart
@@ -163,6 +168,106 @@
         function locationToXY(location) {
             const angle = location * 2 * Math.PI - Math.PI / 2;
             return { x: CENTER + RADIUS * Math.cos(angle), y: CENTER + RADIUS * Math.sin(angle) };
+        }
+
+        // Initialize hover overlay canvas (lightweight updates separate from heavy SVG)
+        function initHoverCanvas() {
+            const container = document.getElementById('ring-container');
+            if (!container || hoverCanvas) return;
+
+            hoverCanvas = document.createElement('canvas');
+            hoverCanvas.width = SVG_WIDTH;
+            hoverCanvas.height = SVG_SIZE;
+            hoverCanvas.style.cssText = 'position:absolute;top:0;left:0;pointer-events:none;z-index:10;';
+            hoverCtx = hoverCanvas.getContext('2d');
+            container.style.position = 'relative';
+            container.appendChild(hoverCanvas);
+        }
+
+        // Update hover highlights on canvas (very fast, no DOM manipulation)
+        function updateHoverCanvas(peers) {
+            if (!hoverCtx || !hoveredEvent) {
+                if (hoverCtx) hoverCtx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
+                return;
+            }
+
+            // Build set of peers to highlight
+            const highlightSet = new Set();
+            if (hoveredEvent.peer_id) highlightSet.add(hoveredEvent.peer_id);
+            if (hoveredEvent.from_peer) highlightSet.add(hoveredEvent.from_peer);
+            if (hoveredEvent.to_peer) highlightSet.add(hoveredEvent.to_peer);
+            if (hoveredEvent.connection) {
+                highlightSet.add(hoveredEvent.connection[0]);
+                highlightSet.add(hoveredEvent.connection[1]);
+            }
+
+            // Check if we need to redraw
+            const hoverState = Array.from(highlightSet).sort().join(',');
+            if (hoverState === lastHoverState) return;
+            lastHoverState = hoverState;
+
+            // Clear and redraw highlights
+            hoverCtx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
+
+            peers.forEach((peer, id) => {
+                if (!highlightSet.has(id)) return;
+
+                const pos = locationToXY(peer.location);
+
+                // Glow effect
+                hoverCtx.beginPath();
+                hoverCtx.arc(pos.x, pos.y, 12, 0, Math.PI * 2);
+                hoverCtx.fillStyle = 'rgba(251, 191, 36, 0.4)';
+                hoverCtx.fill();
+
+                // Highlight circle
+                hoverCtx.beginPath();
+                hoverCtx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
+                hoverCtx.fillStyle = '#fbbf24';
+                hoverCtx.fill();
+            });
+
+            // Draw message flow arrow if from/to peers exist
+            if (hoveredEvent.from_peer && hoveredEvent.to_peer && hoveredEvent.from_peer !== hoveredEvent.to_peer) {
+                const fromPeer = peers.get(hoveredEvent.from_peer);
+                const toPeer = peers.get(hoveredEvent.to_peer);
+
+                const fromLoc = fromPeer?.location ?? hoveredEvent.from_location;
+                const toLoc = toPeer?.location ?? hoveredEvent.to_location;
+
+                if (fromLoc != null && toLoc != null) {
+                    const fromPos = locationToXY(fromLoc);
+                    const toPos = locationToXY(toLoc);
+
+                    // Shorten arrow to not overlap nodes
+                    const dx = toPos.x - fromPos.x;
+                    const dy = toPos.y - fromPos.y;
+                    const dist = Math.sqrt(dx*dx + dy*dy);
+                    if (dist > 20) {
+                        const x1 = fromPos.x + dx * (15/dist);
+                        const y1 = fromPos.y + dy * (15/dist);
+                        const x2 = fromPos.x + dx * (1 - 20/dist);
+                        const y2 = fromPos.y + dy * (1 - 20/dist);
+
+                        hoverCtx.beginPath();
+                        hoverCtx.moveTo(x1, y1);
+                        hoverCtx.lineTo(x2, y2);
+                        hoverCtx.strokeStyle = '#fbbf24';
+                        hoverCtx.lineWidth = 2;
+                        hoverCtx.stroke();
+
+                        // Arrow head
+                        const angle = Math.atan2(dy, dx);
+                        hoverCtx.beginPath();
+                        hoverCtx.moveTo(x2, y2);
+                        hoverCtx.lineTo(x2 - 8*Math.cos(angle - 0.4), y2 - 8*Math.sin(angle - 0.4));
+                        hoverCtx.lineTo(x2 - 8*Math.cos(angle + 0.4), y2 - 8*Math.sin(angle + 0.4));
+                        hoverCtx.closePath();
+                        hoverCtx.fillStyle = '#fbbf24';
+                        hoverCtx.fill();
+                    }
+                }
+            }
         }
 
         // Convert state hash to deterministic HSL color
@@ -1366,11 +1471,18 @@
         }
 
         function updateRingSVG(peers, connections, subscriberPeerIds = new Set()) {
-            // Performance: Throttle SVG rebuilds to max 2/second (topology changes are slow to perceive)
+            // Cache peers for hover canvas updates
+            cachedPeersMap = peers;
+
+            // Initialize hover canvas overlay (lazy init)
+            initHoverCanvas();
+
+            // Performance: Throttle SVG rebuilds to max 1/second (topology changes are slow to perceive)
             const now = performance.now();
             const timeSinceLastRebuild = now - lastSvgRebuildTime;
 
             // Performance: Skip rebuild if state hasn't changed
+            // Note: hoveredEvent handled by Canvas overlay, not included in state comparison
             const currentState = JSON.stringify({
                 peers: Array.from(peers.entries()).map(([id, p]) => [id, p.location]),
                 connections: Array.from(connections).sort(),
@@ -1378,18 +1490,20 @@
                 selectedContract,
                 selectedPeerId,
                 selectedEvent: selectedEvent?.timestamp,
-                hoveredEvent: hoveredEvent?.timestamp,
                 highlightedPeers: Array.from(highlightedPeers).sort()
             });
 
             if (currentState === lastSvgState) {
+                // Still update hover canvas even if SVG unchanged
+                updateHoverCanvas(peers);
                 return;  // No changes, skip expensive SVG rebuild
             }
 
             // Throttle: skip if we rebuilt recently (unless user interaction changed state)
             const isUserInteraction = selectedPeerId !== null || selectedContract !== null ||
-                                      hoveredEvent !== null || selectedEvent !== null;
+                                      selectedEvent !== null;
             if (!isUserInteraction && timeSinceLastRebuild < SVG_REBUILD_INTERVAL_MS) {
+                updateHoverCanvas(peers);
                 return;  // Skip - will catch up on next scheduled update
             }
 
@@ -2220,8 +2334,16 @@
                 });
             }
 
+            // Clear container but preserve hover canvas
+            const existingCanvas = container.querySelector('canvas');
             container.innerHTML = '';
             container.appendChild(svg);
+            if (existingCanvas) {
+                container.appendChild(existingCanvas);
+            }
+
+            // Update hover overlay
+            updateHoverCanvas(peers);
         }
 
         function renderTimeline() {
@@ -2632,14 +2754,24 @@
         }
 
         function handleEventHover(idx) {
+            const prevHovered = hoveredEvent;
             if (idx === null) {
                 hoveredEvent = null;
             } else if (displayedEvents && displayedEvents[idx]) {
                 hoveredEvent = displayedEvents[idx];
             }
-            // Re-render the ring to show highlighting (user interaction = immediate)
-            scheduleUpdate(true);
+
+            // Use lightweight Canvas overlay for hover effects (no SVG rebuild needed)
+            if (hoverCanvas && cachedPeersMap) {
+                updateHoverCanvas(cachedPeersMap);
+            } else {
+                // Fallback to full update if canvas not ready
+                scheduleUpdate(true);
+            }
         }
+
+        // Cache peers map for hover canvas updates
+        let cachedPeersMap = null;
 
         function goLive() {
             isLive = true;
@@ -2979,6 +3111,38 @@
                 if (isLive) {
                     currentTime = data.timestamp;
                     scheduleUpdate();  // Use RAF batching instead of direct updateView()
+                }
+            } else if (data.type === 'event_batch') {
+                // Server-side batched events (performance optimization)
+                const events = data.events || [];
+                const MAX_EVENTS = 50000;
+
+                // Process all events in batch
+                for (const event of events) {
+                    if (allEvents.length >= MAX_EVENTS) {
+                        allEvents.splice(0, MAX_EVENTS * 0.1);
+                        cachedFilterKey = null;
+                    }
+                    allEvents.push(event);
+
+                    // Track transaction
+                    trackTransactionFromEvent(event);
+
+                    // Queue timeline marker
+                    pendingTimelineMarkers.push({
+                        timestamp: event.timestamp,
+                        event_type: event.event_type,
+                        time_str: event.time_str
+                    });
+                }
+
+                // Update time range from last event in batch
+                if (events.length > 0) {
+                    timeRange.end = events[events.length - 1].timestamp;
+                    if (isLive) {
+                        currentTime = timeRange.end;
+                        scheduleUpdate();  // Single update for entire batch
+                    }
                 }
             } else if (data.type === 'peer_name_update') {
                 // Another peer set their name
