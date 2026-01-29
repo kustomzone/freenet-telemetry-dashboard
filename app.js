@@ -32,10 +32,101 @@
         let peerLifecycle = null;  // Peer lifecycle data (version, arch, OS)
         let peerPresence = [];  // Peer presence timeline for historical reconstruction
 
+        // Performance: RAF-based update batching (max 60fps)
+        let updateScheduled = false;
+        let pendingTimelineMarkers = [];  // Queue timeline markers for batch insertion
+
+        // Performance: Cache state to avoid unnecessary rebuilds
+        let lastSvgState = null;  // Serialized state for comparison
+        let lastEventsState = null;  // Cache for events panel
+        let lastSvgRebuildTime = 0;  // Throttle SVG rebuilds (expensive)
+        const SVG_REBUILD_INTERVAL_MS = 500;  // Max 2 SVG rebuilds per second
+
+        // Performance: Cache filtered events (avoid filtering 28k events every frame)
+        let cachedNearbyEvents = [];
+        let cachedFilterKey = null;
+
+        // Performance: Cache detail timeline state
+        let lastDetailTimelineKey = null;
+
         const SVG_SIZE = 450;
         const SVG_WIDTH = 530;  // Extra width for chart
         const CENTER = SVG_SIZE / 2;
         const RADIUS = 175;
+
+        // Performance: Track last update time for throttling
+        let lastUpdateTime = 0;
+        const MIN_UPDATE_INTERVAL_MS = 100;  // Max 10 updates per second for background updates
+
+        // Schedule an update via requestAnimationFrame (batches multiple updates per frame)
+        function scheduleUpdate(isUserInteraction = false) {
+            if (updateScheduled) return;
+
+            // Throttle background updates (new events) to 10fps max
+            // User interactions (hover, click) get immediate updates
+            if (!isUserInteraction) {
+                const now = performance.now();
+                if (now - lastUpdateTime < MIN_UPDATE_INTERVAL_MS) {
+                    // Schedule a delayed update instead
+                    setTimeout(() => {
+                        updateScheduled = false;
+                        scheduleUpdate(false);
+                    }, MIN_UPDATE_INTERVAL_MS);
+                    updateScheduled = true;
+                    return;
+                }
+            }
+
+            updateScheduled = true;
+            requestAnimationFrame(() => {
+                updateScheduled = false;
+                lastUpdateTime = performance.now();
+                // Flush pending timeline markers in batch
+                flushTimelineMarkers();
+                updateView();
+            });
+        }
+
+        // Batch insert timeline markers (avoid per-event DOM manipulation)
+        const MAX_TIMELINE_MARKERS = 500;  // Limit DOM nodes in timeline
+
+        function flushTimelineMarkers() {
+            if (pendingTimelineMarkers.length === 0) return;
+            const container = document.getElementById('timeline-events');
+            if (!container) return;
+
+            const fragment = document.createDocumentFragment();
+            const duration = timeRange.end - timeRange.start;
+            if (duration <= 0) {
+                pendingTimelineMarkers.length = 0;
+                return;
+            }
+
+            for (const data of pendingTimelineMarkers) {
+                const pos = (data.timestamp - timeRange.start) / duration;
+                if (pos < 0 || pos > 1) continue;
+
+                const marker = document.createElement('div');
+                marker.className = `timeline-marker ${getEventClass(data.event_type)}`;
+                marker.style.left = `${pos * 100}%`;
+                marker.style.height = '20px';
+                marker.style.top = '30px';
+                marker.title = `${data.time_str} - ${data.event_type}`;
+                fragment.appendChild(marker);
+            }
+
+            container.appendChild(fragment);
+            pendingTimelineMarkers.length = 0;
+
+            // Limit total markers to prevent DOM bloat
+            const markers = container.querySelectorAll('.timeline-marker');
+            if (markers.length > MAX_TIMELINE_MARKERS) {
+                const toRemove = markers.length - MAX_TIMELINE_MARKERS;
+                for (let i = 0; i < toRemove; i++) {
+                    markers[i].remove();
+                }
+            }
+        }
 
         function getEventClass(eventType) {
             if (!eventType) return 'other';
@@ -538,6 +629,14 @@
             if (windowEnd > timeRange.end) { windowEnd = timeRange.end; windowStart = Math.max(timeRange.start, timeRange.end - windowSize); }
             const windowDuration = windowEnd - windowStart;
             if (windowDuration <= 0) return;
+
+            // Performance: Cache key for detail timeline (quantized to 1-second buckets)
+            const timelineBucket = Math.floor(windowStart / 1_000_000_000);
+            const detailKey = `${timelineBucket}|${allTransactions.length}|${selectedTransaction?.tx_id || ''}`;
+            if (detailKey === lastDetailTimelineKey) {
+                return;  // No changes, skip expensive rebuild
+            }
+            lastDetailTimelineKey = detailKey;
 
             // Update range label
             const fmt = { hour: '2-digit', minute: '2-digit', second: '2-digit' };
@@ -1267,6 +1366,36 @@
         }
 
         function updateRingSVG(peers, connections, subscriberPeerIds = new Set()) {
+            // Performance: Throttle SVG rebuilds to max 2/second (topology changes are slow to perceive)
+            const now = performance.now();
+            const timeSinceLastRebuild = now - lastSvgRebuildTime;
+
+            // Performance: Skip rebuild if state hasn't changed
+            const currentState = JSON.stringify({
+                peers: Array.from(peers.entries()).map(([id, p]) => [id, p.location]),
+                connections: Array.from(connections).sort(),
+                subscribers: Array.from(subscriberPeerIds).sort(),
+                selectedContract,
+                selectedPeerId,
+                selectedEvent: selectedEvent?.timestamp,
+                hoveredEvent: hoveredEvent?.timestamp,
+                highlightedPeers: Array.from(highlightedPeers).sort()
+            });
+
+            if (currentState === lastSvgState) {
+                return;  // No changes, skip expensive SVG rebuild
+            }
+
+            // Throttle: skip if we rebuilt recently (unless user interaction changed state)
+            const isUserInteraction = selectedPeerId !== null || selectedContract !== null ||
+                                      hoveredEvent !== null || selectedEvent !== null;
+            if (!isUserInteraction && timeSinceLastRebuild < SVG_REBUILD_INTERVAL_MS) {
+                return;  // Skip - will catch up on next scheduled update
+            }
+
+            lastSvgState = currentState;
+            lastSvgRebuildTime = now;
+
             const container = document.getElementById('ring-container');
             const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
             svg.setAttribute('viewBox', `0 0 ${SVG_WIDTH} ${SVG_SIZE}`);
@@ -2335,44 +2464,65 @@
                 }
             }
 
-            // Filter events within the time window
-            let nearbyEvents = allEvents.filter(e =>
-                Math.abs(e.timestamp - currentTime) < timeWindowNs
-            );
+            // Performance: Cache filtered events (avoid filtering 28k events every frame)
+            // Quantize currentTime to 1-second buckets for cache key (events don't change that fast)
+            const timeWindowBucket = Math.floor(currentTime / 1_000_000_000);  // 1 second buckets
+            const filterKey = `${timeWindowBucket}|${selectedPeerId || ''}|${selectedTxId || ''}|${filterText || ''}|${selectedContract || ''}|${allEvents.length}`;
 
-            // Filter by selected peer (check peer_id, from_peer, to_peer, and connection)
-            if (selectedPeerId) {
-                nearbyEvents = nearbyEvents.filter(e =>
-                    e.peer_id === selectedPeerId ||
-                    e.from_peer === selectedPeerId ||
-                    e.to_peer === selectedPeerId ||
-                    (e.connection && (e.connection[0] === selectedPeerId || e.connection[1] === selectedPeerId))
+            let nearbyEvents;
+            if (filterKey === cachedFilterKey) {
+                nearbyEvents = cachedNearbyEvents;
+            } else {
+                // Filter events within the time window
+                nearbyEvents = allEvents.filter(e =>
+                    Math.abs(e.timestamp - currentTime) < timeWindowNs
                 );
+
+                // Filter by selected peer (check peer_id, from_peer, to_peer, and connection)
+                if (selectedPeerId) {
+                    nearbyEvents = nearbyEvents.filter(e =>
+                        e.peer_id === selectedPeerId ||
+                        e.from_peer === selectedPeerId ||
+                        e.to_peer === selectedPeerId ||
+                        (e.connection && (e.connection[0] === selectedPeerId || e.connection[1] === selectedPeerId))
+                    );
+                }
+
+                // Filter by selected transaction
+                if (selectedTxId) {
+                    nearbyEvents = nearbyEvents.filter(e => e.tx_id === selectedTxId);
+                }
+
+                // Filter by text input
+                if (filterText) {
+                    const filter = filterText.toLowerCase();
+                    nearbyEvents = nearbyEvents.filter(e =>
+                        (e.event_type && e.event_type.toLowerCase().includes(filter)) ||
+                        (e.peer_id && e.peer_id.toLowerCase().includes(filter)) ||
+                        (e.contract && e.contract.toLowerCase().includes(filter))
+                    );
+                }
+
+                // Filter by selected contract (show all events for this contract)
+                if (selectedContract) {
+                    nearbyEvents = nearbyEvents.filter(e => e.contract_full === selectedContract);
+                }
+
+                nearbyEvents = nearbyEvents.slice(-30);
+                cachedNearbyEvents = nearbyEvents;
+                cachedFilterKey = filterKey;
             }
 
-            // Filter by selected transaction
-            if (selectedTxId) {
-                nearbyEvents = nearbyEvents.filter(e => e.tx_id === selectedTxId);
-            }
+            // Performance: Cache events state to skip expensive DOM rebuild
+            const eventsStateKey = JSON.stringify({
+                events: nearbyEvents.map(e => e.timestamp),
+                selectedEvent: selectedEvent?.timestamp,
+                selectedPeerId,
+                selectedTxId,
+                selectedContract
+            });
 
-            // Filter by text input
-            if (filterText) {
-                const filter = filterText.toLowerCase();
-                nearbyEvents = nearbyEvents.filter(e =>
-                    (e.event_type && e.event_type.toLowerCase().includes(filter)) ||
-                    (e.peer_id && e.peer_id.toLowerCase().includes(filter)) ||
-                    (e.contract && e.contract.toLowerCase().includes(filter))
-                );
-            }
-
-            // Filter by selected contract (show all events for this contract)
-            if (selectedContract) {
-                nearbyEvents = nearbyEvents.filter(e => e.contract_full === selectedContract);
-            }
-
-            nearbyEvents = nearbyEvents.slice(-30);
-
-            // Update events title based on filtering
+            // Update events title based on filtering (lightweight)
             const eventsTitle = document.getElementById('events-title');
             if (selectedContract && contractData[selectedContract]) {
                 eventsTitle.textContent = `Events for ${contractData[selectedContract].short_key}`;
@@ -2381,6 +2531,13 @@
             } else {
                 eventsTitle.textContent = 'Events';
             }
+
+            // Skip events panel rebuild if nothing changed
+            if (eventsStateKey === lastEventsState) {
+                // Still update displayedEvents for hover handling
+                displayedEvents = nearbyEvents;
+            } else {
+                lastEventsState = eventsStateKey;
 
             const eventsPanel = document.getElementById('events-panel');
             if (nearbyEvents.length === 0) {
@@ -2457,6 +2614,7 @@
                 // Store events for click handler and topology visualization
                 displayedEvents = nearbyEvents;
             }
+            }  // End of events state cache check
 
             document.getElementById('event-count').textContent = allEvents.filter(e => e.timestamp <= currentTime).length;
             updatePlayhead();
@@ -2479,8 +2637,8 @@
             } else if (displayedEvents && displayedEvents[idx]) {
                 hoveredEvent = displayedEvents[idx];
             }
-            // Re-render the ring to show highlighting
-            updateView();
+            // Re-render the ring to show highlighting (user interaction = immediate)
+            scheduleUpdate(true);
         }
 
         function goLive() {
@@ -2796,35 +2954,37 @@
                 }
 
             } else if (data.type === 'event') {
+                // Performance: Limit event history to prevent memory growth
+                const MAX_EVENTS = 50000;
+                if (allEvents.length >= MAX_EVENTS) {
+                    // Remove oldest 10% to avoid frequent array shifts
+                    allEvents.splice(0, MAX_EVENTS * 0.1);
+                    cachedFilterKey = null;  // Invalidate filter cache
+                }
                 allEvents.push(data);
                 timeRange.end = data.timestamp;
 
                 // Track transaction from this event
                 trackTransactionFromEvent(data);
 
+                // Queue timeline marker for batch insertion (perf optimization)
                 if (timeRange.end > timeRange.start) {
-                    const container = document.getElementById('timeline-events');
-                    const duration = timeRange.end - timeRange.start;
-                    const pos = (data.timestamp - timeRange.start) / duration;
-
-                    const marker = document.createElement('div');
-                    marker.className = `timeline-marker ${getEventClass(data.event_type)}`;
-                    marker.style.left = `${pos * 100}%`;
-                    marker.style.height = '20px';
-                    marker.style.top = '30px';
-                    marker.title = `${data.time_str} - ${data.event_type}`;
-                    container.appendChild(marker);
+                    pendingTimelineMarkers.push({
+                        timestamp: data.timestamp,
+                        event_type: data.event_type,
+                        time_str: data.time_str
+                    });
                 }
 
                 if (isLive) {
                     currentTime = data.timestamp;
-                    updateView();
+                    scheduleUpdate();  // Use RAF batching instead of direct updateView()
                 }
             } else if (data.type === 'peer_name_update') {
                 // Another peer set their name
                 peerNames[data.ip_hash] = data.name;
                 console.log(`Peer ${data.ip_hash} named: ${data.name}${data.was_modified ? ' (adjusted)' : ''}`);
-                updateView();  // Refresh topology to show new name
+                scheduleUpdate();  // Refresh topology to show new name
             } else if (data.type === 'name_set_result') {
                 if (data.success) {
                     yourName = data.name;
@@ -2832,7 +2992,7 @@
                     if (data.was_modified) {
                         console.log(`Your name was adjusted to: ${data.name}`);
                     }
-                    updateView();
+                    scheduleUpdate();
                 } else {
                     console.error('Failed to set name:', data.error);
                 }
