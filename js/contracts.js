@@ -198,7 +198,8 @@ export function renderContractsList() {
 
         // Row 1: Peer count, sync status, and state hash
         // Show "X of Y peers" where X = peers with state hash, Y = total subscribers
-        const subscriberCount = peerStates.length;
+        const subscribers = data.subscribers || [];
+        const subscriberCount = subscribers.length;
         if (peerCount > 0 || subscriberCount > 0) {
             if (subscriberCount > 0 && peerCount !== subscriberCount) {
                 statsRow1.push(`<span class="peer-count" title="${peerCount} peers have reported state, ${subscriberCount} total subscribers">${peerCount} of ${subscriberCount} peers</span>`);
