@@ -713,8 +713,8 @@ function drawPeers(svg, peers, subscriberPeerIds, callbacks) {
             svg.appendChild(stateRect);
         }
 
-        // Labels
-        if (label && peers.size <= 15) {
+        // Labels - always show named peers, limit generic labels to small networks
+        if (label && (peerName || peers.size <= 15)) {
             const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
             labelText.setAttribute('x', pos.x);
             labelText.setAttribute('y', pos.y + 24);
@@ -732,7 +732,7 @@ function drawPeers(svg, peers, subscriberPeerIds, callbacks) {
         }
 
         // Inside-ring label
-        const hasOutsideLabel = label && peers.size <= 15;
+        const hasOutsideLabel = label && (peerName || peers.size <= 15);
         if (peers.size <= 12 && !hasOutsideLabel) {
             const angle = peer.location * 2 * Math.PI - Math.PI / 2;
             const labelRadius = RADIUS - 30;

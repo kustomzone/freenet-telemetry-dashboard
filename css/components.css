@@ -167,15 +167,24 @@
 
         .contract-item {
             display: flex;
-            flex-direction: column;
-            gap: 6px;
-            padding: 12px;
+            flex-direction: row;
+            align-items: center;
+            gap: 8px;
+            padding: 10px 12px;
             background: rgba(0, 0, 0, 0.2);
             border: 1px solid var(--border-color);
             border-radius: 8px;
             margin-bottom: 8px;
             cursor: pointer;
             transition: all 0.2s;
+        }
+
+        .contract-item-main {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            flex: 1;
+            min-width: 0;
         }
 
         .contract-item:hover {
@@ -241,6 +250,47 @@
             color: var(--text-muted);
             padding-top: 6px;
             border-top: 1px solid var(--border-color);
+        }
+
+        /* Propagation sparkline visualization */
+        .propagation-sparkline-container {
+            display: flex;
+            flex-direction: column;
+            align-items: flex-end;
+            justify-content: center;
+            gap: 2px;
+            flex-shrink: 0;
+            width: 70px;
+        }
+
+        .propagation-sparkline {
+            display: block;
+            width: 60px;
+            height: 20px;
+            background: rgba(0, 0, 0, 0.4);
+            border-radius: 3px;
+            padding: 2px;
+        }
+
+        .sparkline-svg {
+            width: 100%;
+            height: 100%;
+        }
+
+        .sparkline-fill {
+            fill: rgba(34, 197, 94, 0.5);
+        }
+
+        .sparkline-line {
+            fill: none;
+            stroke: #22c55e;
+            stroke-width: 2;
+        }
+
+        .propagation-stats {
+            font-size: 0.65em;
+            color: var(--text-muted);
+            white-space: nowrap;
         }
 
         /* State hash badges */

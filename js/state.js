@@ -43,6 +43,7 @@ export const state = {
     // Contracts
     contractData: {},
     contractStates: {},
+    propagationData: {},
     selectedContract: null,
     contractSearchText: '',
 

@@ -155,6 +155,12 @@ function handleMessage(data, callbacks) {
             console.log('Contract states:', Object.keys(state.contractStates).length);
         }
 
+        // Store propagation timeline data
+        if (data.propagation) {
+            state.propagationData = data.propagation;
+            console.log('Propagation data:', Object.keys(state.propagationData).length);
+        }
+
         // Store and display operation stats
         if (data.op_stats) {
             state.opStats = data.op_stats;

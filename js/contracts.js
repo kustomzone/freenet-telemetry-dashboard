@@ -7,6 +7,50 @@ import { state } from './state.js';
 import { hashToColor, formatRelativeTime, getContractActivity } from './utils.js';
 
 /**
+ * Render a small SVG sparkline showing propagation timeline.
+ * Timeline shows how peers accumulated over time for the current state.
+ * @param {Array} timeline - Array of {t: offset_ms, peers: count}
+ * @param {number} maxPeers - Maximum peer count for scaling
+ * @returns {string} - SVG HTML string
+ */
+function renderPropagationSparkline(timeline, maxPeers) {
+    if (!timeline || timeline.length === 0) return '';
+
+    const width = 50;
+    const height = 14;
+    const padding = 1;
+
+    const maxT = Math.max(timeline[timeline.length - 1].t, 1);
+    const maxP = Math.max(maxPeers, 1);
+
+    // Build step function points
+    const points = timeline.map(pt => {
+        const x = padding + (pt.t / maxT) * (width - 2 * padding);
+        const y = height - padding - (pt.peers / maxP) * (height - 2 * padding);
+        return { x, y };
+    });
+
+    // Build path for step function
+    let pathD = `M ${points[0].x},${points[0].y}`;
+    for (let i = 1; i < points.length; i++) {
+        pathD += ` H ${points[i].x} V ${points[i].y}`;
+    }
+    // Extend to right edge
+    const lastX = width - padding;
+    pathD += ` H ${lastX}`;
+
+    // Fill path (close to bottom)
+    const fillPath = pathD + ` V ${height - padding} H ${padding} Z`;
+
+    return `
+        <svg class="sparkline-svg" viewBox="0 0 ${width} ${height}" preserveAspectRatio="none">
+            <path d="${fillPath}" class="sparkline-fill"/>
+            <path d="${pathD}" class="sparkline-line"/>
+        </svg>
+    `;
+}
+
+/**
  * Select a contract to filter events and show subscription tree
  * @param {string} contractKey - Contract key to select
  * @param {Function} updateView - Callback to refresh view
@@ -81,17 +125,11 @@ export function renderContractsList() {
         return;
     }
 
-    // Sort contracts by activity
+    // Sort contracts by peer count (highest first)
     const sortedContracts = filteredContracts.sort((a, b) => {
-        const aData = state.contractData[a];
-        const bData = state.contractData[b];
-        const aActivity = getContractActivity(a, state.allEvents);
-        const bActivity = getContractActivity(b, state.allEvents);
-        const aScore = (aActivity.recentUpdates * 5) + (aActivity.totalUpdates) +
-            (aData.any_seeding ? 10 : 0) + (aData.total_downstream || 0);
-        const bScore = (bActivity.recentUpdates * 5) + (bActivity.totalUpdates) +
-            (bData.any_seeding ? 10 : 0) + (bData.total_downstream || 0);
-        return bScore - aScore;
+        const aStates = state.contractStates[a] || {};
+        const bStates = state.contractStates[b] || {};
+        return Object.keys(bStates).length - Object.keys(aStates).length;
     });
 
     list.innerHTML = sortedContracts.map(key => {
@@ -102,8 +140,22 @@ export function renderContractsList() {
         // Get state info from contractStates
         const states = state.contractStates[key] || {};
         const peerStateHashes = Object.entries(states);
-        const uniqueHashes = new Set(peerStateHashes.map(([_, s]) => s.hash));
-        const isDiverged = uniqueHashes.size > 1;
+
+        // All unique hashes (for display)
+        const allUniqueHashes = new Set(peerStateHashes.map(([_, s]) => s.hash));
+
+        // For divergence WARNING: only consider it a real issue if active peers disagree
+        // Filter out stale states (older than 10 minutes) - these are likely from offline peers
+        const nowNs = Date.now() * 1_000_000;
+        const staleThresholdNs = 10 * 60 * 1_000_000_000; // 10 minutes in nanoseconds
+        const activePeerStates = peerStateHashes.filter(([_, s]) =>
+            (nowNs - s.timestamp) < staleThresholdNs
+        );
+        const activeUniqueHashes = new Set(activePeerStates.map(([_, s]) => s.hash));
+        const isDiverged = activeUniqueHashes.size > 1;
+
+        // Use all hashes for display, active hashes for warning
+        const uniqueHashes = allUniqueHashes;
         const latestHash = peerStateHashes.length > 0
             ? peerStateHashes.sort((a, b) => b[1].timestamp - a[1].timestamp)[0][1].hash
             : null;
@@ -118,7 +170,38 @@ export function renderContractsList() {
         let statsRow1 = [];
         let statsRow2 = [];
 
-        // Row 1: Sync status and state hash
+        // Propagation sparkline (rendered separately on the right)
+        // Get peer count from contract states
+        const peerCount = Object.keys(states).length;
+
+        let sparklineHtml = '';
+        const prop = state.propagationData[key];
+        if (prop && prop.timeline && prop.timeline.length > 0) {
+            const sparkline = renderPropagationSparkline(prop.timeline, prop.peer_count);
+            const propagationMs = prop.propagation_ms;
+            const propagationSec = propagationMs / 1000;
+            const propagationStr = propagationSec < 0.1
+                ? `${propagationMs}ms`
+                : propagationSec < 60
+                    ? `${propagationSec.toFixed(1)}s`
+                    : propagationSec < 3600
+                        ? `${(propagationSec / 60).toFixed(1)}m`
+                        : `${(propagationSec / 3600).toFixed(1)}h`;
+            const timeAgo = formatRelativeTime(prop.first_seen);
+            sparklineHtml = `
+                <div class="propagation-sparkline-container" title="State ${prop.hash}&#10;Changed: ${timeAgo}&#10;Spread to ${prop.peer_count} peers in ${propagationStr}">
+                    <span class="propagation-sparkline">${sparkline}</span>
+                    <span class="propagation-stats">${propagationStr}</span>
+                </div>
+            `;
+        }
+
+        // Row 1: Peer count, sync status, and state hash
+        // Peer count is the most important - shows how many peers have this contract
+        if (peerCount > 0) {
+            statsRow1.push(`<span class="peer-count" title="${peerCount} peers have this contract">${peerCount} peers</span>`);
+        }
+
         if (peerStateHashes.length > 0) {
             if (isDiverged) {
                 const swatches = [...uniqueHashes].slice(0, 6).map(hash => {
@@ -130,11 +213,10 @@ export function renderContractsList() {
             } else {
                 statsRow1.push(`<span class="sync-indicator synced" title="All peers have the same state">&#10003; Synced</span>`);
             }
-        }
-
-        if (latestHash) {
-            const shortHash = latestHash.substring(0, 6);
-            statsRow1.push(`<span class="state-hash" title="Full state hash: ${latestHash}">[${shortHash}]</span>`);
+            if (latestHash) {
+                const shortHash = latestHash.substring(0, 6);
+                statsRow1.push(`<span class="state-hash" title="Full state hash: ${latestHash}">[${shortHash}]</span>`);
+            }
         }
 
         // Row 2: Network stats
@@ -165,8 +247,11 @@ export function renderContractsList() {
 
         return `
             <div class="contract-item ${isSelected ? 'selected' : ''}" onclick="selectContract('${key}')">
-                <div class="contract-key">${data.short_key}</div>
-                <div class="contract-stats">${allStats.join('') || '<span style="color:var(--text-muted)">No activity</span>'}</div>
+                <div class="contract-item-main">
+                    <div class="contract-key">${data.short_key}</div>
+                    <div class="contract-stats">${allStats.join('') || '<span style="color:var(--text-muted)">No activity</span>'}</div>
+                </div>
+                ${sparklineHtml}
             </div>
         `;
     }).join('');

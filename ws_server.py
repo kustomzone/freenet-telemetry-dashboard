@@ -211,6 +211,10 @@ seeding_state = {}  # contract_key -> {peer_id -> state}
 # contract_key -> {peer_id -> {hash: str, timestamp: int, event_type: str}}
 contract_states = {}
 
+# Contract propagation tracking - tracks how quickly new states spread across peers
+# contract_key -> {current_hash, first_seen, peers: {peer_id -> timestamp}, previous: {...}}
+contract_propagation = {}
+
 
 def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_type):
     """Update the known state hash for a (contract, peer) pair."""
@@ -230,6 +234,69 @@ def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_ty
         "timestamp": timestamp,
         "event_type": event_type,
     }
+
+    # Track propagation timeline - only for UPDATE events that represent state changes spreading
+    # GET and PUT don't represent propagation - GET is reading existing data, PUT is initial creation
+    if event_type in ("update_success", "update_broadcast_applied", "update_broadcast_emitted"):
+        update_propagation_tracking(contract_key, peer_id, state_hash, timestamp)
+
+
+def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp):
+    """Track how a new state hash propagates across peers."""
+    prop = contract_propagation.setdefault(contract_key, {})
+
+    # Check if this is a new state version
+    if prop.get("current_hash") != state_hash:
+        # Archive current state as previous (if exists)
+        if "current_hash" in prop and prop.get("peers"):
+            peers = prop["peers"]
+            prop["previous"] = {
+                "hash": prop["current_hash"],
+                "first_seen": prop["first_seen"],
+                "propagation_ms": (prop.get("last_seen", prop["first_seen"]) - prop["first_seen"]) // 1_000_000,
+                "peer_count": len(peers),
+            }
+        # Start tracking new state
+        prop["current_hash"] = state_hash
+        prop["first_seen"] = timestamp
+        prop["last_seen"] = timestamp
+        prop["peers"] = {peer_id: timestamp}
+    else:
+        # Same hash - record when this peer first got it
+        if peer_id not in prop.get("peers", {}):
+            prop.setdefault("peers", {})[peer_id] = timestamp
+            prop["last_seen"] = max(prop.get("last_seen", timestamp), timestamp)
+
+
+def get_propagation_data():
+    """Get propagation timeline data for all contracts."""
+    result = {}
+    for contract_key, prop in contract_propagation.items():
+        if not prop.get("peers"):
+            continue
+
+        peers = prop["peers"]
+        first_seen = prop["first_seen"]
+
+        # Build timeline: sort peers by timestamp, compute cumulative count
+        sorted_peers = sorted(peers.items(), key=lambda x: x[1])
+        timeline = []
+        for i, (pid, ts) in enumerate(sorted_peers, 1):
+            # Offset in milliseconds from first_seen (timestamps are in nanoseconds)
+            offset_ms = (ts - first_seen) // 1_000_000
+            timeline.append({"t": int(offset_ms), "peers": i})
+
+        propagation_ms = (prop.get("last_seen", first_seen) - first_seen) // 1_000_000
+
+        result[contract_key] = {
+            "hash": prop["current_hash"],
+            "first_seen": first_seen,
+            "propagation_ms": int(propagation_ms),
+            "peer_count": len(peers),
+            "timeline": timeline,
+            "previous": prop.get("previous"),
+        }
+    return result
 
 
 # Operation statistics
@@ -523,9 +590,9 @@ def process_record(record, store_history=True):
             update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
         elif event_type in ("broadcast_emitted", "update_broadcast_emitted") and state_hash:
             update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
-        elif event_type == "broadcast_received" and state_hash:
+        elif event_type == "update_broadcast_received" and state_hash:
             update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
-        elif event_type == "broadcast_applied" and state_hash_after:
+        elif event_type == "update_broadcast_applied" and state_hash_after:
             # broadcast_applied is the definitive post-merge state - takes precedence
             update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
 
@@ -1198,6 +1265,7 @@ def get_network_state():
         },
         "peer_names": peer_names,  # ip_hash -> name
         "transfers": transfer_events[-200:],  # Last 200 transfer events for scatter plot
+        "propagation": get_propagation_data(),  # State propagation timelines
     }
 
 
