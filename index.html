@@ -99,12 +99,12 @@
                 <div class="panel">
                     <div class="panel-header">
                         <div class="panel-tabs">
-                            <button class="panel-tab active" id="tab-events" onclick="switchTab('events')">Events</button>
-                            <button class="panel-tab" id="tab-contracts" onclick="switchTab('contracts')">Contracts <span class="tab-count" id="contract-tab-count">0</span></button>
+                            <button class="panel-tab active" id="tab-contracts" onclick="switchTab('contracts')">Contracts <span class="tab-count" id="contract-tab-count">0</span></button>
+                            <button class="panel-tab" id="tab-events" onclick="switchTab('events')">Events</button>
                         </div>
                     </div>
                     <!-- Events Tab Content -->
-                    <div class="tab-content active" id="tab-content-events">
+                    <div class="tab-content" id="tab-content-events">
                         <div class="events-header">
                             <span class="events-title" id="events-title">Events</span>
                         </div>
@@ -129,7 +129,7 @@
                         </div>
                     </div>
                     <!-- Contracts Tab Content -->
-                    <div class="tab-content" id="tab-content-contracts">
+                    <div class="tab-content active" id="tab-content-contracts">
                         <div class="contracts-search">
                             <input type="text" class="contract-search-input" id="contract-search" placeholder="Search by contract ID prefix...">
                         </div>

@@ -1149,7 +1149,7 @@
         }
 
         // Tab switching
-        let activeTab = 'events';
+        let activeTab = 'contracts';
 
         function switchTab(tabName) {
             activeTab = tabName;
