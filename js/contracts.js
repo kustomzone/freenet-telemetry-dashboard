@@ -202,7 +202,7 @@ export function renderContractsList() {
         const subscriberCount = subscribers.length;
         if (peerCount > 0 || subscriberCount > 0) {
             if (subscriberCount > 0 && peerCount !== subscriberCount) {
-                statsRow1.push(`<span class="peer-count" title="${peerCount} peers have reported state, ${subscriberCount} total subscribers">${peerCount} of ${subscriberCount} peers</span>`);
+                statsRow1.push(`<span class="peer-count" title="${peerCount} peers have reported state, ${subscriberCount} total subscribers">${peerCount}/${subscriberCount} peers</span>`);
             } else {
                 statsRow1.push(`<span class="peer-count" title="${peerCount} peers have this contract">${peerCount} peers</span>`);
             }
