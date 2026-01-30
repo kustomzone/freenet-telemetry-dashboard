@@ -126,10 +126,11 @@ export function getRateClass(rate) {
 
 // Calculate contract activity stats from events
 export function getContractActivity(contractKey, allEvents) {
+    // Only count update_success/put_success - these represent actual state changes
+    // Don't count broadcast_received which is just propagation (one change = many receives)
     const contractEvents = allEvents.filter(e =>
         e.contract_full === contractKey &&
-        (e.event_type === 'update_success' || e.event_type === 'update_broadcast_received' ||
-         e.event_type === 'put_success' || e.event_type === 'put_broadcast_received')
+        (e.event_type === 'update_success' || e.event_type === 'put_success')
     );
 
     if (contractEvents.length === 0) {
