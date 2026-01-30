@@ -197,9 +197,14 @@ export function renderContractsList() {
         }
 
         // Row 1: Peer count, sync status, and state hash
-        // Peer count is the most important - shows how many peers have this contract
-        if (peerCount > 0) {
-            statsRow1.push(`<span class="peer-count" title="${peerCount} peers have this contract">${peerCount} peers</span>`);
+        // Show "X of Y peers" where X = peers with state hash, Y = total subscribers
+        const subscriberCount = peerStates.length;
+        if (peerCount > 0 || subscriberCount > 0) {
+            if (subscriberCount > 0 && peerCount !== subscriberCount) {
+                statsRow1.push(`<span class="peer-count" title="${peerCount} peers have reported state, ${subscriberCount} total subscribers">${peerCount} of ${subscriberCount} peers</span>`);
+            } else {
+                statsRow1.push(`<span class="peer-count" title="${peerCount} peers have this contract">${peerCount} peers</span>`);
+            }
         }
 
         if (peerStateHashes.length > 0) {
