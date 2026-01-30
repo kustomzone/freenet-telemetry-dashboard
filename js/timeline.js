@@ -134,9 +134,12 @@ export function renderDetailTimeline() {
             const duration = tx.duration_ms ? `${tx.duration_ms.toFixed(1)}ms` : 'pending';
             const tooltip = `${tx.op}: ${tx.contract || 'no contract'}\nDuration: ${duration}\nEvents: ${events.length}`;
 
+            // Check if this transaction matches the selected contract
+            const dimClass = state.selectedContract && tx.contract_full !== state.selectedContract ? ' dimmed' : '';
+
             // Create container for the transaction
             const txContainer = document.createElement('div');
-            txContainer.className = `tx-container ${opClass}${statusClass}`;
+            txContainer.className = `tx-container ${opClass}${statusClass}${dimClass}`;
             txContainer.style.cssText = `left:${startPos * 100}%;width:${(endPos - startPos) * 100}%;`;
             txContainer.title = tooltip;
             txContainer.dataset.txId = tx.tx_id;
@@ -212,12 +215,17 @@ export function renderTimeline() {
         else if (!type.includes('connect')) return; // Skip other events
 
         const key = `${bucket}-${laneType}`;
-        if (!buckets[key]) buckets[key] = { bucket, laneType, events: [], hasResponse: false };
+        if (!buckets[key]) buckets[key] = { bucket, laneType, events: [], hasResponse: false, matchesSelectedContract: false };
         buckets[key].events.push(event);
 
         // Track if this bucket has a response/success
         if (type.includes('success') || type.includes('subscribed')) {
             buckets[key].hasResponse = true;
+        }
+
+        // Track if any event matches the selected contract
+        if (state.selectedContract && event.contract_full === state.selectedContract) {
+            buckets[key].matchesSelectedContract = true;
         }
     });
 
@@ -230,7 +238,11 @@ export function renderTimeline() {
         const marker = document.createElement('div');
 
         // Brighter if has response/success, dimmer if just request
-        const opacity = data.hasResponse ? 1 : 0.5;
+        // Further dim if a contract is selected and this bucket doesn't match
+        let opacity = data.hasResponse ? 1 : 0.5;
+        if (state.selectedContract && !data.matchesSelectedContract) {
+            opacity *= 0.15; // Dim non-matching events
+        }
         const width = Math.min(6, 2 + data.events.length);
 
         marker.className = 'timeline-lane-marker';

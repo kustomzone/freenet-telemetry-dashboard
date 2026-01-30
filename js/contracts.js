@@ -5,6 +5,7 @@
 
 import { state } from './state.js';
 import { hashToColor, formatRelativeTime, getContractActivity } from './utils.js';
+import { renderTimeline } from './timeline.js';
 
 /**
  * Render a small SVG sparkline showing propagation timeline.
@@ -88,6 +89,7 @@ export function selectContract(contractKey, updateView, updateURL) {
     clearAllBtn.style.display = hasFilters ? 'inline-block' : 'none';
 
     updateView();
+    renderTimeline(); // Re-render to dim/highlight events based on selected contract
     updateURL();
 }
 

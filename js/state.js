@@ -30,7 +30,7 @@ export const state = {
     highlightedPeers: new Set(),
     selectedPeerId: null,
     selectedTxId: null,
-    activeTab: 'events',
+    activeTab: 'contracts',
 
     // Peer identity
     gatewayPeerId: null,
