@@ -245,6 +245,10 @@ def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp):
     """Track how a new state hash propagates across peers."""
     prop = contract_propagation.setdefault(contract_key, {})
 
+    # Propagation window: only count peers that receive state within 5 minutes of first_seen
+    # Anything after that is likely a peer catching up after being offline, not real propagation
+    PROPAGATION_WINDOW_NS = 5 * 60 * 1_000_000_000  # 5 minutes in nanoseconds
+
     # Check if this is a new state version
     if prop.get("current_hash") != state_hash:
         # Archive current state as previous (if exists)
@@ -262,10 +266,13 @@ def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp):
         prop["last_seen"] = timestamp
         prop["peers"] = {peer_id: timestamp}
     else:
-        # Same hash - record when this peer first got it
+        # Same hash - record when this peer first got it (if within propagation window)
         if peer_id not in prop.get("peers", {}):
-            prop.setdefault("peers", {})[peer_id] = timestamp
-            prop["last_seen"] = max(prop.get("last_seen", timestamp), timestamp)
+            first_seen = prop.get("first_seen", timestamp)
+            # Only count if within propagation window - late arrivals are peers catching up, not propagation
+            if (timestamp - first_seen) <= PROPAGATION_WINDOW_NS:
+                prop.setdefault("peers", {})[peer_id] = timestamp
+                prop["last_seen"] = max(prop.get("last_seen", timestamp), timestamp)
 
 
 def get_propagation_data():
