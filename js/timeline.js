@@ -55,7 +55,13 @@ export function renderRuler() {
 /**
  * Render the detail timeline showing transactions in the current window
  */
+let lastDetailKey = null;
 export function renderDetailTimeline() {
+    // Skip rebuild if window hasn't moved significantly (within 1% of window)
+    const cacheKey = `${Math.round(state.currentTime / (state.timeWindowNs * 0.02))}-${state.timeWindowNs}-${state.allTransactions.length}`;
+    if (cacheKey === lastDetailKey) return;
+    lastDetailKey = cacheKey;
+
     const windowSize = state.timeWindowNs * 2;
     let windowStart = state.currentTime - state.timeWindowNs;
     let windowEnd = state.currentTime + state.timeWindowNs;
@@ -173,7 +179,13 @@ export function renderDetailTimeline() {
 /**
  * Render the main timeline with event markers
  */
+let lastTimelineKey = null;
 export function renderTimeline() {
+    // Skip if nothing changed (time range, event count, or selected contract)
+    const timelineKey = `${state.timeRange.start}-${state.timeRange.end}-${state.allEvents.length}-${state.selectedContract}`;
+    if (timelineKey === lastTimelineKey) return;
+    lastTimelineKey = timelineKey;
+
     const container = document.getElementById('timeline-events');
     container.innerHTML = '';
 

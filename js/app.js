@@ -71,13 +71,14 @@ function updateView() {
             subData.subscribers.forEach(id => subscriberPeerIds.add(id));
         }
         if (subData.peer_states) {
+            // Build O(1) lookup map: peer_id → topoId (avoids O(n²) nested loop)
+            const peerIdToTopoId = new Map();
+            for (const [topoId, topoPeer] of peers) {
+                if (topoPeer.peer_id) peerIdToTopoId.set(topoPeer.peer_id, topoId);
+            }
             subData.peer_states.forEach(ps => {
-                for (const [topoId, topoPeer] of peers) {
-                    if (topoPeer.peer_id === ps.peer_id) {
-                        subscriberPeerIds.add(topoId);
-                        break;
-                    }
-                }
+                const topoId = peerIdToTopoId.get(ps.peer_id);
+                if (topoId) subscriberPeerIds.add(topoId);
             });
         }
     }
@@ -123,8 +124,10 @@ function updateView() {
     const nearbyEvents = filterEvents();
     renderEventsPanel(nearbyEvents);
 
-    // Update event count
-    document.getElementById('event-count').textContent = state.allEvents.filter(e => e.timestamp <= state.currentTime).length;
+    // Update event count (use total length in live mode to avoid O(n) scan every frame)
+    document.getElementById('event-count').textContent = state.isLive
+        ? state.allEvents.length
+        : state.allEvents.filter(e => e.timestamp <= state.currentTime).length;
 
     // Update playhead
     updatePlayhead();

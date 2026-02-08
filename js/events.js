@@ -299,42 +299,48 @@ export function renderEventsPanel(nearbyEvents) {
  * @returns {Array} Filtered events
  */
 export function filterEvents() {
-    // Filter events within the time window
-    let nearbyEvents = state.allEvents.filter(e =>
-        Math.abs(e.timestamp - state.currentTime) < state.timeWindowNs
-    );
+    // Performance: Use binary search to find time window instead of scanning all events.
+    // Events are roughly time-ordered (appended as they arrive).
+    const targetStart = state.currentTime - state.timeWindowNs;
+    const targetEnd = state.currentTime + state.timeWindowNs;
 
-    // Filter by selected peer
-    if (state.selectedPeerId) {
-        nearbyEvents = nearbyEvents.filter(e =>
-            e.peer_id === state.selectedPeerId ||
-            e.from_peer === state.selectedPeerId ||
-            e.to_peer === state.selectedPeerId ||
-            (e.connection && (e.connection[0] === state.selectedPeerId || e.connection[1] === state.selectedPeerId))
-        );
+    // Find start index using binary search on timestamps
+    let lo = 0, hi = state.allEvents.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (state.allEvents[mid].timestamp < targetStart) lo = mid + 1;
+        else hi = mid;
     }
 
-    // Filter by selected transaction
-    if (state.selectedTxId) {
-        nearbyEvents = nearbyEvents.filter(e => e.tx_id === state.selectedTxId);
+    // Collect matching events from the time window (scan forward from start index)
+    const results = [];
+    for (let i = lo; i < state.allEvents.length && results.length < 200; i++) {
+        const e = state.allEvents[i];
+        if (e.timestamp > targetEnd) break;
+
+        // Apply all filters in a single pass
+        if (state.selectedPeerId) {
+            if (e.peer_id !== state.selectedPeerId &&
+                e.from_peer !== state.selectedPeerId &&
+                e.to_peer !== state.selectedPeerId &&
+                !(e.connection && (e.connection[0] === state.selectedPeerId || e.connection[1] === state.selectedPeerId))) {
+                continue;
+            }
+        }
+        if (state.selectedTxId && e.tx_id !== state.selectedTxId) continue;
+        if (state.selectedContract && e.contract_full !== state.selectedContract) continue;
+        if (state.filterText) {
+            const filter = state.filterText.toLowerCase();
+            if (!(e.event_type && e.event_type.toLowerCase().includes(filter)) &&
+                !(e.peer_id && e.peer_id.toLowerCase().includes(filter)) &&
+                !(e.contract && e.contract.toLowerCase().includes(filter))) {
+                continue;
+            }
+        }
+        results.push(e);
     }
 
-    // Filter by text input
-    if (state.filterText) {
-        const filter = state.filterText.toLowerCase();
-        nearbyEvents = nearbyEvents.filter(e =>
-            (e.event_type && e.event_type.toLowerCase().includes(filter)) ||
-            (e.peer_id && e.peer_id.toLowerCase().includes(filter)) ||
-            (e.contract && e.contract.toLowerCase().includes(filter))
-        );
-    }
-
-    // Filter by selected contract
-    if (state.selectedContract) {
-        nearbyEvents = nearbyEvents.filter(e => e.contract_full === state.selectedContract);
-    }
-
-    return nearbyEvents.slice(-30);
+    return results.slice(-30);
 }
 
 /**
