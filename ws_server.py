@@ -31,7 +31,7 @@ try:
 except ImportError:
     OPENAI_AVAILABLE = False
 
-TELEMETRY_LOG = Path("/var/log/freenet-telemetry/logs.jsonl")
+TELEMETRY_LOG = Path("/mnt/media/freenet-telemetry/logs.jsonl")
 WS_PORT = 3134
 PEER_NAMES_FILE = Path("/var/www/freenet-dashboard/peer_names.json")
 
