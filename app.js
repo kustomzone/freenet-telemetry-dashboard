@@ -2015,8 +2015,10 @@
                     glowColor = 'rgba(251, 191, 36, 0.3)';
                 }
 
-                const nodeSize = (isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou || isSubscriber) ? 5 : 4;
-                const glowSize = (isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou) ? 9 : 7;
+                const isLargeNetwork = peers.size > 50;
+                const isSpecial = isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou;
+                const nodeSize = (isSpecial || isSubscriber) ? 5 : (isLargeNetwork ? 3 : 4);
+                const glowSize = isSpecial ? 9 : (isLargeNetwork ? 4 : 7);
 
                 // Outer glow
                 const glow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
