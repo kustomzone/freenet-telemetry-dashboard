@@ -1401,6 +1401,18 @@
                 };
                 transactionMap.set(txId, allTransactions.length);
                 allTransactions.push(newTx);
+
+                // Prune old transactions to prevent unbounded memory growth
+                const MAX_TRANSACTIONS = 5000;
+                if (allTransactions.length > MAX_TRANSACTIONS * 1.1) {
+                    const removeCount = allTransactions.length - MAX_TRANSACTIONS;
+                    // Remove oldest transactions and rebuild index map
+                    const removed = allTransactions.splice(0, removeCount);
+                    removed.forEach(tx => transactionMap.delete(tx.tx_id));
+                    // Rebuild index map (splice shifts indices)
+                    transactionMap.clear();
+                    allTransactions.forEach((tx, idx) => transactionMap.set(tx.tx_id, idx));
+                }
             }
         }
 
@@ -1678,18 +1690,33 @@
 
             // Draw connections and collect distances for mini-chart
             const connectionDistances = [];
+            const CONN_HIDE_THRESHOLD = 50;  // Hide all connections above this peer count
+            const CONN_ANIM_THRESHOLD = 30;  // Disable CSS animations above this peer count
+            const showAllConnections = peers.size <= CONN_HIDE_THRESHOLD;
+            const animateConnections = peers.size <= CONN_ANIM_THRESHOLD;
+
+            // Determine which connections to draw:
+            // - Small networks: all connections
+            // - Large networks: only connections for clicked/selected peer
+            // (hover not used here - it's handled by canvas overlay for performance)
+            const focusPeerId = selectedPeerId || null;
+
             connections.forEach(connKey => {
                 const [id1, id2] = connKey.split('|');
                 const peer1 = peers.get(id1);
                 const peer2 = peers.get(id2);
                 if (peer1 && peer2) {
+                    // Always calculate distances for the chart
+                    const rawDist = Math.abs(peer1.location - peer2.location);
+                    const distance = Math.min(rawDist, 1 - rawDist);
+                    connectionDistances.push(distance);
+
+                    // Decide whether to draw this connection
+                    const isFocusConn = focusPeerId && (id1 === focusPeerId || id2 === focusPeerId);
+                    if (!showAllConnections && !isFocusConn) return;
+
                     const pos1 = locationToXY(peer1.location);
                     const pos2 = locationToXY(peer2.location);
-
-                    // Calculate ring distance first (for tooltip)
-                    const rawDist = Math.abs(peer1.location - peer2.location);
-                    const distance = Math.min(rawDist, 1 - rawDist);  // Shortest path on ring
-                    connectionDistances.push(distance);
 
                     // Create group for line + hit area
                     const lineGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
@@ -1699,7 +1726,10 @@
                     line.setAttribute('y1', pos1.y);
                     line.setAttribute('x2', pos2.x);
                     line.setAttribute('y2', pos2.y);
-                    line.setAttribute('class', 'connection-line animated');
+                    line.setAttribute('class', animateConnections ? 'connection-line animated' : 'connection-line');
+                    if (isFocusConn && !showAllConnections) {
+                        line.setAttribute('stroke-opacity', '0.6');
+                    }
 
                     // Add tooltip showing peer IDs and distance
                     const connTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
@@ -1812,37 +1842,38 @@
                     svg.appendChild(axisLabel);
                 });
 
-                // Sort and bin distances for stacking
-                const sortedDists = [...connectionDistances].sort((a, b) => a - b);
-                const binSize = 0.02;
-                const processedBins = new Map();
+                // Draw histogram bars instead of per-connection dots (scales to 1000+ connections)
+                const numBins = 20;
+                const binSize = 0.5 / numBins;
+                const bins = new Array(numBins).fill(0);
+                connectionDistances.forEach(d => {
+                    const binIdx = Math.min(Math.floor(d / binSize), numBins - 1);
+                    bins[binIdx]++;
+                });
+                const maxBinCount = Math.max(...bins, 1);
 
-                // Draw dots for each connection
-                const dotRadius = 2.5;
-                sortedDists.forEach(d => {
-                    const binKey = Math.floor(d / binSize);
-                    const countInBin = processedBins.get(binKey) || 0;
-                    processedBins.set(binKey, countInBin + 1);
+                bins.forEach((count, i) => {
+                    if (count === 0) return;
+                    const y = chartY + 4 + (i / numBins) * (chartH - 8);
+                    const barH = Math.max(2, ((chartH - 8) / numBins) - 1);
+                    const barW = (count / maxBinCount) * (plotW - 4);
 
-                    const y = chartY + 4 + (d / 0.5) * (chartH - 8);
-                    // Stack dots horizontally within bin
-                    const stackOffset = countInBin * (dotRadius * 2 + 1);
-                    const x = plotX + dotRadius + 2 + stackOffset;
+                    const bar = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
+                    bar.setAttribute('x', plotX + 2);
+                    bar.setAttribute('y', y);
+                    bar.setAttribute('width', barW);
+                    bar.setAttribute('height', barH);
+                    bar.setAttribute('fill', '#a78bfa');
+                    bar.setAttribute('opacity', '0.75');
+                    bar.setAttribute('rx', '1');
 
-                    const dotColor = '#a78bfa';  // Soft purple
+                    const barTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
+                    const binStart = (i * binSize).toFixed(3);
+                    const binEnd = ((i + 1) * binSize).toFixed(3);
+                    barTitle.textContent = `Distance ${binStart}-${binEnd}: ${count} connections`;
+                    bar.appendChild(barTitle);
 
-                    const dot = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-                    dot.setAttribute('cx', Math.min(x, chartX + chartW - dotRadius - 2));
-                    dot.setAttribute('cy', y);
-                    dot.setAttribute('r', dotRadius);
-                    dot.setAttribute('fill', dotColor);
-                    dot.setAttribute('opacity', '0.85');
-
-                    const dotTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-                    dotTitle.textContent = 'Distance: ' + d.toFixed(3);
-                    dot.appendChild(dotTitle);
-
-                    svg.appendChild(dot);
+                    svg.appendChild(bar);
                 });
             }
             // Draw highlighted connection for hovered event (from_peer -> to_peer)
@@ -3140,7 +3171,7 @@
 
             } else if (data.type === 'event') {
                 // Performance: Limit event history to prevent memory growth
-                const MAX_EVENTS = 50000;
+                const MAX_EVENTS = 10000;
                 if (allEvents.length >= MAX_EVENTS) {
                     // Remove oldest 10% to avoid frequent array shifts
                     allEvents.splice(0, MAX_EVENTS * 0.1);
@@ -3168,7 +3199,7 @@
             } else if (data.type === 'event_batch') {
                 // Server-side batched events (performance optimization)
                 const events = data.events || [];
-                const MAX_EVENTS = 50000;
+                const MAX_EVENTS = 10000;
 
                 // Process all events in batch
                 for (const event of events) {
