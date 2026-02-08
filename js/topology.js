@@ -289,17 +289,27 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
 
     // Draw connections and collect distances for mini-chart
     const connectionDistances = [];
+    const CONN_HIDE_THRESHOLD = 50;
+    const CONN_ANIM_THRESHOLD = 30;
+    const showAllConnections = peers.size <= CONN_HIDE_THRESHOLD;
+    const animateConnections = peers.size <= CONN_ANIM_THRESHOLD;
+    const focusPeerId = state.selectedPeerId || null;
+
     connections.forEach(connKey => {
         const [id1, id2] = connKey.split('|');
         const peer1 = peers.get(id1);
         const peer2 = peers.get(id2);
         if (peer1 && peer2) {
-            const pos1 = locationToXY(peer1.location);
-            const pos2 = locationToXY(peer2.location);
-
             const rawDist = Math.abs(peer1.location - peer2.location);
             const distance = Math.min(rawDist, 1 - rawDist);
             connectionDistances.push(distance);
+
+            // Large networks: only draw connections for selected peer
+            const isFocusConn = focusPeerId && (id1 === focusPeerId || id2 === focusPeerId);
+            if (!showAllConnections && !isFocusConn) return;
+
+            const pos1 = locationToXY(peer1.location);
+            const pos2 = locationToXY(peer2.location);
 
             const lineGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
             const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
@@ -307,7 +317,10 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
             line.setAttribute('y1', pos1.y);
             line.setAttribute('x2', pos2.x);
             line.setAttribute('y2', pos2.y);
-            line.setAttribute('class', 'connection-line animated');
+            line.setAttribute('class', animateConnections ? 'connection-line animated' : 'connection-line');
+            if (isFocusConn && !showAllConnections) {
+                line.setAttribute('stroke-opacity', '0.6');
+            }
 
             const connTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
             connTitle.textContent = 'Network connection: ' + id1.substring(0,8) + ' ↔ ' + id2.substring(0,8) + ' (dist: ' + distance.toFixed(3) + ')';
@@ -608,8 +621,10 @@ function drawPeers(svg, peers, subscriberPeerIds, callbacks) {
             glowColor = 'rgba(251, 191, 36, 0.3)';
         }
 
-        const nodeSize = (isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou || isSubscriber) ? 5 : 4;
-        const glowSize = (isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou) ? 9 : 7;
+        const isLargeNetwork = peers.size > 50;
+        const isSpecial = isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou;
+        const nodeSize = (isSpecial || isSubscriber) ? 5 : (isLargeNetwork ? 3 : 4);
+        const glowSize = isSpecial ? 9 : (isLargeNetwork ? 4 : 7);
 
         // Glow
         const glow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');

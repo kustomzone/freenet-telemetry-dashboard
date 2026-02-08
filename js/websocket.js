@@ -277,7 +277,7 @@ function handleMessage(data, callbacks) {
     } else if (data.type === 'event_batch') {
         // Server-side batched events (performance optimization)
         const events = data.events || [];
-        const MAX_EVENTS = 50000;
+        const MAX_EVENTS = 10000;
 
         for (const event of events) {
             if (state.allEvents.length >= MAX_EVENTS) {

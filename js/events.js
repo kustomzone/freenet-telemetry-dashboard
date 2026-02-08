@@ -529,5 +529,15 @@ export function trackTransactionFromEvent(event) {
         };
         state.transactionMap.set(txId, state.allTransactions.length);
         state.allTransactions.push(newTx);
+
+        // Prune old transactions to prevent unbounded memory growth
+        const MAX_TRANSACTIONS = 5000;
+        if (state.allTransactions.length > MAX_TRANSACTIONS * 1.1) {
+            const removeCount = state.allTransactions.length - MAX_TRANSACTIONS;
+            const removed = state.allTransactions.splice(0, removeCount);
+            removed.forEach(tx => state.transactionMap.delete(tx.tx_id));
+            state.transactionMap.clear();
+            state.allTransactions.forEach((tx, idx) => state.transactionMap.set(tx.tx_id, idx));
+        }
     }
 }
