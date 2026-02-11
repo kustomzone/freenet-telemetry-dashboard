@@ -551,6 +551,22 @@ function drawConnectionsCanvas(ctx, peers, connections) {
     const animateConnections = peers.size <= CONN_ANIM_THRESHOLD;
     const focusPeerId = state.selectedPeerId || null;
 
+    // Determine connection color based on focused peer type
+    let focusConnColor = '0, 127, 255'; // default blue
+    if (focusPeerId) {
+        const isYou = focusPeerId === state.yourPeerId;
+        const focusPeerData = peers.get(focusPeerId);
+        const lifecyclePeer = focusPeerData?.peer_id
+            ? state.peerLifecycle?.peers?.find(p => p.peer_id === focusPeerData.peer_id)
+            : undefined;
+        const isGateway = focusPeerData?.is_gateway || lifecyclePeer?.is_gateway || focusPeerId === state.gatewayPeerId;
+        if (isYou) {
+            focusConnColor = '16, 185, 129'; // emerald
+        } else if (isGateway) {
+            focusConnColor = '245, 158, 11'; // amber
+        }
+    }
+
     // Collect lines to draw
     const lines = [];
     connections.forEach(connKey => {
@@ -565,7 +581,8 @@ function drawConnectionsCanvas(ctx, peers, connections) {
         const pos1 = locationToXY(peer1.location);
         const pos2 = locationToXY(peer2.location);
         const opacity = (isFocusConn && !showAllConnections) ? 0.6 : 0.3;
-        lines.push({ x1: pos1.x, y1: pos1.y, x2: pos2.x, y2: pos2.y, opacity });
+        const color = isFocusConn ? focusConnColor : '0, 127, 255';
+        lines.push({ x1: pos1.x, y1: pos1.y, x2: pos2.x, y2: pos2.y, opacity, color });
     });
 
     if (lines.length === 0) return;
@@ -582,15 +599,16 @@ function drawConnectionsCanvas(ctx, peers, connections) {
         ctx.setLineDash([]);
     }
 
-    // Batch by opacity for fewer state changes
-    const byOpacity = new Map();
+    // Batch by color+opacity for fewer state changes
+    const byStyle = new Map();
     for (const l of lines) {
-        if (!byOpacity.has(l.opacity)) byOpacity.set(l.opacity, []);
-        byOpacity.get(l.opacity).push(l);
+        const key = `rgba(${l.color}, ${l.opacity})`;
+        if (!byStyle.has(key)) byStyle.set(key, []);
+        byStyle.get(key).push(l);
     }
 
-    for (const [opacity, batch] of byOpacity) {
-        ctx.strokeStyle = `rgba(0, 127, 255, ${opacity})`;
+    for (const [style, batch] of byStyle) {
+        ctx.strokeStyle = style;
         ctx.beginPath();
         for (const l of batch) {
             ctx.moveTo(l.x1, l.y1);

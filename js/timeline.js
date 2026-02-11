@@ -190,7 +190,7 @@ export function renderDetailTimeline() {
 let lastTimelineKey = null;
 export function renderTimeline() {
     // Skip if nothing changed (time range, event count, or selected contract)
-    const timelineKey = `${state.timeRange.start}-${state.timeRange.end}-${state.allEvents.length}-${state.selectedContract}`;
+    const timelineKey = `${state.timeRange.start}-${state.timeRange.end}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}`;
     if (timelineKey === lastTimelineKey) return;
     lastTimelineKey = timelineKey;
 
@@ -236,7 +236,7 @@ export function renderTimeline() {
         else if (!type.includes('connect')) return; // Skip other events
 
         const key = `${bucket}-${laneType}`;
-        if (!buckets[key]) buckets[key] = { bucket, laneType, events: [], hasResponse: false, matchesSelectedContract: false };
+        if (!buckets[key]) buckets[key] = { bucket, laneType, events: [], hasResponse: false, matchesSelectedContract: false, matchesSelectedPeer: false };
         buckets[key].events.push(event);
 
         // Track if this bucket has a response/success
@@ -247,6 +247,16 @@ export function renderTimeline() {
         // Track if any event matches the selected contract
         if (state.selectedContract && event.contract_full === state.selectedContract) {
             buckets[key].matchesSelectedContract = true;
+        }
+
+        // Track if any event matches the selected peer
+        if (state.selectedPeerId && (
+            event.peer_id === state.selectedPeerId ||
+            event.from_peer === state.selectedPeerId ||
+            event.to_peer === state.selectedPeerId ||
+            (event.connection && (event.connection[0] === state.selectedPeerId || event.connection[1] === state.selectedPeerId))
+        )) {
+            buckets[key].matchesSelectedPeer = true;
         }
     });
 
@@ -263,6 +273,9 @@ export function renderTimeline() {
         let opacity = data.hasResponse ? 1 : 0.5;
         if (state.selectedContract && !data.matchesSelectedContract) {
             opacity *= 0.15; // Dim non-matching events
+        }
+        if (state.selectedPeerId && !data.matchesSelectedPeer) {
+            opacity *= 0.15; // Dim events not involving selected peer
         }
         const width = Math.min(6, 2 + data.events.length);
 
