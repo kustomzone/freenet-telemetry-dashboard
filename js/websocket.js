@@ -474,6 +474,7 @@ export function reconstructStateAtTime(targetTime) {
     }
 
     // Scan events to find active peers and connections
+    // Must scan from beginning for connection lifecycle (connect/disconnect tracking)
     for (const event of state.allEvents) {
         if (event.timestamp > windowEnd) break;
 

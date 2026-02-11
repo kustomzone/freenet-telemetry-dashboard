@@ -175,12 +175,128 @@ Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate 
         return sanitized, True
 
 
-# Event history buffer (last 2 hours)
+# Event history buffer (last 2 hours, hard-capped)
 MAX_HISTORY_AGE_NS = 2 * 60 * 60 * 1_000_000_000  # 2 hours in nanoseconds
-event_history = deque()  # List of events with timestamps
+MAX_HISTORY_EVENTS = 10000  # Limit events kept in memory and sent to clients on connect
+# Hard cap the deque to prevent unbounded growth. Events are appended in
+# approximately chronological order so a maxlen deque naturally keeps the
+# most recent events.
+event_history = deque(maxlen=MAX_HISTORY_EVENTS)  # bounded deque of event dicts
 
-# Connected WebSocket clients
-clients = set()
+# Connected WebSocket clients - now managed via ClientHandler for backpressure
+clients = set()  # Set of ClientHandler instances
+
+# Per-client send queue size limit. If a slow client's queue fills up,
+# oldest messages are dropped to prevent memory bloat.
+CLIENT_QUEUE_MAX = 100
+
+# Threshold for logging slow clients (queue fills above this fraction)
+SLOW_CLIENT_LOG_THRESHOLD = 0.75
+
+
+class ClientHandler:
+    """Wraps a WebSocket connection with a bounded send queue and sender task.
+
+    Instead of sending directly to the websocket (which buffers internally in
+    the websockets library if the client is slow), we push messages into a
+    bounded asyncio.Queue. A dedicated sender coroutine drains the queue.
+    If the queue is full, the oldest message is dropped.
+    """
+
+    __slots__ = ("ws", "queue", "_sender_task", "client_ip", "ip_hash_str",
+                 "peer_id_str", "dropped_count", "_closed")
+
+    def __init__(self, ws, client_ip=None):
+        self.ws = ws
+        self.queue = asyncio.Queue(maxsize=CLIENT_QUEUE_MAX)
+        self._sender_task = None
+        self.client_ip = client_ip
+        self.ip_hash_str = ip_hash(client_ip) if client_ip else ""
+        self.peer_id_str = anonymize_ip(client_ip) if client_ip else ""
+        self.dropped_count = 0
+        self._closed = False
+
+    def start(self):
+        """Start the background sender task."""
+        self._sender_task = asyncio.create_task(self._sender())
+
+    async def _sender(self):
+        """Drain the queue and send messages to the WebSocket."""
+        try:
+            while not self._closed:
+                msg = await self.queue.get()
+                if msg is None:
+                    break  # Poison pill - shut down
+                try:
+                    await self.ws.send(msg)
+                except websockets.exceptions.ConnectionClosed:
+                    break
+                except Exception:
+                    break
+        except asyncio.CancelledError:
+            pass
+
+    def enqueue(self, msg: str):
+        """Enqueue a message for sending. Drops oldest if queue is full."""
+        if self._closed:
+            return
+        try:
+            self.queue.put_nowait(msg)
+        except asyncio.QueueFull:
+            # Drop the oldest message to make room
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self.queue.put_nowait(msg)
+            except asyncio.QueueFull:
+                pass
+            self.dropped_count += 1
+            if self.dropped_count % 50 == 1:
+                print(f"[backpressure] Slow client {self.ip_hash_str or 'unknown'}: "
+                      f"dropped {self.dropped_count} messages total")
+
+    async def send_direct(self, msg: str):
+        """Send a message directly (bypassing queue), for initial state/history.
+
+        Used only during client setup before real-time streaming begins.
+        """
+        try:
+            await self.ws.send(msg)
+        except websockets.exceptions.ConnectionClosed:
+            raise
+
+    async def close(self):
+        """Shut down the sender task."""
+        self._closed = True
+        # Send poison pill to unblock the sender
+        try:
+            self.queue.put_nowait(None)
+        except asyncio.QueueFull:
+            # Clear one item and try again
+            try:
+                self.queue.get_nowait()
+            except asyncio.QueueEmpty:
+                pass
+            try:
+                self.queue.put_nowait(None)
+            except asyncio.QueueFull:
+                pass
+        if self._sender_task:
+            self._sender_task.cancel()
+            try:
+                await self._sender_task
+            except asyncio.CancelledError:
+                pass
+
+    def __hash__(self):
+        return id(self.ws)
+
+    def __eq__(self, other):
+        if isinstance(other, ClientHandler):
+            return self.ws is other.ws
+        return NotImplemented
 
 # Network state (current/live)
 peers = {}  # ip -> {id, location, last_seen, connections: set()}
@@ -1475,29 +1591,29 @@ def get_transactions_list():
     return result
 
 
-MAX_HISTORY_EVENTS = 50000  # Limit events sent to clients on connect (~2.5 hours, compresses well)
-
 def get_history():
-    """Get event history for time-travel feature."""
-    prune_old_events()
-    # Sort events by timestamp for proper timeline display
-    sorted_events = sorted(event_history, key=lambda e: e["timestamp"])
+    """Get event history for time-travel feature.
 
-    # Limit to last N events to avoid huge payloads
-    if len(sorted_events) > MAX_HISTORY_EVENTS:
-        sorted_events = sorted_events[-MAX_HISTORY_EVENTS:]
+    The deque is bounded by maxlen=MAX_HISTORY_EVENTS and events arrive in
+    roughly chronological order, so we convert to a list directly. The deque
+    automatically discards the oldest events when full.
+    """
+    prune_old_events()
+    # Convert deque to list directly - events arrive approximately in order.
+    # The bounded deque already caps the count at MAX_HISTORY_EVENTS.
+    events_list = list(event_history)
 
     # Sort peer presence by first_seen for historical reconstruction
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
     return {
         "type": "history",
-        "events": sorted_events,
+        "events": events_list,
         "transactions": get_transactions_list(),
         "peer_presence": sorted_presence,
         "time_range": {
-            "start": sorted_events[0]["timestamp"] if sorted_events else 0,
-            "end": sorted_events[-1]["timestamp"] if sorted_events else 0,
+            "start": events_list[0]["timestamp"] if events_list else 0,
+            "end": events_list[-1]["timestamp"] if events_list else 0,
         }
     }
 
@@ -1508,10 +1624,11 @@ def json_encode(obj):
 
 
 async def broadcast(message):
-    """Send message to all connected clients."""
+    """Enqueue message to all connected clients via their bounded queues."""
     if clients:
         msg = json_encode(message)
-        await asyncio.gather(*[client.send(msg) for client in clients], return_exceptions=True)
+        for client in list(clients):
+            client.enqueue(msg)
 
 
 # Event batching for performance (reduces WebSocket message frequency)
@@ -1527,7 +1644,7 @@ async def buffer_event(event):
 
 
 async def flush_event_buffer():
-    """Periodically flush buffered events to clients."""
+    """Periodically flush buffered events to clients via per-client queues."""
     global event_buffer
     while True:
         await asyncio.sleep(EVENT_BATCH_INTERVAL_MS / 1000)
@@ -1539,9 +1656,10 @@ async def flush_event_buffer():
             event_buffer = []
 
         if clients and events_to_send:
-            # Send as batch message
+            # Send as batch message via per-client queues
             batch_msg = json_encode({"type": "event_batch", "events": events_to_send})
-            await asyncio.gather(*[client.send(batch_msg) for client in clients], return_exceptions=True)
+            for client in list(clients):
+                client.enqueue(batch_msg)
 
 
 CLEANUP_INTERVAL_SECONDS = 60  # Run cleanup every 60 seconds
@@ -1571,10 +1689,17 @@ async def periodic_cleanup():
                     "peer_ids": list(stale_peer_ids),  # Raw telemetry peer_ids for contract cleanup
                     "connections": list(removed_connections),
                 })
-                await asyncio.gather(
-                    *[client.send(removal_msg) for client in clients],
-                    return_exceptions=True,
-                )
+                for client in list(clients):
+                    client.enqueue(removal_msg)
+            # Log backpressure stats for monitoring
+            if clients:
+                total_dropped = sum(c.dropped_count for c in clients)
+                max_qsize = max((c.queue.qsize() for c in clients), default=0)
+                if total_dropped > 0 or max_qsize > CLIENT_QUEUE_MAX * SLOW_CLIENT_LOG_THRESHOLD:
+                    print(f"[backpressure] {len(clients)} clients, "
+                          f"max_queue={max_qsize}/{CLIENT_QUEUE_MAX}, "
+                          f"total_dropped={total_dropped}, "
+                          f"event_history={len(event_history)}/{MAX_HISTORY_EVENTS}")
         except Exception as e:
             print(f"[cleanup] Error during periodic cleanup: {e}")
 
@@ -1688,19 +1813,22 @@ async def handle_client(websocket):
         await websocket.close(1013, "Server busy - returning users have priority. Please try again later")
         return
 
-    clients.add(websocket)
-
     # Get client IP - check stored X-Forwarded-For first, then fall back to remote_address
     client_ip = client_real_ips.pop(conn_id, None)
     if not client_ip and websocket.remote_address:
         client_ip = websocket.remote_address[0]
-    client_ip_hash = ip_hash(client_ip) if client_ip else ""
-    client_peer_id = anonymize_ip(client_ip) if client_ip else ""
+
+    handler = ClientHandler(websocket, client_ip)
+    handler.start()
+    clients.add(handler)
+
+    client_ip_hash = handler.ip_hash_str
+    client_peer_id = handler.peer_id_str
 
     print(f"Client connected from {client_ip} (#{client_ip_hash}). Total: {len(clients)}")
 
     try:
-        # Send current network state with client identification
+        # Send current network state with client identification (direct send, not queued)
         state = get_network_state()
         state["your_ip_hash"] = client_ip_hash
         state["your_peer_id"] = client_peer_id
@@ -1712,11 +1840,14 @@ async def handle_client(websocket):
         state["your_name"] = peer_names.get(client_ip_hash) if client_ip_hash else None
         # Generate priority token for returning user recognition
         state["priority_token"] = secrets.token_hex(8)  # 16 hex chars
-        await websocket.send(json_encode(state))
+        await handler.send_direct(json_encode(state))
+        # Let the state object be GC'd before building history
+        del state
 
-        # Send event history for time-travel
+        # Send event history for time-travel (direct send, not queued)
         history = get_history()
-        await websocket.send(json_encode(history))
+        await handler.send_direct(json_encode(history))
+        del history
 
         # Keep connection alive and handle messages
         async for message in websocket:
@@ -1731,7 +1862,7 @@ async def handle_client(websocket):
                         # Check rate limit first
                         allowed, wait_time = check_rate_limit(client_ip_hash)
                         if not allowed:
-                            await websocket.send(json_encode({
+                            await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
                                 "error": f"Too many changes. Try again in {wait_time // 60} min"
@@ -1744,29 +1875,30 @@ async def handle_client(websocket):
                             peer_names[client_ip_hash] = sanitized
                             save_peer_names()
                             record_name_change(client_ip_hash)
-                            # Broadcast the name update to all clients
+                            # Broadcast the name update to all clients via queues
                             update_msg = json_encode({
                                 "type": "peer_name_update",
                                 "ip_hash": client_ip_hash,
                                 "name": sanitized,
                                 "was_modified": was_modified
                             })
-                            await asyncio.gather(*[c.send(update_msg) for c in clients], return_exceptions=True)
+                            for c in list(clients):
+                                c.enqueue(update_msg)
                             # Also send confirmation to this client
-                            await websocket.send(json_encode({
+                            await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": True,
                                 "name": sanitized,
                                 "was_modified": was_modified
                             }))
                         else:
-                            await websocket.send(json_encode({
+                            await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
                                 "error": "Invalid name"
                             }))
                     elif not client_ip_hash:
-                        await websocket.send(json_encode({
+                        await handler.send_direct(json_encode({
                             "type": "name_set_result",
                             "success": False,
                             "error": "Cannot identify your peer"
@@ -1776,8 +1908,11 @@ async def handle_client(websocket):
     except websockets.exceptions.ConnectionClosed:
         pass
     finally:
-        clients.discard(websocket)
-        print(f"Client disconnected. Total: {len(clients)}")
+        clients.discard(handler)
+        await handler.close()
+        dropped = handler.dropped_count
+        suffix = f" (dropped {dropped} messages)" if dropped else ""
+        print(f"Client disconnected ({client_ip_hash or 'unknown'}){suffix}. Total: {len(clients)}")
 
 
 async def load_initial_state():

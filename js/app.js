@@ -36,10 +36,22 @@ import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferC
 // Main Application Functions
 // ============================================================================
 
+// rAF-based throttle: updateView runs at most once per animation frame
+let _updateViewScheduled = false;
+
+function scheduleUpdateView() {
+    if (_updateViewScheduled) return;
+    _updateViewScheduled = true;
+    requestAnimationFrame(() => {
+        _updateViewScheduled = false;
+        _updateViewImpl();
+    });
+}
+
 /**
  * Main view update function - coordinates all UI updates
  */
-function updateView() {
+function _updateViewImpl() {
     let peers = new Map();
     let connections = new Set();
 
@@ -129,6 +141,9 @@ function updateView() {
         ? state.allEvents.length
         : state.allEvents.filter(e => e.timestamp <= state.currentTime).length;
 
+    // Update timeline markers (has internal cache key, no-ops when unchanged)
+    renderTimeline();
+
     // Update playhead
     updatePlayhead();
 
@@ -137,6 +152,9 @@ function updateView() {
         renderContractsList();
     }
 }
+
+// updateView: throttled version used by all callbacks and event handlers
+const updateView = scheduleUpdateView;
 
 /**
  * Go to live mode

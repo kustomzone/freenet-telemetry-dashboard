@@ -1,6 +1,9 @@
 /**
  * Topology visualization for Freenet Dashboard
  * Handles ring rendering and peer visualization
+ *
+ * Hybrid approach: SVG for static ring decorations (few elements),
+ * HTML5 Canvas for dynamic peer/connection rendering (scales to 2000+ peers).
  */
 
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
@@ -169,16 +172,41 @@ export function getSubscriptionTreeInfo(contractKey, peers, connections) {
     };
 }
 
-// Main ring SVG rendering function
-export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(), callbacks = {}) {
-    const { selectPeer, showPeerNamingPrompt } = callbacks;
-    const container = document.getElementById('ring-container');
+// ============================================================================
+// Canvas overlay state - persists across renders for event handling
+// ============================================================================
+
+// Hit-test data built each frame so canvas mouse events can find peers
+let canvasHitTargets = []; // [{x, y, radius, id, peer, isYou, peerName, tooltipText}]
+let lastCallbacks = {};    // callbacks from most recent updateRingSVG call
+let peerCanvasEl = null;   // the reusable <canvas> element
+let tooltipEl = null;      // the reusable tooltip <div>
+let canvasEventsInstalled = false;
+let hoveredPeerTarget = null; // currently hovered hit target (for cursor)
+// Connection dash animation
+let connectionAnimOffset = 0;
+let connectionAnimFrame = null;
+
+// ============================================================================
+// Main ring SVG rendering function (hybrid: SVG decorations + Canvas peers)
+// ============================================================================
+
+// Cached static SVG element (ring, defs, markers, location text - never changes)
+let _cachedStaticSvg = null;
+
+function getOrCreateStaticSvg() {
+    if (_cachedStaticSvg) return _cachedStaticSvg;
+
     const svg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     svg.setAttribute('viewBox', `0 0 ${SVG_WIDTH} ${SVG_SIZE}`);
     svg.setAttribute('width', SVG_WIDTH);
     svg.setAttribute('height', SVG_SIZE);
+    svg.style.position = 'absolute';
+    svg.style.top = '0';
+    svg.style.left = '50%';
+    svg.style.transform = 'translateX(-50%)';
+    svg.style.pointerEvents = 'none';
 
-    // Defs for glow effect and arrow markers
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
     defs.innerHTML = `
         <filter id="glow" x="-50%" y="-50%" width="200%" height="200%">
@@ -264,6 +292,25 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
         svg.appendChild(text);
     });
 
+    // Dynamic content group - cleared and rebuilt each frame (only a few elements)
+    const dynamicGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+    dynamicGroup.setAttribute('id', 'svg-dynamic');
+    svg.appendChild(dynamicGroup);
+
+    _cachedStaticSvg = svg;
+    return svg;
+}
+
+export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(), callbacks = {}) {
+    lastCallbacks = callbacks;
+    const container = document.getElementById('ring-container');
+
+    // --- SVG: cached static + dynamic overlay ---
+    const svg = getOrCreateStaticSvg();
+    const dynamicGroup = svg.getElementById('svg-dynamic');
+    // Clear only the dynamic content (contract diamond, center stats, message arrows)
+    dynamicGroup.innerHTML = '';
+
     // Draw contract location indicator when selected
     if (state.selectedContract) {
         const contractLocation = contractKeyToLocation(state.selectedContract);
@@ -277,122 +324,770 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
             diamond.setAttribute('fill', '#f472b6');
             diamond.setAttribute('stroke', '#fff');
             diamond.setAttribute('stroke-width', '1.5');
-            diamond.setAttribute('style', 'cursor: pointer;');
+            diamond.setAttribute('style', 'cursor: pointer; pointer-events: auto;');
 
             const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
             const shortKey = state.selectedContract.substring(0, 12) + '...';
             title.textContent = `Location of contract ${shortKey}\n@ ${contractLocation.toFixed(4)}`;
             diamond.appendChild(title);
-            svg.appendChild(diamond);
+            dynamicGroup.appendChild(diamond);
         }
     }
 
-    // Draw connections and collect distances for mini-chart
-    const connectionDistances = [];
-    const CONN_HIDE_THRESHOLD = 50;
-    const CONN_ANIM_THRESHOLD = 30;
-    const showAllConnections = peers.size <= CONN_HIDE_THRESHOLD;
-    const animateConnections = peers.size <= CONN_ANIM_THRESHOLD;
-    const focusPeerId = state.selectedPeerId || null;
+    // Center stats (SVG text - few elements)
+    drawCenterStats(dynamicGroup, peers, subscriberPeerIds);
 
+    // Message flow arrows (SVG - uses marker defs, typically <20 elements)
+    if (!state.selectedContract && state.displayedEvents && state.displayedEvents.length > 0) {
+        drawMessageFlowArrows(dynamicGroup, peers);
+    }
+
+    // --- Canvas: dynamic peer/connection rendering ---
+    // Compute connection distances (needed for dist chart regardless of drawing)
+    const connectionDistances = [];
     connections.forEach(connKey => {
         const [id1, id2] = connKey.split('|');
         const peer1 = peers.get(id1);
         const peer2 = peers.get(id2);
         if (peer1 && peer2) {
             const rawDist = Math.abs(peer1.location - peer2.location);
-            const distance = Math.min(rawDist, 1 - rawDist);
-            connectionDistances.push(distance);
-
-            // Large networks: only draw connections for selected peer
-            const isFocusConn = focusPeerId && (id1 === focusPeerId || id2 === focusPeerId);
-            if (!showAllConnections && !isFocusConn) return;
-
-            const pos1 = locationToXY(peer1.location);
-            const pos2 = locationToXY(peer2.location);
-
-            const lineGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            line.setAttribute('x1', pos1.x);
-            line.setAttribute('y1', pos1.y);
-            line.setAttribute('x2', pos2.x);
-            line.setAttribute('y2', pos2.y);
-            line.setAttribute('class', animateConnections ? 'connection-line animated' : 'connection-line');
-            if (isFocusConn && !showAllConnections) {
-                line.setAttribute('stroke-opacity', '0.6');
-            }
-
-            const connTitle = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-            connTitle.textContent = 'Network connection: ' + id1.substring(0,8) + ' ↔ ' + id2.substring(0,8) + ' (dist: ' + distance.toFixed(3) + ')';
-            line.appendChild(connTitle);
-
-            const hitArea = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            hitArea.setAttribute("x1", pos1.x);
-            hitArea.setAttribute("y1", pos1.y);
-            hitArea.setAttribute("x2", pos2.x);
-            hitArea.setAttribute("y2", pos2.y);
-            hitArea.setAttribute("stroke", "transparent");
-            hitArea.setAttribute("stroke-width", "12");
-            hitArea.appendChild(connTitle.cloneNode(true));
-
-            lineGroup.appendChild(line);
-            lineGroup.appendChild(hitArea);
-            svg.appendChild(lineGroup);
+            connectionDistances.push(Math.min(rawDist, 1 - rawDist));
         }
     });
-
-    // Draw distance distribution mini-chart (into HTML overlay)
     if (connectionDistances.length > 0) {
         drawDistanceChartOverlay(connectionDistances);
     }
 
+    // Ensure canvas element exists and is sized (skip resize if unchanged)
+    const canvas = getOrCreatePeerCanvas(container);
+    const dpr = window.devicePixelRatio || 1;
+    const targetW = Math.round(SVG_WIDTH * dpr);
+    const targetH = Math.round(SVG_SIZE * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        canvas.style.width = SVG_WIDTH + 'px';
+        canvas.style.height = SVG_SIZE + 'px';
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
+
+    // Draw connections on canvas
+    drawConnectionsCanvas(ctx, peers, connections);
+
     // Draw highlighted connection for hovered event
-    if (state.hoveredEvent) {
-        const fromPeer = state.hoveredEvent.from_peer || state.hoveredEvent.peer_id;
-        const toPeer = state.hoveredEvent.to_peer;
-        if (fromPeer && toPeer && fromPeer !== toPeer) {
-            let fromPos = null, toPos = null;
-            peers.forEach((peer, id) => {
-                if (id === fromPeer || peer.peer_id === fromPeer) {
-                    fromPos = locationToXY(peer.location);
-                }
-                if (id === toPeer || peer.peer_id === toPeer) {
-                    toPos = locationToXY(peer.location);
-                }
+    drawHoveredEventLine(ctx, peers);
+
+    // Draw subscription/proximity links when contract selected
+    if (state.selectedContract && state.contractData[state.selectedContract]) {
+        drawSubscriptionLinksCanvas(ctx, peers, connections);
+    }
+
+    // Draw peers on canvas and build hit-test array
+    drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks);
+
+    // Install mouse events once
+    installCanvasEvents(canvas, container);
+
+    // Assemble into container: canvas behind SVG (only on first call)
+    const emptyState = container.querySelector('.empty-state');
+    if (emptyState) emptyState.remove();
+    if (!svg.parentNode) {
+        container.appendChild(svg);
+    }
+}
+
+// ============================================================================
+// Canvas element management
+// ============================================================================
+
+function getOrCreatePeerCanvas(container) {
+    if (peerCanvasEl && peerCanvasEl.parentNode === container) {
+        return peerCanvasEl;
+    }
+    // Remove any stale canvas
+    if (peerCanvasEl) peerCanvasEl.remove();
+
+    peerCanvasEl = document.createElement('canvas');
+    peerCanvasEl.id = 'peer-canvas';
+    peerCanvasEl.style.position = 'absolute';
+    peerCanvasEl.style.top = '0';
+    peerCanvasEl.style.left = '50%';
+    peerCanvasEl.style.transform = 'translateX(-50%)';
+    peerCanvasEl.style.zIndex = '1'; // above svg (which has no pointer-events)
+    container.style.position = 'relative';
+    container.appendChild(peerCanvasEl);
+    return peerCanvasEl;
+}
+
+function getOrCreateTooltip(container) {
+    if (tooltipEl && tooltipEl.parentNode === container) {
+        return tooltipEl;
+    }
+    if (tooltipEl) tooltipEl.remove();
+
+    tooltipEl = document.createElement('div');
+    tooltipEl.id = 'peer-canvas-tooltip';
+    tooltipEl.style.cssText = `
+        position: absolute;
+        pointer-events: none;
+        background: rgba(13, 17, 23, 0.95);
+        color: #e6edf3;
+        font-family: 'JetBrains Mono', monospace;
+        font-size: 11px;
+        padding: 6px 10px;
+        border-radius: 6px;
+        border: 1px solid rgba(255,255,255,0.1);
+        white-space: pre-line;
+        z-index: 100;
+        display: none;
+        max-width: 300px;
+        line-height: 1.4;
+    `;
+    container.appendChild(tooltipEl);
+    return tooltipEl;
+}
+
+// ============================================================================
+// Canvas mouse event handling
+// ============================================================================
+
+function installCanvasEvents(canvas, container) {
+    if (canvasEventsInstalled) return;
+    canvasEventsInstalled = true;
+
+    const tooltip = getOrCreateTooltip(container);
+
+    canvas.addEventListener('mousemove', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = SVG_WIDTH / rect.width;
+        const scaleY = SVG_SIZE / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top) * scaleY;
+
+        const hit = findHitTarget(mx, my);
+        if (hit) {
+            canvas.style.cursor = 'pointer';
+            hoveredPeerTarget = hit;
+            tooltip.style.display = 'block';
+            tooltip.textContent = hit.tooltipText;
+            // Position tooltip relative to container
+            const containerRect = container.getBoundingClientRect();
+            let tipX = e.clientX - containerRect.left + 12;
+            let tipY = e.clientY - containerRect.top - 10;
+            // Keep tooltip in view
+            const tipW = tooltip.offsetWidth;
+            const tipH = tooltip.offsetHeight;
+            if (tipX + tipW > containerRect.width) tipX = tipX - tipW - 24;
+            if (tipY + tipH > containerRect.height) tipY = containerRect.height - tipH - 4;
+            if (tipY < 0) tipY = 4;
+            tooltip.style.left = tipX + 'px';
+            tooltip.style.top = tipY + 'px';
+        } else {
+            canvas.style.cursor = '';
+            hoveredPeerTarget = null;
+            tooltip.style.display = 'none';
+        }
+    });
+
+    canvas.addEventListener('mouseleave', () => {
+        canvas.style.cursor = '';
+        hoveredPeerTarget = null;
+        tooltip.style.display = 'none';
+    });
+
+    canvas.addEventListener('click', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const scaleX = SVG_WIDTH / rect.width;
+        const scaleY = SVG_SIZE / rect.height;
+        const mx = (e.clientX - rect.left) * scaleX;
+        const my = (e.clientY - rect.top) * scaleY;
+
+        const hit = findHitTarget(mx, my);
+        if (hit) {
+            const { selectPeer, showPeerNamingPrompt } = lastCallbacks;
+            if (hit.isYou && state.youArePeer && !hit.peerName && showPeerNamingPrompt) {
+                showPeerNamingPrompt();
+            } else if (selectPeer) {
+                selectPeer(hit.id);
+            }
+        }
+    });
+}
+
+function findHitTarget(mx, my) {
+    // Search in reverse order so top-drawn peers are found first
+    const HIT_RADIUS = 20; // same as old SVG click targets
+    let closest = null;
+    let closestDist = HIT_RADIUS;
+
+    for (let i = canvasHitTargets.length - 1; i >= 0; i--) {
+        const t = canvasHitTargets[i];
+        const dx = mx - t.x;
+        const dy = my - t.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < closestDist) {
+            closest = t;
+            closestDist = dist;
+        }
+    }
+    return closest;
+}
+
+// ============================================================================
+// Canvas: draw connections
+// ============================================================================
+
+function drawConnectionsCanvas(ctx, peers, connections) {
+    const CONN_HIDE_THRESHOLD = 50;
+    const CONN_ANIM_THRESHOLD = 30;
+    const showAllConnections = peers.size <= CONN_HIDE_THRESHOLD;
+    const animateConnections = peers.size <= CONN_ANIM_THRESHOLD;
+    const focusPeerId = state.selectedPeerId || null;
+
+    // Collect lines to draw
+    const lines = [];
+    connections.forEach(connKey => {
+        const [id1, id2] = connKey.split('|');
+        const peer1 = peers.get(id1);
+        const peer2 = peers.get(id2);
+        if (!peer1 || !peer2) return;
+
+        const isFocusConn = focusPeerId && (id1 === focusPeerId || id2 === focusPeerId);
+        if (!showAllConnections && !isFocusConn) return;
+
+        const pos1 = locationToXY(peer1.location);
+        const pos2 = locationToXY(peer2.location);
+        const opacity = (isFocusConn && !showAllConnections) ? 0.6 : 0.3;
+        lines.push({ x1: pos1.x, y1: pos1.y, x2: pos2.x, y2: pos2.y, opacity });
+    });
+
+    if (lines.length === 0) return;
+
+    ctx.lineCap = 'round';
+    ctx.lineWidth = 1.5;
+
+    if (animateConnections) {
+        // Animated dashed lines
+        ctx.setLineDash([8, 4]);
+        ctx.lineDashOffset = -connectionAnimOffset;
+        startConnectionAnimation();
+    } else {
+        ctx.setLineDash([]);
+    }
+
+    // Batch by opacity for fewer state changes
+    const byOpacity = new Map();
+    for (const l of lines) {
+        if (!byOpacity.has(l.opacity)) byOpacity.set(l.opacity, []);
+        byOpacity.get(l.opacity).push(l);
+    }
+
+    for (const [opacity, batch] of byOpacity) {
+        ctx.strokeStyle = `rgba(0, 127, 255, ${opacity})`;
+        ctx.beginPath();
+        for (const l of batch) {
+            ctx.moveTo(l.x1, l.y1);
+            ctx.lineTo(l.x2, l.y2);
+        }
+        ctx.stroke();
+    }
+
+    ctx.setLineDash([]);
+    ctx.lineDashOffset = 0;
+}
+
+function startConnectionAnimation() {
+    // Only start one animation loop
+    if (connectionAnimFrame) return;
+    const step = () => {
+        connectionAnimOffset = (connectionAnimOffset + 0.5) % 24;
+        connectionAnimFrame = requestAnimationFrame(step);
+    };
+    connectionAnimFrame = requestAnimationFrame(step);
+}
+
+// ============================================================================
+// Canvas: draw hovered event highlight line
+// ============================================================================
+
+function drawHoveredEventLine(ctx, peers) {
+    if (!state.hoveredEvent) return;
+    const fromPeer = state.hoveredEvent.from_peer || state.hoveredEvent.peer_id;
+    const toPeer = state.hoveredEvent.to_peer;
+    if (!fromPeer || !toPeer || fromPeer === toPeer) return;
+
+    let fromPos = null, toPos = null;
+    peers.forEach((peer, id) => {
+        if (id === fromPeer || peer.peer_id === fromPeer) {
+            fromPos = locationToXY(peer.location);
+        }
+        if (id === toPeer || peer.peer_id === toPeer) {
+            toPos = locationToXY(peer.location);
+        }
+    });
+    if (!fromPos || !toPos) return;
+
+    ctx.save();
+    ctx.strokeStyle = 'rgba(251, 191, 36, 0.8)';
+    ctx.lineWidth = 3;
+    ctx.lineCap = 'round';
+    ctx.beginPath();
+    ctx.moveTo(fromPos.x, fromPos.y);
+    ctx.lineTo(toPos.x, toPos.y);
+    ctx.stroke();
+    ctx.restore();
+}
+
+// ============================================================================
+// Canvas: draw subscription / proximity links
+// ============================================================================
+
+function drawSubscriptionLinksCanvas(ctx, peers, connections) {
+    const subData = state.contractData[state.selectedContract];
+    const tree = subData.tree || {};
+
+    // Proximity links (dashed cyan)
+    const proximityLinks = computeProximityLinks(state.selectedContract, peers, connections);
+    if (proximityLinks.length > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(34, 211, 238, 0.7)';
+        ctx.lineWidth = 2;
+        ctx.setLineDash([4, 3]);
+        ctx.lineCap = 'round';
+        ctx.beginPath();
+        for (const link of proximityLinks) {
+            const fromPeer = peers.get(link.from);
+            const toPeer = peers.get(link.to);
+            if (!fromPeer || !toPeer) continue;
+            const fromPos = locationToXY(fromPeer.location);
+            const toPos = locationToXY(toPeer.location);
+            const dx = toPos.x - fromPos.x;
+            const dy = toPos.y - fromPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 1) continue;
+            const offset = 12 / dist;
+            ctx.moveTo(fromPos.x + dx * offset, fromPos.y + dy * offset);
+            ctx.lineTo(toPos.x - dx * offset, toPos.y - dy * offset);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+
+    // Subscription tree links (solid pink)
+    const treeLines = [];
+    Object.entries(tree).forEach(([fromId, toIds]) => {
+        const fromPeer = peers.get(fromId);
+        if (!fromPeer) return;
+        toIds.forEach(toId => {
+            const toPeer = peers.get(toId);
+            if (!toPeer) return;
+            const fromPos = locationToXY(fromPeer.location);
+            const toPos = locationToXY(toPeer.location);
+            const dx = toPos.x - fromPos.x;
+            const dy = toPos.y - fromPos.y;
+            const dist = Math.sqrt(dx * dx + dy * dy);
+            if (dist < 1) return;
+            const offset = 12 / dist;
+            treeLines.push({
+                x1: fromPos.x + dx * offset, y1: fromPos.y + dy * offset,
+                x2: toPos.x - dx * offset, y2: toPos.y - dy * offset
             });
-            if (fromPos && toPos) {
-                const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-                line.setAttribute('x1', fromPos.x);
-                line.setAttribute('y1', fromPos.y);
-                line.setAttribute('x2', toPos.x);
-                line.setAttribute('y2', toPos.y);
-                line.setAttribute('stroke', '#fbbf24');
-                line.setAttribute('stroke-width', '3');
-                line.setAttribute('stroke-opacity', '0.8');
-                svg.appendChild(line);
+        });
+    });
+
+    if (treeLines.length > 0) {
+        ctx.save();
+        ctx.strokeStyle = 'rgba(244, 114, 182, 0.9)';
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.setLineDash([]);
+        ctx.beginPath();
+        for (const l of treeLines) {
+            ctx.moveTo(l.x1, l.y1);
+            ctx.lineTo(l.x2, l.y2);
+        }
+        ctx.stroke();
+        ctx.restore();
+    }
+}
+
+// ============================================================================
+// Canvas: draw peers (replaces SVG drawPeers -- the main scalability win)
+// ============================================================================
+
+function drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks) {
+    const { showPeerNamingPrompt } = callbacks;
+    const isLargeNetwork = peers.size > 50;
+    const isVeryLargeNetwork = peers.size > 500;
+    const showGlow = !isLargeNetwork;
+    const showLabels = peers.size <= 15;
+    const showLocationLabels = peers.size <= 20;
+    const showInsideLabels = peers.size <= 12;
+
+    // Reset hit targets
+    canvasHitTargets = [];
+
+    // Pre-build O(1) lookup maps (avoid O(n²) .find() inside per-peer loop)
+    const lifecycleByPeerId = new Map();
+    if (state.peerLifecycle?.peers) {
+        for (const p of state.peerLifecycle.peers) {
+            if (p.peer_id) lifecycleByPeerId.set(p.peer_id, p);
+        }
+    }
+    const initialPeerById = new Map();
+    for (const p of state.initialStatePeers) {
+        initialPeerById.set(p.id, p);
+    }
+
+    // Pre-compute all peer rendering data
+    const peerRenderData = [];
+
+    peers.forEach((peer, id) => {
+        const pos = locationToXY(peer.location);
+        const isHighlighted = state.highlightedPeers.has(id) || state.highlightedPeers.has(peer.peer_id);
+        const isEventSelected = state.selectedEvent && (state.selectedEvent.peer_id === id || state.selectedEvent.peer_id === peer.peer_id);
+        const isPeerSelected = state.selectedPeerId === id;
+        const isEventHovered = state.hoveredEvent && (
+            (state.hoveredEvent.from_peer === id || state.hoveredEvent.from_peer === peer.peer_id) ||
+            (state.hoveredEvent.to_peer === id || state.hoveredEvent.to_peer === peer.peer_id) ||
+            (state.hoveredEvent.peer_id === id || state.hoveredEvent.peer_id === peer.peer_id)
+        );
+
+        const lifecyclePeer = peer.peer_id ? lifecycleByPeerId.get(peer.peer_id) : undefined;
+        const isGateway = peer.is_gateway || lifecyclePeer?.is_gateway || id === state.gatewayPeerId;
+        const isYou = id === state.yourPeerId;
+        const isSubscriber = subscriberPeerIds.has(id);
+
+        let fillColor = '#007FFF';
+        let glowColor = 'rgba(0, 127, 255, 0.2)';
+        let label = '';
+        let peerStateHash = null;
+        let isNonSubscriber = false;
+
+        if (state.selectedContract) {
+            if (isSubscriber) {
+                if (state.contractStates[state.selectedContract] && peer.peer_id) {
+                    const peerState = state.contractStates[state.selectedContract][peer.peer_id];
+                    if (peerState && peerState.hash) {
+                        peerStateHash = peerState.hash;
+                    }
+                }
+                fillColor = '#f472b6';
+                glowColor = 'rgba(244, 114, 182, 0.3)';
+            } else {
+                isNonSubscriber = true;
+                fillColor = '#3a4550';
+                glowColor = 'rgba(58, 69, 80, 0.15)';
+            }
+        }
+
+        const peerName = peer.ip_hash ? state.peerNames[peer.ip_hash] : null;
+
+        if (isGateway) {
+            if (!state.selectedContract || isSubscriber) {
+                fillColor = '#f59e0b';
+                glowColor = 'rgba(245, 158, 11, 0.3)';
+            } else if (isNonSubscriber) {
+                fillColor = '#6b5a30';
+                glowColor = 'rgba(107, 90, 48, 0.2)';
+            }
+            label = peerName || 'GW';
+        } else if (isYou) {
+            if (!state.selectedContract || isSubscriber) {
+                fillColor = '#10b981';
+                glowColor = 'rgba(16, 185, 129, 0.3)';
+            } else if (isNonSubscriber) {
+                fillColor = '#2d5a4a';
+                glowColor = 'rgba(45, 90, 74, 0.2)';
+            }
+            label = peerName || 'YOU';
+        } else if (peerName) {
+            label = peerName;
+        } else if (isSubscriber && !state.selectedContract) {
+            fillColor = '#f472b6';
+            glowColor = 'rgba(244, 114, 182, 0.3)';
+        }
+
+        if (isEventSelected) {
+            fillColor = '#f87171';
+            glowColor = 'rgba(248, 113, 113, 0.3)';
+        } else if (isPeerSelected) {
+            fillColor = '#7ecfef';
+            glowColor = 'rgba(126, 207, 239, 0.4)';
+        } else if (isEventHovered) {
+            fillColor = '#fbbf24';
+            glowColor = 'rgba(251, 191, 36, 0.5)';
+        } else if (isHighlighted) {
+            fillColor = '#fbbf24';
+            glowColor = 'rgba(251, 191, 36, 0.3)';
+        }
+
+        const isSpecial = isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou;
+        let nodeSize, glowSize;
+        if (isVeryLargeNetwork) {
+            nodeSize = isSpecial ? 3 : 2;
+            glowSize = 0; // no glow for very large networks
+        } else if (isLargeNetwork) {
+            nodeSize = (isSpecial || isSubscriber) ? 4 : 3;
+            glowSize = 0; // no glow for large networks
+        } else {
+            nodeSize = (isSpecial || isSubscriber) ? 5 : 4;
+            glowSize = isSpecial ? 9 : 7;
+        }
+
+        // Build tooltip text
+        const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
+        const peerIdentifier = peerName || (peer.ip_hash ? `#${peer.ip_hash}` : '');
+        let tooltipText = `${id}${peerType}\n${peerIdentifier}\nLocation: ${peer.location.toFixed(4)}`;
+
+        if (lifecycleByPeerId.size > 0) {
+            let lifecycleData = peer.peer_id ? lifecycleByPeerId.get(peer.peer_id) : undefined;
+            if (!lifecycleData) {
+                const topoPeer = initialPeerById.get(id);
+                if (topoPeer?.peer_id) {
+                    lifecycleData = lifecycleByPeerId.get(topoPeer.peer_id);
+                }
+            }
+            if (lifecycleData) {
+                if (lifecycleData.version) tooltipText += `\nVersion: ${lifecycleData.version}`;
+                if (lifecycleData.os) {
+                    let osInfo = lifecycleData.os;
+                    if (lifecycleData.arch) osInfo += ` (${lifecycleData.arch})`;
+                    tooltipText += `\nOS: ${osInfo}`;
+                }
+            }
+        }
+
+        if (peerStateHash) {
+            tooltipText += `\nState: [${peerStateHash.substring(0, 8)}]`;
+        }
+        tooltipText += '\nClick to filter events';
+
+        peerRenderData.push({
+            pos, id, peer, fillColor, glowColor, glowSize, nodeSize,
+            isNonSubscriber, isSpecial, isYou, isGateway, isSubscriber,
+            label, peerName, peerStateHash, tooltipText,
+            isHighlighted, isEventSelected, isPeerSelected, isEventHovered
+        });
+    });
+
+    // --- Pass 1: Draw all glows (batched) ---
+    if (showGlow) {
+        for (const d of peerRenderData) {
+            if (d.glowSize <= 0) continue;
+            ctx.fillStyle = d.glowColor;
+            ctx.beginPath();
+            ctx.arc(d.pos.x, d.pos.y, d.glowSize, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
+    // --- Pass 2: Draw all main circles ---
+    // For non-subscriber dots with stroke, draw separately
+    // For normal dots, batch by fill color
+    const colorBatches = new Map();
+    const strokeDots = [];
+
+    for (const d of peerRenderData) {
+        if (d.isNonSubscriber) {
+            strokeDots.push(d);
+        } else {
+            if (!colorBatches.has(d.fillColor)) colorBatches.set(d.fillColor, []);
+            colorBatches.get(d.fillColor).push(d);
+        }
+    }
+
+    // Draw normal (non-stroke) dots batched by color
+    for (const [color, batch] of colorBatches) {
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        for (const d of batch) {
+            ctx.moveTo(d.pos.x + d.nodeSize, d.pos.y);
+            ctx.arc(d.pos.x, d.pos.y, d.nodeSize, 0, Math.PI * 2);
+        }
+        ctx.fill();
+    }
+
+    // Draw non-subscriber dots (with stroke border)
+    for (const d of strokeDots) {
+        ctx.fillStyle = d.fillColor;
+        ctx.strokeStyle = '#2a2f35';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.arc(d.pos.x, d.pos.y, d.nodeSize, 0, Math.PI * 2);
+        ctx.fill();
+        ctx.stroke();
+    }
+
+    // --- Pass 3: State indicators (small colored squares for contract state) ---
+    for (const d of peerRenderData) {
+        if (!d.peerStateHash || !state.selectedContract) continue;
+        const stateColors = hashToColor(d.peerStateHash);
+        const squareSize = d.nodeSize * 0.7;
+
+        // White border
+        ctx.fillStyle = 'white';
+        const bx = d.pos.x - squareSize / 2 - 1;
+        const by = d.pos.y - squareSize / 2 - 1;
+        ctx.fillRect(bx, by, squareSize + 2, squareSize + 2);
+
+        // Colored square
+        ctx.fillStyle = stateColors.fill;
+        ctx.fillRect(d.pos.x - squareSize / 2, d.pos.y - squareSize / 2, squareSize, squareSize);
+    }
+
+    // --- Pass 4: Labels ---
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+
+    for (const d of peerRenderData) {
+        const { showPeerNamingPrompt: spnp } = callbacks;
+
+        // Outside label (name/GW/YOU)
+        if (d.label && (d.peerName || showLabels)) {
+            ctx.fillStyle = d.fillColor;
+            ctx.font = '600 9px "JetBrains Mono", monospace';
+            ctx.fillText(d.label, d.pos.x, d.pos.y + 24);
+        }
+
+        // Inside-ring label
+        const hasOutsideLabel = d.label && (d.peerName || showLabels);
+        if (showInsideLabels && !hasOutsideLabel) {
+            const angle = d.peer.location * 2 * Math.PI - Math.PI / 2;
+            const labelRadius = RADIUS - 30;
+            const lx = CENTER + labelRadius * Math.cos(angle);
+            const ly = CENTER + labelRadius * Math.sin(angle);
+            ctx.fillStyle = '#8b949e';
+            ctx.font = '10px "JetBrains Mono", monospace';
+            ctx.fillText(d.peerName || `#${d.peer.ip_hash || d.id.substring(5, 11)}`, lx, ly);
+        }
+
+        // Location label (outside ring)
+        if (showLocationLabels) {
+            const fixedMarkers = [0, 0.25, 0.5, 0.75];
+            const minDistance = 0.03;
+            const nearFixedMarker = fixedMarkers.some(m =>
+                Math.abs(d.peer.location - m) < minDistance ||
+                Math.abs(d.peer.location - m + 1) < minDistance ||
+                Math.abs(d.peer.location - m - 1) < minDistance
+            );
+            const hasSpecialLabel = d.label && showLabels;
+
+            if (!nearFixedMarker && !hasSpecialLabel) {
+                const angle = d.peer.location * 2 * Math.PI - Math.PI / 2;
+                const outerRadius = RADIUS + 25;
+                const ox = CENTER + outerRadius * Math.cos(angle);
+                const oy = CENTER + outerRadius * Math.sin(angle);
+                ctx.fillStyle = d.isNonSubscriber ? '#3a3f47' : '#00d4aa';
+                ctx.font = '10px "JetBrains Mono", monospace';
+                ctx.fillText(d.peer.location.toFixed(2), ox, oy);
             }
         }
     }
 
-    // Draw peers
-    drawPeers(svg, peers, subscriberPeerIds, callbacks);
-
-    // Draw center stats
-    drawCenterStats(svg, peers, subscriberPeerIds);
-
-    // Draw message flow arrows
-    if (!state.selectedContract && state.displayedEvents && state.displayedEvents.length > 0) {
-        drawMessageFlowArrows(svg, peers);
+    // --- Build hit targets for mouse events ---
+    for (const d of peerRenderData) {
+        canvasHitTargets.push({
+            x: d.pos.x,
+            y: d.pos.y,
+            radius: Math.max(d.nodeSize, 5), // minimum hit radius for tiny dots
+            id: d.id,
+            peer: d.peer,
+            isYou: d.isYou,
+            peerName: d.peerName,
+            tooltipText: d.tooltipText
+        });
     }
-
-    // Draw subscription/proximity links when contract selected
-    if (state.selectedContract && state.contractData[state.selectedContract]) {
-        drawSubscriptionLinks(svg, peers, connections);
-    }
-
-    container.innerHTML = '';
-    container.appendChild(svg);
 }
+
+// ============================================================================
+// SVG helpers (center stats, message flow arrows -- few elements, stay in SVG)
+// ============================================================================
+
+// Helper: Draw center stats
+function drawCenterStats(svg, peers, subscriberPeerIds) {
+    const centerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
+
+    const visibleSubscribers = state.selectedContract ? [...subscriberPeerIds].filter(id => peers.has(id)).length : 0;
+    const displayCount = state.selectedContract ? visibleSubscribers : peers.size;
+    const displayLabel = state.selectedContract
+        ? (visibleSubscribers > 0 ? 'SUBSCRIBERS' : 'PEERS')
+        : 'PEERS';
+
+    const countText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    countText.setAttribute('x', CENTER);
+    countText.setAttribute('y', CENTER - 8);
+    countText.setAttribute('fill', state.selectedContract && visibleSubscribers === 0 ? '#484f58' : '#00d4aa');
+    countText.setAttribute('font-size', '36');
+    countText.setAttribute('font-family', 'JetBrains Mono, monospace');
+    countText.setAttribute('font-weight', '300');
+    countText.setAttribute('text-anchor', 'middle');
+    countText.textContent = displayCount;
+    centerGroup.appendChild(countText);
+
+    const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+    labelText.setAttribute('x', CENTER);
+    labelText.setAttribute('y', CENTER + 18);
+    labelText.setAttribute('fill', '#484f58');
+    labelText.setAttribute('font-size', '11');
+    labelText.setAttribute('font-family', 'JetBrains Mono, monospace');
+    labelText.setAttribute('text-anchor', 'middle');
+    labelText.textContent = displayLabel;
+    centerGroup.appendChild(labelText);
+
+    svg.appendChild(centerGroup);
+}
+
+// Helper: Draw message flow arrows (stays in SVG for marker-end support)
+function drawMessageFlowArrows(svg, peers) {
+    state.displayedEvents.forEach((event, idx) => {
+        if (!event.from_peer || !event.to_peer) return;
+        if (event.from_peer === event.to_peer) return;
+
+        const fromPeer = peers.get(event.from_peer);
+        const toPeer = peers.get(event.to_peer);
+
+        const fromLoc = fromPeer?.location ?? event.from_location;
+        const toLoc = toPeer?.location ?? event.to_location;
+
+        if (fromLoc === null || fromLoc === undefined || toLoc === null || toLoc === undefined) return;
+
+        const fromPos = locationToXY(fromLoc);
+        const toPos = locationToXY(toLoc);
+
+        const dx = toPos.x - fromPos.x;
+        const dy = toPos.y - fromPos.y;
+        const dist = Math.sqrt(dx*dx + dy*dy);
+        if (dist < 20) return;
+
+        const offsetStart = 15 / dist;
+        const offsetEnd = 22 / dist;
+
+        const x1 = fromPos.x + dx * offsetStart;
+        const y1 = fromPos.y + dy * offsetStart;
+        const x2 = fromPos.x + dx * (1 - offsetEnd);
+        const y2 = fromPos.y + dy * (1 - offsetEnd);
+
+        const eventClass = getEventClass(event.event_type);
+        const isSelected = state.selectedEvent && state.selectedEvent.timestamp === event.timestamp;
+
+        const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+        arrow.setAttribute('x1', x1);
+        arrow.setAttribute('y1', y1);
+        arrow.setAttribute('x2', x2);
+        arrow.setAttribute('y2', y2);
+        arrow.setAttribute('class', `message-flow-arrow ${eventClass} animated`);
+        arrow.setAttribute('style', `opacity: ${isSelected ? 1 : 0.6 - idx * 0.05}; pointer-events: none;`);
+        svg.appendChild(arrow);
+    });
+}
+
+// ============================================================================
+// Distance chart (unchanged -- already uses canvas)
+// ============================================================================
 
 // Distance chart state
 let distChartZoomed = false;
@@ -440,9 +1135,13 @@ function setupDistChartZoom() {
 }
 
 // Helper: Draw distance distribution chart into HTML overlay
+let _lastDistCount = -1;
 function drawDistanceChartOverlay(connectionDistances) {
     setupDistChartZoom();
     lastConnectionDistances = connectionDistances;
+    // Skip re-render if connection count hasn't changed (distances are stable)
+    if (connectionDistances.length === _lastDistCount) return;
+    _lastDistCount = connectionDistances.length;
     renderDistChart(connectionDistances);
 }
 
@@ -463,8 +1162,12 @@ function renderDistChart(connectionDistances) {
     }
 
     const dpr = window.devicePixelRatio || 1;
-    canvas.width = Math.round(width * dpr);
-    canvas.height = Math.round(height * dpr);
+    const targetW = Math.round(width * dpr);
+    const targetH = Math.round(height * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+    }
 
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
@@ -535,445 +1238,4 @@ function renderDistChart(connectionDistances) {
 
         ctx.fillRect(2, y + yOffset, barWidth, barHeight - 1);
     }
-}
-
-// Helper: Draw peers on the ring
-function drawPeers(svg, peers, subscriberPeerIds, callbacks) {
-    const { selectPeer, showPeerNamingPrompt } = callbacks;
-
-    peers.forEach((peer, id) => {
-        const pos = locationToXY(peer.location);
-        const isHighlighted = state.highlightedPeers.has(id) || state.highlightedPeers.has(peer.peer_id);
-        const isEventSelected = state.selectedEvent && (state.selectedEvent.peer_id === id || state.selectedEvent.peer_id === peer.peer_id);
-        const isPeerSelected = state.selectedPeerId === id;
-        const isEventHovered = state.hoveredEvent && (
-            (state.hoveredEvent.from_peer === id || state.hoveredEvent.from_peer === peer.peer_id) ||
-            (state.hoveredEvent.to_peer === id || state.hoveredEvent.to_peer === peer.peer_id) ||
-            (state.hoveredEvent.peer_id === id || state.hoveredEvent.peer_id === peer.peer_id)
-        );
-
-        const lifecyclePeer = state.peerLifecycle?.peers?.find(p => p.peer_id === peer.peer_id);
-        const isGateway = peer.is_gateway || lifecyclePeer?.is_gateway || id === state.gatewayPeerId;
-        const isYou = id === state.yourPeerId;
-        const isSubscriber = subscriberPeerIds.has(id);
-
-        let fillColor = '#007FFF';
-        let glowColor = 'rgba(0, 127, 255, 0.2)';
-        let label = '';
-        let peerStateHash = null;
-        let isNonSubscriber = false;
-
-        if (state.selectedContract) {
-            if (isSubscriber) {
-                if (state.contractStates[state.selectedContract] && peer.peer_id) {
-                    const peerState = state.contractStates[state.selectedContract][peer.peer_id];
-                    if (peerState && peerState.hash) {
-                        peerStateHash = peerState.hash;
-                    }
-                }
-                fillColor = '#f472b6';
-                glowColor = 'rgba(244, 114, 182, 0.3)';
-            } else {
-                isNonSubscriber = true;
-                fillColor = '#3a4550';
-                glowColor = 'rgba(58, 69, 80, 0.15)';
-            }
-        }
-
-        const peerName = peer.ip_hash ? state.peerNames[peer.ip_hash] : null;
-
-        if (isGateway) {
-            if (!state.selectedContract || isSubscriber) {
-                fillColor = '#f59e0b';
-                glowColor = 'rgba(245, 158, 11, 0.3)';
-            } else if (isNonSubscriber) {
-                fillColor = '#6b5a30';
-                glowColor = 'rgba(107, 90, 48, 0.2)';
-            }
-            label = peerName || 'GW';
-        } else if (isYou) {
-            if (!state.selectedContract || isSubscriber) {
-                fillColor = '#10b981';
-                glowColor = 'rgba(16, 185, 129, 0.3)';
-            } else if (isNonSubscriber) {
-                fillColor = '#2d5a4a';
-                glowColor = 'rgba(45, 90, 74, 0.2)';
-            }
-            label = peerName || 'YOU';
-        } else if (peerName) {
-            label = peerName;
-        } else if (isSubscriber && !state.selectedContract) {
-            fillColor = '#f472b6';
-            glowColor = 'rgba(244, 114, 182, 0.3)';
-        }
-
-        if (isEventSelected) {
-            fillColor = '#f87171';
-            glowColor = 'rgba(248, 113, 113, 0.3)';
-        } else if (isPeerSelected) {
-            fillColor = '#7ecfef';
-            glowColor = 'rgba(126, 207, 239, 0.4)';
-        } else if (isEventHovered) {
-            fillColor = '#fbbf24';
-            glowColor = 'rgba(251, 191, 36, 0.5)';
-        } else if (isHighlighted) {
-            fillColor = '#fbbf24';
-            glowColor = 'rgba(251, 191, 36, 0.3)';
-        }
-
-        const isLargeNetwork = peers.size > 50;
-        const isSpecial = isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou;
-        const nodeSize = (isSpecial || isSubscriber) ? 5 : (isLargeNetwork ? 3 : 4);
-        const glowSize = isSpecial ? 9 : (isLargeNetwork ? 4 : 7);
-
-        // Glow
-        const glow = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        glow.setAttribute('cx', pos.x);
-        glow.setAttribute('cy', pos.y);
-        glow.setAttribute('r', glowSize);
-        glow.setAttribute('fill', glowColor);
-        svg.appendChild(glow);
-
-        // Click target
-        const clickTarget = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        clickTarget.setAttribute('cx', pos.x);
-        clickTarget.setAttribute('cy', pos.y);
-        clickTarget.setAttribute('r', '20');
-        clickTarget.setAttribute('fill', 'transparent');
-        clickTarget.setAttribute('style', 'cursor: pointer;');
-        clickTarget.onclick = () => {
-            if (isYou && state.youArePeer && !peerName && showPeerNamingPrompt) {
-                showPeerNamingPrompt();
-            } else if (selectPeer) {
-                selectPeer(id);
-            }
-        };
-        svg.appendChild(clickTarget);
-
-        // Main circle
-        const circle = document.createElementNS('http://www.w3.org/2000/svg', 'circle');
-        circle.setAttribute('cx', pos.x);
-        circle.setAttribute('cy', pos.y);
-        circle.setAttribute('r', nodeSize);
-        circle.setAttribute('fill', fillColor);
-        circle.setAttribute('class', 'peer-node');
-        if (!isNonSubscriber) {
-            circle.setAttribute('filter', 'url(#glow)');
-        }
-        circle.setAttribute('style', 'pointer-events: none;');
-
-        if (isNonSubscriber) {
-            circle.setAttribute('stroke', '#2a2f35');
-            circle.setAttribute('stroke-width', '1');
-        }
-
-        // Tooltip
-        const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
-        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        const peerIdentifier = peerName || (peer.ip_hash ? `#${peer.ip_hash}` : '');
-        let tooltipText = `${id}${peerType}\n${peerIdentifier}\nLocation: ${peer.location.toFixed(4)}`;
-
-        if (state.peerLifecycle && state.peerLifecycle.peers) {
-            let lifecycleData = null;
-            if (peer.peer_id) {
-                lifecycleData = state.peerLifecycle.peers.find(p => p.peer_id === peer.peer_id);
-            }
-            if (!lifecycleData) {
-                const topoPeer = state.initialStatePeers.find(p => p.id === id);
-                if (topoPeer && topoPeer.peer_id) {
-                    lifecycleData = state.peerLifecycle.peers.find(p => p.peer_id === topoPeer.peer_id);
-                }
-            }
-            if (lifecycleData) {
-                if (lifecycleData.version) tooltipText += `\nVersion: ${lifecycleData.version}`;
-                if (lifecycleData.os) {
-                    let osInfo = lifecycleData.os;
-                    if (lifecycleData.arch) osInfo += ` (${lifecycleData.arch})`;
-                    tooltipText += `\nOS: ${osInfo}`;
-                }
-            }
-        }
-
-        if (peerStateHash) {
-            tooltipText += `\nState: [${peerStateHash.substring(0, 8)}]`;
-        }
-        tooltipText += '\nClick to filter events';
-        title.textContent = tooltipText;
-        clickTarget.appendChild(title);
-        svg.appendChild(circle);
-
-        // State indicator
-        if (peerStateHash && state.selectedContract) {
-            const stateColors = hashToColor(peerStateHash);
-            const squareSize = nodeSize * 0.7;
-
-            const borderRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            borderRect.setAttribute('x', pos.x - squareSize/2 - 1);
-            borderRect.setAttribute('y', pos.y - squareSize/2 - 1);
-            borderRect.setAttribute('width', squareSize + 2);
-            borderRect.setAttribute('height', squareSize + 2);
-            borderRect.setAttribute('fill', 'white');
-            borderRect.setAttribute('rx', '2');
-            borderRect.setAttribute('style', 'pointer-events: none;');
-            svg.appendChild(borderRect);
-
-            const stateRect = document.createElementNS('http://www.w3.org/2000/svg', 'rect');
-            stateRect.setAttribute('x', pos.x - squareSize/2);
-            stateRect.setAttribute('y', pos.y - squareSize/2);
-            stateRect.setAttribute('width', squareSize);
-            stateRect.setAttribute('height', squareSize);
-            stateRect.setAttribute('fill', stateColors.fill);
-            stateRect.setAttribute('rx', '1');
-            stateRect.setAttribute('style', 'pointer-events: none;');
-            svg.appendChild(stateRect);
-        }
-
-        // Labels - always show named peers, limit generic labels to small networks
-        if (label && (peerName || peers.size <= 15)) {
-            const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            labelText.setAttribute('x', pos.x);
-            labelText.setAttribute('y', pos.y + 24);
-            labelText.setAttribute('fill', fillColor);
-            labelText.setAttribute('font-size', '9');
-            labelText.setAttribute('font-family', 'JetBrains Mono, monospace');
-            labelText.setAttribute('font-weight', '600');
-            labelText.setAttribute('text-anchor', 'middle');
-            labelText.textContent = label;
-            if (isYou && state.youArePeer && peerName && showPeerNamingPrompt) {
-                labelText.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
-                labelText.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
-            }
-            svg.appendChild(labelText);
-        }
-
-        // Inside-ring label
-        const hasOutsideLabel = label && (peerName || peers.size <= 15);
-        if (peers.size <= 12 && !hasOutsideLabel) {
-            const angle = peer.location * 2 * Math.PI - Math.PI / 2;
-            const labelRadius = RADIUS - 30;
-            const lx = CENTER + labelRadius * Math.cos(angle);
-            const ly = CENTER + labelRadius * Math.sin(angle);
-
-            const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            text.setAttribute('x', lx);
-            text.setAttribute('y', ly);
-            text.setAttribute('fill', '#8b949e');
-            text.setAttribute('font-size', '10');
-            text.setAttribute('font-family', 'JetBrains Mono, monospace');
-            text.setAttribute('text-anchor', 'middle');
-            text.setAttribute('dominant-baseline', 'middle');
-            text.textContent = peerName || `#${peer.ip_hash || id.substring(5, 11)}`;
-            if (isYou && state.youArePeer && peerName && showPeerNamingPrompt) {
-                text.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
-                text.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
-            }
-            svg.appendChild(text);
-        }
-
-        // Location label (outside ring)
-        const fixedMarkers = [0, 0.25, 0.5, 0.75];
-        const minDistance = 0.03;
-        const nearFixedMarker = fixedMarkers.some(m =>
-            Math.abs(peer.location - m) < minDistance ||
-            Math.abs(peer.location - m + 1) < minDistance ||
-            Math.abs(peer.location - m - 1) < minDistance
-        );
-        const hasSpecialLabel = label && peers.size <= 15;
-
-        if (!nearFixedMarker && !hasSpecialLabel && peers.size <= 20) {
-            const angle = peer.location * 2 * Math.PI - Math.PI / 2;
-            const outerRadius = RADIUS + 25;
-            const ox = CENTER + outerRadius * Math.cos(angle);
-            const oy = CENTER + outerRadius * Math.sin(angle);
-
-            const locText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-            locText.setAttribute('x', ox);
-            locText.setAttribute('y', oy);
-            locText.setAttribute('fill', isNonSubscriber ? '#3a3f47' : '#00d4aa');
-            locText.setAttribute('font-size', '10');
-            locText.setAttribute('font-family', 'JetBrains Mono, monospace');
-            locText.setAttribute('text-anchor', 'middle');
-            locText.setAttribute('dominant-baseline', 'middle');
-            locText.textContent = peer.location.toFixed(2);
-            svg.appendChild(locText);
-        }
-    });
-}
-
-// Helper: Draw center stats
-function drawCenterStats(svg, peers, subscriberPeerIds) {
-    const centerGroup = document.createElementNS('http://www.w3.org/2000/svg', 'g');
-
-    const visibleSubscribers = state.selectedContract ? [...subscriberPeerIds].filter(id => peers.has(id)).length : 0;
-    const displayCount = state.selectedContract ? visibleSubscribers : peers.size;
-    const displayLabel = state.selectedContract
-        ? (visibleSubscribers > 0 ? 'SUBSCRIBERS' : 'PEERS')
-        : 'PEERS';
-
-    const countText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    countText.setAttribute('x', CENTER);
-    countText.setAttribute('y', CENTER - 8);
-    countText.setAttribute('fill', state.selectedContract && visibleSubscribers === 0 ? '#484f58' : '#00d4aa');
-    countText.setAttribute('font-size', '36');
-    countText.setAttribute('font-family', 'JetBrains Mono, monospace');
-    countText.setAttribute('font-weight', '300');
-    countText.setAttribute('text-anchor', 'middle');
-    countText.textContent = displayCount;
-    centerGroup.appendChild(countText);
-
-    const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-    labelText.setAttribute('x', CENTER);
-    labelText.setAttribute('y', CENTER + 18);
-    labelText.setAttribute('fill', '#484f58');
-    labelText.setAttribute('font-size', '11');
-    labelText.setAttribute('font-family', 'JetBrains Mono, monospace');
-    labelText.setAttribute('text-anchor', 'middle');
-    labelText.textContent = displayLabel;
-    centerGroup.appendChild(labelText);
-
-    svg.appendChild(centerGroup);
-}
-
-// Helper: Draw message flow arrows
-function drawMessageFlowArrows(svg, peers) {
-    state.displayedEvents.forEach((event, idx) => {
-        if (!event.from_peer || !event.to_peer) return;
-        if (event.from_peer === event.to_peer) return;
-
-        const fromPeer = peers.get(event.from_peer);
-        const toPeer = peers.get(event.to_peer);
-
-        const fromLoc = fromPeer?.location ?? event.from_location;
-        const toLoc = toPeer?.location ?? event.to_location;
-
-        if (fromLoc === null || fromLoc === undefined || toLoc === null || toLoc === undefined) return;
-
-        const fromPos = locationToXY(fromLoc);
-        const toPos = locationToXY(toLoc);
-
-        const dx = toPos.x - fromPos.x;
-        const dy = toPos.y - fromPos.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 20) return;
-
-        const offsetStart = 15 / dist;
-        const offsetEnd = 22 / dist;
-
-        const x1 = fromPos.x + dx * offsetStart;
-        const y1 = fromPos.y + dy * offsetStart;
-        const x2 = fromPos.x + dx * (1 - offsetEnd);
-        const y2 = fromPos.y + dy * (1 - offsetEnd);
-
-        const eventClass = getEventClass(event.event_type);
-        const isSelected = state.selectedEvent && state.selectedEvent.timestamp === event.timestamp;
-
-        const arrow = document.createElementNS('http://www.w3.org/2000/svg', 'line');
-        arrow.setAttribute('x1', x1);
-        arrow.setAttribute('y1', y1);
-        arrow.setAttribute('x2', x2);
-        arrow.setAttribute('y2', y2);
-        arrow.setAttribute('class', `message-flow-arrow ${eventClass} animated`);
-        arrow.setAttribute('style', `opacity: ${isSelected ? 1 : 0.6 - idx * 0.05}`);
-        svg.appendChild(arrow);
-    });
-}
-
-// Helper: Draw subscription and proximity links
-function drawSubscriptionLinks(svg, peers, connections) {
-    const subData = state.contractData[state.selectedContract];
-    const tree = subData.tree || {};
-
-    // Proximity links
-    const proximityLinks = computeProximityLinks(state.selectedContract, peers, connections);
-    proximityLinks.forEach(link => {
-        const fromPeer = peers.get(link.from);
-        const toPeer = peers.get(link.to);
-        if (!fromPeer || !toPeer) return;
-
-        const fromPos = locationToXY(fromPeer.location);
-        const toPos = locationToXY(toPeer.location);
-
-        const dx = toPos.x - fromPos.x;
-        const dy = toPos.y - fromPos.y;
-        const dist = Math.sqrt(dx*dx + dy*dy);
-        if (dist < 1) return;
-        const offset = 12 / dist;
-
-        const lineGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-        const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        line.setAttribute('x1', fromPos.x + dx * offset);
-        line.setAttribute('y1', fromPos.y + dy * offset);
-        line.setAttribute('x2', toPos.x - dx * offset);
-        line.setAttribute('y2', toPos.y - dy * offset);
-        line.setAttribute('class', 'proximity-link');
-        line.setAttribute('stroke', '#22d3ee');
-        line.setAttribute('stroke-width', '2');
-        line.setAttribute('stroke-dasharray', '4,3');
-        line.setAttribute('opacity', '0.7');
-
-        const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-        title.textContent = 'Proximity link: connected peers share updates directly';
-        line.appendChild(title);
-
-        const hitArea = document.createElementNS("http://www.w3.org/2000/svg", "line");
-        hitArea.setAttribute("x1", fromPos.x + dx * offset);
-        hitArea.setAttribute("y1", fromPos.y + dy * offset);
-        hitArea.setAttribute("x2", toPos.x - dx * offset);
-        hitArea.setAttribute("y2", toPos.y - dy * offset);
-        hitArea.setAttribute("stroke", "transparent");
-        hitArea.setAttribute("stroke-width", "12");
-        hitArea.appendChild(title.cloneNode(true));
-
-        lineGroup.appendChild(line);
-        lineGroup.appendChild(hitArea);
-        svg.appendChild(lineGroup);
-    });
-
-    // Subscription tree links
-    Object.entries(tree).forEach(([fromId, toIds]) => {
-        const fromPeer = peers.get(fromId);
-        if (!fromPeer) return;
-
-        toIds.forEach(toId => {
-            const toPeer = peers.get(toId);
-            if (!toPeer) return;
-
-            const fromPos = locationToXY(fromPeer.location);
-            const toPos = locationToXY(toPeer.location);
-
-            const dx = toPos.x - fromPos.x;
-            const dy = toPos.y - fromPos.y;
-            const dist = Math.sqrt(dx*dx + dy*dy);
-            if (dist < 1) return;
-            const offset = 12 / dist;
-
-            const lineGroup = document.createElementNS("http://www.w3.org/2000/svg", "g");
-            const line = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            line.setAttribute('x1', fromPos.x + dx * offset);
-            line.setAttribute('y1', fromPos.y + dy * offset);
-            line.setAttribute('x2', toPos.x - dx * offset);
-            line.setAttribute('y2', toPos.y - dy * offset);
-            line.setAttribute('class', 'subscription-link');
-            line.setAttribute('stroke', '#f472b6');
-            line.setAttribute('stroke-width', '2.5');
-            line.setAttribute('opacity', '0.9');
-
-            const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-            title.textContent = 'Subscription link: updates flow through this connection';
-            line.appendChild(title);
-
-            const hitArea = document.createElementNS("http://www.w3.org/2000/svg", "line");
-            hitArea.setAttribute("x1", fromPos.x + dx * offset);
-            hitArea.setAttribute("y1", fromPos.y + dy * offset);
-            hitArea.setAttribute("x2", toPos.x - dx * offset);
-            hitArea.setAttribute("y2", toPos.y - dy * offset);
-            hitArea.setAttribute("stroke", "transparent");
-            hitArea.setAttribute("stroke-width", "12");
-            hitArea.appendChild(title.cloneNode(true));
-
-            lineGroup.appendChild(line);
-            lineGroup.appendChild(hitArea);
-            svg.appendChild(lineGroup);
-        });
-    });
 }

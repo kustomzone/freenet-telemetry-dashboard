@@ -336,6 +336,7 @@ export function addTransferEvents(events) {
 /**
  * Add a single transfer event
  */
+let _transferRenderScheduled = false;
 export function addTransferEvent(event) {
     transferEvents.push(event);
 
@@ -343,7 +344,14 @@ export function addTransferEvent(event) {
         transferEvents.shift();
     }
 
-    renderTransferChart();
+    // Debounce: render at most once per frame
+    if (!_transferRenderScheduled) {
+        _transferRenderScheduled = true;
+        requestAnimationFrame(() => {
+            _transferRenderScheduled = false;
+            renderTransferChart();
+        });
+    }
 }
 
 /**

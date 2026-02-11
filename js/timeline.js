@@ -97,10 +97,15 @@ export function renderDetailTimeline() {
         detailRuler.appendChild(tick);
     }
 
-    // Filter transactions with events in window
-    const windowTx = state.allTransactions.filter(tx =>
-        tx.end_ns >= windowStart && tx.start_ns <= windowEnd && tx.events && tx.events.length > 0
-    );
+    // Filter transactions with events in window, limit to prevent DOM explosion
+    const MAX_DETAIL_TX = 200;
+    const windowTx = [];
+    for (const tx of state.allTransactions) {
+        if (tx.end_ns >= windowStart && tx.start_ns <= windowEnd && tx.events && tx.events.length > 0) {
+            windowTx.push(tx);
+            if (windowTx.length >= MAX_DETAIL_TX) break;
+        }
+    }
 
     // Organize by operation type to match main timeline lanes: PUT, GET, UPD, SUB, CONN
     const opOrder = ['put', 'get', 'update', 'subscribe', 'connect'];
@@ -155,12 +160,14 @@ export function renderDetailTimeline() {
             txLine.className = `tx-line ${opClass}`;
             txContainer.appendChild(txLine);
 
-            // Event pills positioned along the transaction
-            events.forEach(evt => {
+            // Event pills positioned along the transaction (cap at 10 per tx)
+            const maxPills = 10;
+            let pillCount = 0;
+            for (const evt of events) {
+                if (pillCount >= maxPills) break;
                 const evtTime = evt.timestamp;
-                if (!evtTime || evtTime < windowStart || evtTime > windowEnd) return;
+                if (!evtTime || evtTime < windowStart || evtTime > windowEnd) continue;
 
-                // Position within the transaction container (0-100%)
                 const txDuration = txEnd - txStart;
                 const evtPos = txDuration > 0 ? ((evtTime - txStart) / txDuration) * 100 : 50;
 
@@ -168,7 +175,8 @@ export function renderDetailTimeline() {
                 pill.className = `tx-pill ${opClass}`;
                 pill.style.left = `${Math.max(0, Math.min(100, evtPos))}%`;
                 txContainer.appendChild(pill);
-            });
+                pillCount++;
+            }
 
             laneDiv.appendChild(txContainer);
         });
@@ -217,6 +225,7 @@ export function renderTimeline() {
     state.allEvents.forEach(event => {
         const bucket = Math.round((event.timestamp - state.timeRange.start) / duration * 400);
         const type = event.event_type;
+        if (!type) return;
 
         // Determine which lane
         let laneType = 'connect';
@@ -585,17 +594,8 @@ export function setupTimeline(callbacks) {
  * @param {Object} event - Event data
  */
 export function addEventMarker(event) {
-    if (state.timeRange.end <= state.timeRange.start) return;
-
-    const container = document.getElementById('timeline-events');
-    const duration = state.timeRange.end - state.timeRange.start;
-    const pos = (event.timestamp - state.timeRange.start) / duration;
-
-    const marker = document.createElement('div');
-    marker.className = `timeline-marker ${getEventClass(event.event_type)}`;
-    marker.style.left = `${pos * 100}%`;
-    marker.style.height = '20px';
-    marker.style.top = '30px';
-    marker.title = `${event.time_str} - ${event.event_type}`;
-    container.appendChild(marker);
+    // No-op: renderTimeline() handles timeline markers in bucketed form.
+    // Previously this created a DOM element per event, causing 19K+ elements.
+    // The bucketed renderTimeline approach (400 buckets * 5 lanes) is far more efficient.
+    // Keeping this export to avoid breaking callers.
 }
