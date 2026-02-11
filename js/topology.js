@@ -513,6 +513,10 @@ function installCanvasEvents(canvas, container) {
             } else if (selectPeer) {
                 selectPeer(hit.id);
             }
+        } else if (state.selectedPeerId) {
+            // Click on empty space clears peer selection
+            const { selectPeer } = lastCallbacks;
+            if (selectPeer) selectPeer(state.selectedPeerId); // toggle off
         }
     });
 }
