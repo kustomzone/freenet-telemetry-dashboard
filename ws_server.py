@@ -1508,12 +1508,25 @@ def get_network_state():
                     "is_gateway": is_gateway,  # Gateway flag from lifecycle data
                 })
 
-    # Only include connections between active peers
+    # Only include connections between active peers, capped per peer.
+    # Peers have max_connections=20 by default, but disconnect events are often
+    # missed so stale connections accumulate.  Cap each peer to MAX_CONN_PER_PEER
+    # to keep the display realistic.
+    MAX_CONN_PER_PEER = 20
     conn_list = []
+    conn_count_per_peer = {}  # anon_id -> count
     for conn in connections:
         ips = list(conn)
         if len(ips) == 2 and ips[0] in active_peer_ips and ips[1] in active_peer_ips:
-            conn_list.append([anonymize_ip(ips[0]), anonymize_ip(ips[1])])
+            a1 = anonymize_ip(ips[0])
+            a2 = anonymize_ip(ips[1])
+            c1 = conn_count_per_peer.get(a1, 0)
+            c2 = conn_count_per_peer.get(a2, 0)
+            if c1 >= MAX_CONN_PER_PEER or c2 >= MAX_CONN_PER_PEER:
+                continue  # skip — one side already at cap
+            conn_count_per_peer[a1] = c1 + 1
+            conn_count_per_peer[a2] = c2 + 1
+            conn_list.append([a1, a2])
 
     # Aggregate version stats (using active_lifecycle defined earlier)
     version_counts = {}
