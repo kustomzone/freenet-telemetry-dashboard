@@ -201,9 +201,8 @@ function getOrCreateStaticSvg() {
     svg.setAttribute('viewBox', `0 0 ${SVG_WIDTH} ${SVG_SIZE}`);
     svg.style.position = 'absolute';
     svg.style.top = '0';
-    svg.style.left = '0';
-    svg.style.width = '100%';
-    svg.style.height = '100%';
+    svg.style.left = '50%';
+    svg.style.transform = 'translateX(-50%)';
     svg.style.pointerEvents = 'none';
 
     const defs = document.createElementNS('http://www.w3.org/2000/svg', 'defs');
@@ -357,21 +356,25 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
         drawDistanceChartOverlay(connectionDistances);
     }
 
-    // Ensure canvas element exists and is sized to fit container
+    // Ensure canvas element exists and is sized to fit container (square)
     const canvas = getOrCreatePeerCanvas(container);
     const dpr = window.devicePixelRatio || 1;
-    const displayW = container.offsetWidth || SVG_WIDTH;
-    const displayH = displayW;  // square aspect ratio
-    const targetW = Math.round(displayW * dpr);
-    const targetH = Math.round(displayH * dpr);
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
+    const displaySize = Math.min(container.offsetWidth, container.offsetHeight) || SVG_SIZE;
+    const targetPx = Math.round(displaySize * dpr);
+    if (canvas.width !== targetPx || canvas.height !== targetPx) {
+        canvas.width = targetPx;
+        canvas.height = targetPx;
+        canvas.style.width = displaySize + 'px';
+        canvas.style.height = displaySize + 'px';
     }
+
+    // Also update SVG to match
+    svg.style.width = displaySize + 'px';
+    svg.style.height = displaySize + 'px';
 
     const ctx = canvas.getContext('2d');
     // Scale from logical SVG_SIZE coordinate space to actual display size
-    const scale = displayW / SVG_SIZE;
+    const scale = displaySize / SVG_SIZE;
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
     ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
 
@@ -415,9 +418,8 @@ function getOrCreatePeerCanvas(container) {
     peerCanvasEl.id = 'peer-canvas';
     peerCanvasEl.style.position = 'absolute';
     peerCanvasEl.style.top = '0';
-    peerCanvasEl.style.left = '0';
-    peerCanvasEl.style.width = '100%';
-    peerCanvasEl.style.height = '100%';
+    peerCanvasEl.style.left = '50%';
+    peerCanvasEl.style.transform = 'translateX(-50%)';
     peerCanvasEl.style.zIndex = '1'; // above svg (which has no pointer-events)
     container.style.position = 'relative';
     container.appendChild(peerCanvasEl);
