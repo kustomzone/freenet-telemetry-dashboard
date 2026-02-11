@@ -237,3 +237,13 @@
             to { stroke-dashoffset: 0; }
         }
 
+
+        .find-my-peer a {
+            color: #10b981;
+            text-decoration: none;
+            font-weight: 500;
+            cursor: pointer;
+        }
+        .find-my-peer a:hover {
+            text-decoration: underline;
+        }

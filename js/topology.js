@@ -814,7 +814,7 @@ function drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks) {
         if (isEventSelected) {
             fillColor = '#f87171';
             glowColor = 'rgba(248, 113, 113, 0.3)';
-        } else if (isPeerSelected) {
+        } else if (isPeerSelected && !isYou) {
             fillColor = '#7ecfef';
             glowColor = 'rgba(126, 207, 239, 0.4)';
         } else if (isEventHovered) {

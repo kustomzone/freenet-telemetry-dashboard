@@ -228,6 +228,22 @@ window.clearContractFilter = () => clearContractFilter(updateView, updateURL);
 window.closeTransactionDetail = () => closeTransactionDetail(updateView);
 window.showTransactionDetail = (tx) => showTransactionDetail(tx, switchTab, updateView, updateURL);
 
+// Find My Peer: select the user's own peer and show the button
+function findMyPeer() {
+    if (state.youArePeer && state.yourPeerId) {
+        selectPeer(state.yourPeerId, updateView, updateURL);
+    }
+}
+window.findMyPeer = findMyPeer;
+
+// Show the Find My Peer button when we know the user is a peer
+function showFindMyPeerButton() {
+    const btn = document.getElementById("find-my-peer-btn");
+    if (btn && state.youArePeer) {
+        btn.style.display = "flex";
+    }
+}
+
 // ============================================================================
 // Initialization
 // ============================================================================
@@ -252,6 +268,12 @@ connect({
     loadFromURL: () => {
         if (!isURLLoaded()) {
             loadFromURL(switchTab, updateView);
+        }
+        // Show the Find My Peer button if user is a peer
+        showFindMyPeerButton();
+        // Auto-select user's peer on first load (if no peer already selected from URL)
+        if (!state.selectedPeerId && state.youArePeer && state.yourPeerId) {
+            selectPeer(state.yourPeerId, updateView, updateURL);
         }
     }
 });

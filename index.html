@@ -7,7 +7,7 @@
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
-    <link rel="stylesheet" href="css/styles.css?v=20260208c">
+    <link rel="stylesheet" href="css/styles.css?v=20260210a">
 </head>
 <body>
     <div class="main-content">
@@ -59,6 +59,7 @@
                         <span class="legend-item"><span class="legend-marker state-indicator"></span>State</span>
                         <span class="legend-item"><span class="legend-line connection"></span>Connection</span>
                         <span class="legend-item"><span class="legend-line message"></span>Event (colored by type)</span>
+                        <span class="legend-item find-my-peer" id="find-my-peer-btn" style="display: none;" onclick="findMyPeer()"><span class="legend-marker you"></span><a href="#" onclick="event.preventDefault()">Find My Peer</a></span>
                     </div>
                     <div class="ring-container" id="ring-container">
                         <div class="empty-state">
@@ -219,6 +220,6 @@
         <kbd>&#8592;</kbd><kbd>&#8594;</kbd> Step &nbsp; <kbd>L</kbd> Go Live
     </div>
 
-    <script type="module" src="js/app.js?v=20260208e"></script>
+    <script type="module" src="js/app.js?v=20260210a"></script>
 </body>
 </html>
