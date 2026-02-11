@@ -202,6 +202,12 @@ function handleMessage(data, callbacks) {
         state.allEvents.push(...data.events);
         state.timeRange = data.time_range;
         state.timeRange.end = Date.now() * 1_000_000;
+        // Ensure minimum 2-hour display range so the scrubber is usable
+        const MIN_DISPLAY_RANGE_NS = 2 * 60 * 60 * 1_000_000_000; // 2 hours
+        const actualRange = state.timeRange.end - state.timeRange.start;
+        if (actualRange < MIN_DISPLAY_RANGE_NS) {
+            state.timeRange.start = state.timeRange.end - MIN_DISPLAY_RANGE_NS;
+        }
         state.currentTime = state.timeRange.end;
 
         if (data.transactions) {
