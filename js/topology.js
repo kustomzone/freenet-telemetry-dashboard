@@ -458,6 +458,19 @@ function installCanvasEvents(canvas, container) {
     if (canvasEventsInstalled) return;
     canvasEventsInstalled = true;
 
+    // Click anywhere in the topology panel (outside a peer) clears selection
+    const panel = container.closest('.panel');
+    if (panel) {
+        panel.addEventListener('click', (e) => {
+            // Only clear if click wasn't handled by canvas or other interactive elements
+            if (e.target.closest('canvas') || e.target.closest('a') || e.target.closest('button')) return;
+            if (state.selectedPeerId) {
+                const { selectPeer } = lastCallbacks;
+                if (selectPeer) selectPeer(state.selectedPeerId); // toggle off
+            }
+        });
+    }
+
     const tooltip = getOrCreateTooltip(container);
 
     canvas.addEventListener('mousemove', (e) => {
