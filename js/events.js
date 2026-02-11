@@ -119,7 +119,20 @@ export function updateFilterBar() {
     let chips = [];
 
     if (state.selectedPeerId) {
-        chips.push(`<span class="filter-chip peer">Peer: ${state.selectedPeerId.substring(0, 12)}...<button class="filter-chip-close" onclick="clearPeerFilter()">×</button></span>`);
+        // Show peer name or "My Peer" for own peer, with connection count
+        const isYourPeer = state.selectedPeerId === state.yourPeerId;
+        const selectedPeerData = state.initialStatePeers?.find(p => p.id === state.selectedPeerId);
+        const peerName = selectedPeerData?.ip_hash ? state.peerNames[selectedPeerData.ip_hash] : null;
+        let peerLabel = peerName || state.selectedPeerId.substring(0, 12) + '...';
+        if (isYourPeer && !peerName) peerLabel = 'My Peer';
+
+        // Count connections for this peer
+        let connCount = 0;
+        for (const conn of state.initialStateConnections) {
+            if (conn[0] === state.selectedPeerId || conn[1] === state.selectedPeerId) connCount++;
+        }
+        const connInfo = connCount > 0 ? ` (${connCount} connections)` : '';
+        chips.push(`<span class="filter-chip peer">${peerLabel}${connInfo}<button class="filter-chip-close" onclick="clearPeerFilter()">×</button></span>`);
     }
 
     if (state.selectedTxId) {

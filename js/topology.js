@@ -939,6 +939,22 @@ function drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks) {
         ctx.fillRect(d.pos.x - squareSize / 2, d.pos.y - squareSize / 2, squareSize, squareSize);
     }
 
+    // --- Pass 3.5: Selection ring (visible ring around selected peer) ---
+    for (const d of peerRenderData) {
+        if (!d.isPeerSelected) continue;
+        ctx.strokeStyle = d.isYou ? '#10b981' : '#7ecfef';
+        ctx.lineWidth = 2;
+        ctx.beginPath();
+        ctx.arc(d.pos.x, d.pos.y, d.nodeSize + 4, 0, Math.PI * 2);
+        ctx.stroke();
+        // Outer glow ring
+        ctx.strokeStyle = d.isYou ? 'rgba(16, 185, 129, 0.3)' : 'rgba(126, 207, 239, 0.3)';
+        ctx.lineWidth = 3;
+        ctx.beginPath();
+        ctx.arc(d.pos.x, d.pos.y, d.nodeSize + 7, 0, Math.PI * 2);
+        ctx.stroke();
+    }
+
     // --- Pass 4: Labels ---
     ctx.textAlign = 'center';
     ctx.textBaseline = 'middle';
