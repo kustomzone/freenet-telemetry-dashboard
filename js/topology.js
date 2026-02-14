@@ -390,7 +390,7 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     }
 
     // Draw peers on canvas and build hit-test array
-    drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks);
+    drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks);
 
     // Install mouse events once
     installCanvasEvents(canvas, container);
@@ -757,7 +757,7 @@ function drawSubscriptionLinksCanvas(ctx, peers, connections) {
 // Canvas: draw peers (replaces SVG drawPeers -- the main scalability win)
 // ============================================================================
 
-function drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks) {
+function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) {
     const { showPeerNamingPrompt } = callbacks;
     const isLargeNetwork = peers.size > 50;
     const isVeryLargeNetwork = peers.size > 500;
@@ -765,6 +765,16 @@ function drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks) {
     const showLabels = peers.size <= 15;
     const showLocationLabels = peers.size <= 20;
     const showInsideLabels = peers.size <= 12;
+
+    // Build set of peers connected to the selected peer (for smart label display)
+    const connectedToSelected = new Set();
+    if (state.selectedPeerId) {
+        connections.forEach(connKey => {
+            const [id1, id2] = connKey.split('|');
+            if (id1 === state.selectedPeerId) connectedToSelected.add(id2);
+            if (id2 === state.selectedPeerId) connectedToSelected.add(id1);
+        });
+    }
 
     // Reset hit targets
     canvasHitTargets = [];
@@ -994,53 +1004,69 @@ function drawPeersCanvas(ctx, peers, subscriberPeerIds, callbacks) {
         ctx.stroke();
     }
 
-    // --- Pass 4: Labels ---
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'middle';
+    // --- Pass 4: Labels (radial, collision-aware) ---
+    const MIN_LABEL_ANGLE_GAP = 0.08; // ~29 degrees between labels
+    const MAX_LABELS = 12;
+    const usedLabelSlots = [];
 
+    // Collect label candidates with priority
+    const labelCandidates = [];
     for (const d of peerRenderData) {
-        const { showPeerNamingPrompt: spnp } = callbacks;
+        const labelContent = d.label || (showInsideLabels ? (d.peerName || `#${d.peer.ip_hash || d.id.substring(5, 11)}`) : null);
+        if (!labelContent) continue;
 
-        // Outside label (name/GW/YOU)
-        if (d.label && (d.peerName || showLabels)) {
-            ctx.fillStyle = d.fillColor;
-            ctx.font = '600 9px "JetBrains Mono", monospace';
-            ctx.fillText(d.label, d.pos.x, d.pos.y + 24);
-        }
+        const isConnected = connectedToSelected.has(d.id);
+        const shouldShow = (
+            d.isGateway || d.isYou ||
+            d.isPeerSelected ||
+            isConnected ||
+            (peers.size <= 30 && d.label) ||
+            showInsideLabels
+        );
+        if (!shouldShow) continue;
 
-        // Inside-ring label
-        const hasOutsideLabel = d.label && (d.peerName || showLabels);
-        if (showInsideLabels && !hasOutsideLabel) {
-            const angle = d.peer.location * 2 * Math.PI - Math.PI / 2;
-            const labelRadius = RADIUS - 30;
-            const lx = CENTER + labelRadius * Math.cos(angle);
-            const ly = CENTER + labelRadius * Math.sin(angle);
-            ctx.fillStyle = '#8b949e';
-            ctx.font = '10px "JetBrains Mono", monospace';
-            ctx.fillText(d.peerName || `#${d.peer.ip_hash || d.id.substring(5, 11)}`, lx, ly);
-        }
+        const priority = (d.isGateway || d.isYou || d.isPeerSelected) ? 3 : isConnected ? 1 : 2;
+        labelCandidates.push({ ...d, labelContent, priority, isConnected });
+    }
 
-        // Location label (outside ring)
-        if (showLocationLabels) {
-            const fixedMarkers = [0, 0.25, 0.5, 0.75];
-            const minDistance = 0.03;
-            const nearFixedMarker = fixedMarkers.some(m =>
-                Math.abs(d.peer.location - m) < minDistance ||
-                Math.abs(d.peer.location - m + 1) < minDistance ||
-                Math.abs(d.peer.location - m - 1) < minDistance
-            );
-            const hasSpecialLabel = d.label && showLabels;
+    // Sort by priority (highest first) so important labels win collision slots
+    labelCandidates.sort((a, b) => b.priority - a.priority);
 
-            if (!nearFixedMarker && !hasSpecialLabel) {
-                const angle = d.peer.location * 2 * Math.PI - Math.PI / 2;
-                const outerRadius = RADIUS + 25;
-                const ox = CENTER + outerRadius * Math.cos(angle);
-                const oy = CENTER + outerRadius * Math.sin(angle);
-                ctx.fillStyle = d.isNonSubscriber ? '#3a3f47' : '#00d4aa';
-                ctx.font = '10px "JetBrains Mono", monospace';
-                ctx.fillText(d.peer.location.toFixed(2), ox, oy);
-            }
-        }
+    let labelCount = 0;
+    for (const lbl of labelCandidates) {
+        if (labelCount >= MAX_LABELS) break;
+
+        // Check collision with already-placed labels
+        const loc = lbl.peer.location;
+        const tooClose = usedLabelSlots.some(usedLoc => {
+            const dist = Math.abs(loc - usedLoc);
+            return Math.min(dist, 1 - dist) < MIN_LABEL_ANGLE_GAP;
+        });
+        if (tooClose) continue;
+        usedLabelSlots.push(loc);
+        labelCount++;
+
+        // Draw radial label
+        const angle = loc * 2 * Math.PI - Math.PI / 2;
+        const labelRadius = RADIUS + 18;
+        const lx = CENTER + labelRadius * Math.cos(angle);
+        const ly = CENTER + labelRadius * Math.sin(angle);
+        const onLeft = Math.cos(angle) < 0;
+        const rotation = onLeft ? angle + Math.PI : angle;
+
+        ctx.save();
+        ctx.translate(lx, ly);
+        ctx.rotate(rotation);
+        ctx.font = (lbl.isGateway || lbl.isYou || lbl.isPeerSelected)
+            ? 'bold 10px "JetBrains Mono", monospace'
+            : '500 9px "JetBrains Mono", monospace';
+        ctx.fillStyle = lbl.fillColor;
+        ctx.globalAlpha = lbl.isConnected ? 0.8 : 1;
+        ctx.textAlign = onLeft ? 'end' : 'start';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(lbl.labelContent, 0, 0);
+        ctx.restore();
+        ctx.globalAlpha = 1;
     }
 
     // --- Build hit targets for mouse events ---
