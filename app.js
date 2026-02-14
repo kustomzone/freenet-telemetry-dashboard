@@ -1950,6 +1950,48 @@
                 });
             }
 
+            // Build set of peers that have visible lines/arrows connecting them
+            const peersWithLines = new Set();
+
+            // Peers connected to selected peer (connection lines)
+            if (selectedPeerId) {
+                peersWithLines.add(selectedPeerId);
+                connectedToSelected.forEach(id => peersWithLines.add(id));
+            }
+
+            // Peers in displayed event arrows
+            if (!selectedContract && displayedEvents && displayedEvents.length > 0) {
+                displayedEvents.forEach(event => {
+                    if (event.from_peer) peersWithLines.add(event.from_peer);
+                    if (event.to_peer) peersWithLines.add(event.to_peer);
+                });
+            }
+
+            // Peers in hovered event highlight line
+            if (hoveredEvent) {
+                if (hoveredEvent.from_peer || hoveredEvent.peer_id) peersWithLines.add(hoveredEvent.from_peer || hoveredEvent.peer_id);
+                if (hoveredEvent.to_peer) peersWithLines.add(hoveredEvent.to_peer);
+            }
+
+            // Peers in subscription tree and proximity links
+            if (selectedContract && contractData[selectedContract]) {
+                const subData = contractData[selectedContract];
+                const tree = subData.tree || {};
+                Object.entries(tree).forEach(([fromId, toIds]) => {
+                    if (peers.has(fromId)) {
+                        peersWithLines.add(fromId);
+                        toIds.forEach(toId => {
+                            if (peers.has(toId)) peersWithLines.add(toId);
+                        });
+                    }
+                });
+                const proximityLinks = computeProximityLinks(selectedContract, peers, connections);
+                proximityLinks.forEach(link => {
+                    peersWithLines.add(link.from);
+                    peersWithLines.add(link.to);
+                });
+            }
+
             // Collect labels in first pass, render with collision avoidance after
             const pendingLabels = [];
             const MIN_LABEL_ANGLE_GAP = 0.04; // Minimum gap in location units (0-1) between labels (~14 degrees)
@@ -2028,9 +2070,6 @@
                         glowColor = 'rgba(45, 90, 74, 0.2)';
                     }
                     label = peerName || 'YOU';
-                } else if (peerName) {
-                    // Named peer - show the name
-                    label = peerName;
                 } else if (isSubscriber && !selectedContract) {
                     fillColor = '#f472b6';  // Pink for subscriber
                     glowColor = 'rgba(244, 114, 182, 0.3)';
@@ -2174,32 +2213,41 @@
                 }
 
                 // Smart label rendering: collect candidates for deferred collision-aware rendering
-                const labelContent = label || (peers.size <= 12 ? (peerName || `#${peer.ip_hash || id.substring(5, 11)}`) : null);
+                // Fallback label: peerName if available, otherwise short peer ID
+                const peerIdShort = id.length > 13 ? id.substring(0, 13) : id;
+                const fallbackLabel = peerName || peerIdShort;
 
                 const isConnectedToSelectedPeer = selectedPeerId && connectedToSelected.has(id);
-                const showLabel = labelContent && (
-                    // Always show GW and YOU
+                // Check if peer has any visible line/arrow connecting it
+                // (match by both anonymized ID and telemetry peer_id)
+                const hasLine = peersWithLines.has(id) || (peer.peer_id && peersWithLines.has(peer.peer_id));
+                const isAffectedByEvent = isHighlighted || isEventHovered || isEventSelected;
+
+                // Determine if label should be shown:
+                // - Gateways: always (use label which is peerName or 'GW')
+                // - YOU: always (use label which is peerName or 'YOU')
+                // - Selected peer: show name
+                // - Peer connected to a visible line/arrow: show name
+                // - Peer affected by event highlight: show name
+                const showLabel = (
                     isGateway || isYou ||
-                    // Show selected peer's name
                     isPeerSelected ||
-                    // Show names of peers connected to selected peer
                     isConnectedToSelectedPeer ||
-                    // Show all named peers when network is small
-                    (peers.size <= 30 && label) ||
-                    // Show all labels (including hashes) when very small
-                    peers.size <= 12
+                    hasLine ||
+                    isAffectedByEvent
                 );
 
                 if (showLabel) {
+                    const labelText = label || fallbackLabel;
                     // Priority: higher = more important = rendered first and wins collision
-                    const priority = (isGateway || isYou) ? 3 : isPeerSelected ? 3 : isConnectedToSelectedPeer ? 1 : 2;
+                    const priority = (isGateway || isYou) ? 3 : isPeerSelected ? 3 : isAffectedByEvent ? 2 : isConnectedToSelectedPeer ? 1 : hasLine ? 1 : 0;
                     pendingLabels.push({
                         location: peer.location,
-                        text: labelContent,
+                        text: labelText,
                         fillColor,
                         priority,
                         isSpecial: isGateway || isYou || isPeerSelected,
-                        isConnected: isConnectedToSelectedPeer,
+                        isConnected: isConnectedToSelectedPeer || hasLine,
                         isYouWithName: isYou && youArePeer && peerName
                     });
                 }
