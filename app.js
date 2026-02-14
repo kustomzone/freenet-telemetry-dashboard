@@ -226,6 +226,26 @@
                 hoverCtx.arc(pos.x, pos.y, 6, 0, Math.PI * 2);
                 hoverCtx.fillStyle = '#fbbf24';
                 hoverCtx.fill();
+
+                // Draw radial label for hovered peers
+                const peerName = peer.ip_hash ? peerNames[peer.ip_hash] : null;
+                const hoverLabel = peerName || (peer.ip_hash ? `#${peer.ip_hash}` : id.substring(0, 10));
+                const angle = peer.location * 2 * Math.PI - Math.PI / 2;
+                const labelR = RADIUS + 18;
+                const lx = CENTER + labelR * Math.cos(angle);
+                const ly = CENTER + labelR * Math.sin(angle);
+                const onLeft = Math.cos(angle) < 0;
+                const rotation = onLeft ? angle + Math.PI : angle;
+
+                hoverCtx.save();
+                hoverCtx.translate(lx, ly);
+                hoverCtx.rotate(rotation);
+                hoverCtx.font = 'bold 10px JetBrains Mono, monospace';
+                hoverCtx.fillStyle = '#fbbf24';
+                hoverCtx.textAlign = onLeft ? 'end' : 'start';
+                hoverCtx.textBaseline = 'middle';
+                hoverCtx.fillText(hoverLabel, 0, 0);
+                hoverCtx.restore();
             });
 
             // Draw message flow arrow if from/to peers exist
@@ -1920,6 +1940,22 @@
                 }
             }
 
+            // Build set of peers connected to the selected peer (for smart label display)
+            const connectedToSelected = new Set();
+            if (selectedPeerId) {
+                connections.forEach(connKey => {
+                    const [id1, id2] = connKey.split('|');
+                    if (id1 === selectedPeerId) connectedToSelected.add(id2);
+                    if (id2 === selectedPeerId) connectedToSelected.add(id1);
+                });
+            }
+
+            // Collect labels in first pass, render with collision avoidance after
+            const pendingLabels = [];
+            const MIN_LABEL_ANGLE_GAP = 0.04; // Minimum gap in location units (0-1) between labels (~14 degrees)
+            const MAX_LABELS = 25; // Cap total labels to avoid clutter
+            const usedLabelSlots = []; // Track locations of rendered labels
+
             // Draw peers
             peers.forEach((peer, id) => {
                 const pos = locationToXY(peer.location);
@@ -2137,79 +2173,83 @@
                     svg.appendChild(stateRect);
                 }
 
-                // Add label for gateway/you/named peers
-                if (label && peers.size <= 15) {
-                    const labelText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                    labelText.setAttribute('x', pos.x);
-                    labelText.setAttribute('y', pos.y + 24);
-                    labelText.setAttribute('fill', fillColor);
-                    labelText.setAttribute('font-size', '9');
-                    labelText.setAttribute('font-family', 'JetBrains Mono, monospace');
-                    labelText.setAttribute('font-weight', '600');
-                    labelText.setAttribute('text-anchor', 'middle');
-                    labelText.textContent = label;
-                    // Make label clickable for user's own peer to edit name
-                    if (isYou && youArePeer && peerName) {
-                        labelText.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
-                        labelText.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
-                    }
-                    svg.appendChild(labelText);
-                }
+                // Smart label rendering: collect candidates for deferred collision-aware rendering
+                const labelContent = label || (peers.size <= 12 ? (peerName || `#${peer.ip_hash || id.substring(5, 11)}`) : null);
 
-                // Label (inside ring - peer hash) - skip if already has outside label
-                const hasOutsideLabel = label && peers.size <= 15;
-                if (peers.size <= 12 && !hasOutsideLabel) {
-                    const angle = peer.location * 2 * Math.PI - Math.PI / 2;
-                    const labelRadius = RADIUS - 30;
-                    const lx = CENTER + labelRadius * Math.cos(angle);
-                    const ly = CENTER + labelRadius * Math.sin(angle);
-
-                    const text = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                    text.setAttribute('x', lx);
-                    text.setAttribute('y', ly);
-                    text.setAttribute('fill', '#8b949e');
-                    text.setAttribute('font-size', '10');
-                    text.setAttribute('font-family', 'JetBrains Mono, monospace');
-                    text.setAttribute('text-anchor', 'middle');
-                    text.setAttribute('dominant-baseline', 'middle');
-                    text.textContent = peerName || `#${peer.ip_hash || id.substring(5, 11)}`;
-                    // Make inside-ring label clickable for user's own peer to edit name
-                    if (isYou && youArePeer && peerName) {
-                        text.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
-                        text.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
-                    }
-                    svg.appendChild(text);
-                }
-
-                // Location label (outside ring) - show peer's location like 0.35
-                // Skip if too close to fixed markers (0, 0.25, 0.5, 0.75) to avoid overlap
-                // Also skip if this peer has a label (YOU/GW) to avoid overlap
-                const fixedMarkers = [0, 0.25, 0.5, 0.75];
-                const minDistance = 0.03;  // Minimum distance from fixed markers
-                const nearFixedMarker = fixedMarkers.some(m =>
-                    Math.abs(peer.location - m) < minDistance ||
-                    Math.abs(peer.location - m + 1) < minDistance ||  // Handle wrap around 0/1
-                    Math.abs(peer.location - m - 1) < minDistance
+                const isConnectedToSelectedPeer = selectedPeerId && connectedToSelected.has(id);
+                const showLabel = labelContent && (
+                    // Always show GW and YOU
+                    isGateway || isYou ||
+                    // Show selected peer's name
+                    isPeerSelected ||
+                    // Show names of peers connected to selected peer
+                    isConnectedToSelectedPeer ||
+                    // Show all named peers when network is small
+                    (peers.size <= 30 && label) ||
+                    // Show all labels (including hashes) when very small
+                    peers.size <= 12
                 );
-                const hasSpecialLabel = label && peers.size <= 15;  // Same condition as label rendering
 
-                if (!nearFixedMarker && !hasSpecialLabel && peers.size <= 20) {
-                    const angle = peer.location * 2 * Math.PI - Math.PI / 2;
-                    const outerRadius = RADIUS + 25;
-                    const ox = CENTER + outerRadius * Math.cos(angle);
-                    const oy = CENTER + outerRadius * Math.sin(angle);
-
-                    const locText = document.createElementNS('http://www.w3.org/2000/svg', 'text');
-                    locText.setAttribute('x', ox);
-                    locText.setAttribute('y', oy);
-                    locText.setAttribute('fill', isNonSubscriber ? '#3a3f47' : '#00d4aa');
-                    locText.setAttribute('font-size', '10');
-                    locText.setAttribute('font-family', 'JetBrains Mono, monospace');
-                    locText.setAttribute('text-anchor', 'middle');
-                    locText.setAttribute('dominant-baseline', 'middle');
-                    locText.textContent = peer.location.toFixed(2);
-                    svg.appendChild(locText);
+                if (showLabel) {
+                    // Priority: higher = more important = rendered first and wins collision
+                    const priority = (isGateway || isYou) ? 3 : isPeerSelected ? 3 : isConnectedToSelectedPeer ? 1 : 2;
+                    pendingLabels.push({
+                        location: peer.location,
+                        text: labelContent,
+                        fillColor,
+                        priority,
+                        isSpecial: isGateway || isYou || isPeerSelected,
+                        isConnected: isConnectedToSelectedPeer,
+                        isYouWithName: isYou && youArePeer && peerName
+                    });
                 }
+            });
+
+            // Render collected labels with collision avoidance
+            // Sort by priority (high first) so important labels win collision slots
+            pendingLabels.sort((a, b) => b.priority - a.priority);
+            let labelCount = 0;
+            pendingLabels.forEach(lbl => {
+                if (labelCount >= MAX_LABELS) return; // Cap total labels
+
+                // Check if this label would overlap with an already-rendered one
+                const tooClose = usedLabelSlots.some(usedLoc => {
+                    const dist = Math.abs(lbl.location - usedLoc);
+                    const wrapDist = Math.min(dist, 1 - dist);
+                    return wrapDist < MIN_LABEL_ANGLE_GAP;
+                });
+                if (tooClose) return; // Skip — would overlap
+                usedLabelSlots.push(lbl.location);
+                labelCount++;
+
+                const angle = lbl.location * 2 * Math.PI - Math.PI / 2;
+                const labelRadius = RADIUS + 18;
+                const lx = CENTER + labelRadius * Math.cos(angle);
+                const ly = CENTER + labelRadius * Math.sin(angle);
+
+                const angleDeg = angle * 180 / Math.PI;
+                const onLeftSide = Math.cos(angle) < 0;
+                const rotation = onLeftSide ? angleDeg + 180 : angleDeg;
+                const anchor = onLeftSide ? 'end' : 'start';
+
+                const radialLabel = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+                radialLabel.setAttribute('x', lx);
+                radialLabel.setAttribute('y', ly);
+                radialLabel.setAttribute('transform', `rotate(${rotation}, ${lx}, ${ly})`);
+                radialLabel.setAttribute('fill', lbl.fillColor);
+                radialLabel.setAttribute('font-size', lbl.isSpecial ? '10' : '9');
+                radialLabel.setAttribute('font-family', 'JetBrains Mono, monospace');
+                radialLabel.setAttribute('font-weight', lbl.isSpecial ? '700' : '500');
+                radialLabel.setAttribute('text-anchor', anchor);
+                radialLabel.setAttribute('dominant-baseline', 'middle');
+                radialLabel.setAttribute('opacity', lbl.isConnected ? '0.8' : '1');
+                radialLabel.textContent = lbl.text;
+
+                if (lbl.isYouWithName) {
+                    radialLabel.setAttribute('style', 'cursor: pointer; text-decoration: underline; text-decoration-style: dotted;');
+                    radialLabel.onclick = (e) => { e.stopPropagation(); showPeerNamingPrompt(); };
+                }
+                svg.appendChild(radialLabel);
             });
 
             // Center stats
