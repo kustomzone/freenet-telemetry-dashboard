@@ -178,35 +178,39 @@ Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate 
 # Event history buffer (last 2 hours, hard-capped)
 MAX_HISTORY_AGE_NS = 2 * 60 * 60 * 1_000_000_000  # 2 hours in nanoseconds
 MAX_HISTORY_EVENTS = 50000  # Limit events kept in memory
-MAX_INITIAL_EVENTS = 5000   # Events sent to clients on connect (subset of history)
+MAX_INITIAL_EVENTS = 20000  # Events sent to clients on connect (subset of history)
 # Hard cap the deque to prevent unbounded growth. Events are appended in
 # approximately chronological order so a maxlen deque naturally keeps the
 # most recent events.
 event_history = deque(maxlen=MAX_HISTORY_EVENTS)  # bounded deque of event dicts
 
 # Event types worth keeping in history for time-travel / contract tracking.
-# High-volume routine events (connect_request_sent, subscribe_request, etc.)
-# are still processed for state tracking and sent to clients in real-time,
-# but excluded from history to keep the buffer useful over hours, not seconds.
-# At ~136 events/sec total, ~3% are "interesting" → ~4 events/sec →
-# 50K buffer ≈ 3.5 hours of interesting events.
+# High-volume routine events (connect_*, subscribe_*, disconnect) are still
+# processed for state tracking and sent to clients in real-time, but excluded
+# from history to keep the buffer useful over hours, not seconds.
+# At ~136 events/sec total, contract ops are ~1-2/sec →
+# 50K buffer ≈ 7+ hours; 20K initial events ≈ 2+ hours.
 HISTORY_EVENT_TYPES = {
-    # Contract operations
+    # Contract operations (get_request excluded — too noisy at ~3/sec)
     "put_request", "put_success",
-    "get_request", "get_success", "get_not_found",
+    "get_success", "get_not_found",
     "update_request", "update_success",
     # Update propagation
     "update_broadcast_received", "update_broadcast_applied",
     "update_broadcast_emitted", "broadcast_emitted",
     "update_broadcast_delivery_summary",
-    # Connections (final state only, not requests)
-    "connect_connected", "disconnect",
-    # Subscriptions (success only, not requests)
-    "subscribe_success", "subscribed",
     # Peer lifecycle
     "peer_startup", "peer_shutdown",
     # Subscription tree
     "seeding_started", "seeding_stopped",
+}
+
+# Broader set sent in the real-time stream — includes subscribe/connect
+# completions and get_request so they appear live but don't flood history.
+REALTIME_EVENT_TYPES = HISTORY_EVENT_TYPES | {
+    "get_request",
+    "connect_connected", "disconnect",
+    "subscribe_success", "subscribed",
 }
 
 # Connected WebSocket clients - now managed via ClientHandler for backpressure
@@ -802,7 +806,14 @@ def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None, 
         parts = event_type.split("_")
         op_type = parts[0] if parts else "other"
 
-    # Create or update transaction - always create if we have a valid tx_id
+    # Only track contract-relevant transactions (put/get/update/broadcast).
+    # Subscribe/connect transactions are too noisy (~40/sec) and would push
+    # contract ops out of the 10K transaction buffer within minutes.
+    TRACKED_TX_OPS = {"put", "get", "update", "broadcast"}
+    if op_type not in TRACKED_TX_OPS and tx_id not in transactions:
+        return  # Skip noisy transaction types
+
+    # Create or update transaction
     if tx_id not in transactions:
         transactions[tx_id] = {
             "op": op_type or "unknown",
@@ -1676,8 +1687,11 @@ def get_history():
     # Sort peer presence by first_seen for historical reconstruction
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
-    # Only send last MAX_INITIAL_TRANSACTIONS
-    tx_list = get_transactions_list()
+    # Only send contract-relevant transactions in initial history.
+    # Subscribe/connect transactions are too noisy and would push out
+    # the contract ops the user actually wants to see in the timeline.
+    HISTORY_TX_OPS = {"put", "get", "update", "broadcast"}
+    tx_list = [tx for tx in get_transactions_list() if tx["op"] in HISTORY_TX_OPS]
     if len(tx_list) > MAX_INITIAL_TRANSACTIONS:
         tx_list = tx_list[-MAX_INITIAL_TRANSACTIONS:]
 
@@ -1821,7 +1835,7 @@ async def tail_log():
                         for scope_log in resource_log.get("scopeLogs", []):
                             for record in scope_log.get("logRecords", []):
                                 event = process_record(record, store_history=True)
-                                if event and event["event_type"] in HISTORY_EVENT_TYPES:
+                                if event and event["event_type"] in REALTIME_EVENT_TYPES:
                                     await buffer_event(event)  # Buffer for batched sending
                 except orjson.JSONDecodeError:
                     continue
