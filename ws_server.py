@@ -1995,8 +1995,10 @@ async def load_initial_state():
     if not TELEMETRY_LOG.exists():
         return
 
-    print("Loading initial state from telemetry log...")
+    print("Loading initial state from telemetry log...", flush=True)
     count = 0
+    history_stored = 0
+    history_eligible = 0
     now_ns = int(time.time() * 1_000_000_000)
     history_cutoff = now_ns - MAX_HISTORY_AGE_NS
 
@@ -2013,20 +2015,25 @@ async def load_initial_state():
                             timestamp_raw = record.get("timeUnixNano", "0")
                             timestamp = int(timestamp_raw) if isinstance(timestamp_raw, str) else timestamp_raw
                             store_in_history = timestamp >= history_cutoff
+                            if store_in_history:
+                                history_eligible += 1
 
+                            pre_len = len(event_history)
                             process_record(record, store_history=store_in_history)
+                            if len(event_history) > pre_len:
+                                history_stored += 1
                             count += 1
             except:
                 continue
 
-    print(f"Loaded {count} records. Found {len(peers)} peers, {len(connections)} connections.")
-    print(f"Event history: {len(event_history)} events in buffer")
-    print(f"Transfer events: {len(transfer_events)} transfers for scatter plot")
-    print(f"Contract states: {len(contract_states)} contracts")
+    print(f"Loaded {count} records. Found {len(peers)} peers, {len(connections)} connections.", flush=True)
+    print(f"History: {history_eligible} eligible, {history_stored} stored, {len(event_history)} in buffer", flush=True)
+    print(f"Transfer events: {len(transfer_events)} transfers for scatter plot", flush=True)
+    print(f"Contract states: {len(contract_states)} contracts", flush=True)
     for ck, ps in list(contract_states.items())[:3]:
-        print(f"  {ck[:20]}... has {len(ps)} peers")
+        print(f"  {ck[:20]}... has {len(ps)} peers", flush=True)
         for pid, state in list(ps.items())[:2]:
-            print(f"    peer_id={pid}: hash={state.get('hash', 'none')[:12]}")
+            print(f"    peer_id={pid}: hash={state.get('hash', 'none')[:12]}", flush=True)
 
 
 async def main():
