@@ -143,11 +143,13 @@ Where <reason> is one of:
 - political (slogans, advocacy, culture-war statements, references to political figures/movements/causes)
 - offensive (slurs, hate speech, explicit sexual terms, threats of violence)
 - religious (religious or ideological proclamations)
+- impersonation (pretending to be a developer, admin, official account, or real person)
+- spam (advertising, URLs, product/crypto promotion)
 
-Names should be nicknames or handles, not statements. The dashboard is a technical tool, not a billboard.
+Names should be nicknames or handles, not statements or claims of authority. The dashboard is a technical tool, not a billboard.
 
-SAFE examples: SpaceCowboy, Node42, BadAss, PizzaLord, hell_yeah, Destroyer, user/admin
-REJECT examples: MAGA2024 (political), TransRights (political), FreePalestine (political), JesusIsLord (religious), the-n-word (offensive)"""
+SAFE examples: SpaceCowboy, Node42, BadAss, PizzaLord, hell_yeah, Destroyer, user/admin, CryptoKitty
+REJECT examples: MAGA2024 (political), TransRights (political), FreePalestine (political), JesusIsLord (religious), Admin (impersonation), FreenetOfficial (impersonation), Ian Clarke (impersonation), BuyBitcoin (spam), visit-my.site (spam)"""
             }, {
                 "role": "user",
                 "content": f"Username: {name}"
@@ -1981,6 +1983,8 @@ async def handle_client(websocket):
                                 "political": "Political slogans and advocacy aren't allowed — use a nickname instead",
                                 "offensive": "That name contains offensive content",
                                 "religious": "Religious proclamations aren't allowed — use a nickname instead",
+                                "impersonation": "That name could be mistaken for an official account or real person",
+                                "spam": "Advertising and promotion aren't allowed",
                             }
                             error_msg = REJECTION_MESSAGES.get(rejection_reason, f"Name not allowed: {rejection_reason}")
                             await handler.send_direct(json_encode({
