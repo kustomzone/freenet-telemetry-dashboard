@@ -1821,7 +1821,7 @@ async def tail_log():
                         for scope_log in resource_log.get("scopeLogs", []):
                             for record in scope_log.get("logRecords", []):
                                 event = process_record(record, store_history=True)
-                                if event:
+                                if event and event["event_type"] in HISTORY_EVENT_TYPES:
                                     await buffer_event(event)  # Buffer for batched sending
                 except orjson.JSONDecodeError:
                     continue

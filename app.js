@@ -3261,7 +3261,7 @@
 
             } else if (data.type === 'event') {
                 // Performance: Limit event history to prevent memory growth
-                const MAX_EVENTS = 10000;
+                const MAX_EVENTS = 50000;
                 if (allEvents.length >= MAX_EVENTS) {
                     // Remove oldest 10% to avoid frequent array shifts
                     allEvents.splice(0, MAX_EVENTS * 0.1);
@@ -3289,7 +3289,7 @@
             } else if (data.type === 'event_batch') {
                 // Server-side batched events (performance optimization)
                 const events = data.events || [];
-                const MAX_EVENTS = 10000;
+                const MAX_EVENTS = 50000;
 
                 // Process all events in batch
                 for (const event of events) {
