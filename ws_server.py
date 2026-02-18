@@ -106,73 +106,72 @@ def save_peer_names():
         print(f"Error saving peer names: {e}")
 
 
-async def sanitize_name(name: str) -> tuple[str, bool]:
+async def sanitize_name(name: str) -> tuple[str | None, str | None]:
     """
-    Use OpenAI to sanitize a peer name, making it safe-for-work.
-    Returns (sanitized_name, was_modified).
+    Use OpenAI to check a peer name is appropriate.
+    Returns (sanitized_name, rejection_reason).
+    - (name, None) if accepted
+    - (None, reason) if rejected
     """
     if not name or len(name) > 30:
-        return name[:30] if name else "", True
+        return name[:30] if name else None, "Name too long" if name else "Empty name"
 
     # Basic sanitization
     name = name.strip()
     if not name:
-        return "", True
+        return None, "Empty name"
 
     if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
         # Without OpenAI, just do basic filtering
-        # Only allow alphanumeric, spaces, and common punctuation including /
         sanitized = re.sub(r'[^\w\s\-_.!/]', '', name)[:20]
-        return sanitized, sanitized != name
+        return sanitized, None
 
     try:
         print(f"[sanitize_name] Checking name: {name!r}")
         client = OpenAI(api_key=OPENAI_API_KEY)
-        # First, check if the name is NSFW
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model="gpt-4o-mini",
             messages=[{
                 "role": "system",
-                "content": """You are a peer name moderator. Respond with ONLY "safe" or "reject".
+                "content": """You are a peer name moderator for a network dashboard.
 
-Reject names that contain:
-- Explicit sexual terms (not innuendo, actual explicit words)
-- Racial slurs or hate speech
-- Direct threats of violence
-- Political slogans, advocacy, or culture-war statements (left or right)
-- Religious or ideological proclamations
-- References to political figures, movements, or causes
+If the name is acceptable, respond with ONLY: safe
+If not, respond with ONLY: reject: <reason>
 
-The dashboard is a technical tool, not a billboard. Names should be nicknames or handles, not statements.
+Where <reason> is one of:
+- political (slogans, advocacy, culture-war statements, references to political figures/movements/causes)
+- offensive (slurs, hate speech, explicit sexual terms, threats of violence)
+- religious (religious or ideological proclamations)
+
+Names should be nicknames or handles, not statements. The dashboard is a technical tool, not a billboard.
 
 SAFE examples: SpaceCowboy, Node42, BadAss, PizzaLord, hell_yeah, Destroyer, user/admin
-REJECT examples: MAGA2024, TransRights, FreePalestine, VoteBlue, JesusIsLord, AllLivesMatter, DefundPolice"""
+REJECT examples: MAGA2024 (political), TransRights (political), FreePalestine (political), JesusIsLord (religious), the-n-word (offensive)"""
             }, {
                 "role": "user",
-                "content": f"Is this username NSFW? Username: {name}"
+                "content": f"Username: {name}"
             }],
-            max_tokens=10,
+            max_tokens=20,
             temperature=0.0
         )
 
         llm_response = response.choices[0].message.content.strip().lower()
         print(f"[sanitize_name] LLM response: {llm_response!r}")
-        is_rejected = "reject" in llm_response
 
-        if not is_rejected:
-            # Safe - return exactly as provided
-            print(f"[sanitize_name] Safe, returning unchanged: {name[:20]!r}")
-            return name[:20], False
+        if llm_response.startswith("reject"):
+            # Parse reason from "reject: political" etc.
+            reason = llm_response.split(":", 1)[1].strip() if ":" in llm_response else "inappropriate"
+            print(f"[sanitize_name] Rejected: {name!r} reason={reason}")
+            return None, reason
         else:
-            # Rejected - political/NSFW/inappropriate
-            print(f"[sanitize_name] Rejected: {name!r}")
-            return None, True
+            print(f"[sanitize_name] Safe, returning: {name[:20]!r}")
+            return name[:20], None
     except Exception as e:
         print(f"[sanitize_name] OpenAI error: {e}")
-        # Fallback to basic filtering - allow common username chars including /
+        # Fallback to basic filtering
         sanitized = re.sub(r'[^\w\s\-_.!/]', '', name)[:20]
-        return sanitized, True
+        return sanitized, None
 
 
 # Event history buffer (last 2 hours, hard-capped)
@@ -1958,8 +1957,8 @@ async def handle_client(websocket):
                             }))
                             continue
 
-                        # Sanitize the name using OpenAI
-                        sanitized, was_modified = await sanitize_name(name)
+                        # Check the name using OpenAI moderation
+                        sanitized, rejection_reason = await sanitize_name(name)
                         if sanitized:
                             peer_names[client_ip_hash] = sanitized
                             save_peer_names()
@@ -1969,22 +1968,25 @@ async def handle_client(websocket):
                                 "type": "peer_name_update",
                                 "ip_hash": client_ip_hash,
                                 "name": sanitized,
-                                "was_modified": was_modified
                             })
                             for c in list(clients):
                                 c.enqueue(update_msg)
-                            # Also send confirmation to this client
                             await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": True,
                                 "name": sanitized,
-                                "was_modified": was_modified
                             }))
                         else:
+                            REJECTION_MESSAGES = {
+                                "political": "Political slogans and advocacy aren't allowed — use a nickname instead",
+                                "offensive": "That name contains offensive content",
+                                "religious": "Religious proclamations aren't allowed — use a nickname instead",
+                            }
+                            error_msg = REJECTION_MESSAGES.get(rejection_reason, f"Name not allowed: {rejection_reason}")
                             await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
-                                "error": "Name rejected — please use a nickname, not a slogan or political statement"
+                                "error": error_msg,
                             }))
                     elif not client_ip_hash:
                         await handler.send_direct(json_encode({
