@@ -177,11 +177,37 @@ Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate 
 
 # Event history buffer (last 2 hours, hard-capped)
 MAX_HISTORY_AGE_NS = 2 * 60 * 60 * 1_000_000_000  # 2 hours in nanoseconds
-MAX_HISTORY_EVENTS = 10000  # Limit events kept in memory and sent to clients on connect
+MAX_HISTORY_EVENTS = 50000  # Limit events kept in memory
+MAX_INITIAL_EVENTS = 5000   # Events sent to clients on connect (subset of history)
 # Hard cap the deque to prevent unbounded growth. Events are appended in
 # approximately chronological order so a maxlen deque naturally keeps the
 # most recent events.
 event_history = deque(maxlen=MAX_HISTORY_EVENTS)  # bounded deque of event dicts
+
+# Event types worth keeping in history for time-travel / contract tracking.
+# High-volume routine events (connect_request_sent, subscribe_request, etc.)
+# are still processed for state tracking and sent to clients in real-time,
+# but excluded from history to keep the buffer useful over hours, not seconds.
+# At ~136 events/sec total, ~3% are "interesting" → ~4 events/sec →
+# 50K buffer ≈ 3.5 hours of interesting events.
+HISTORY_EVENT_TYPES = {
+    # Contract operations
+    "put_request", "put_success",
+    "get_request", "get_success", "get_not_found",
+    "update_request", "update_success",
+    # Update propagation
+    "update_broadcast_received", "update_broadcast_applied",
+    "update_broadcast_emitted", "broadcast_emitted",
+    "update_broadcast_delivery_summary",
+    # Connections (final state only, not requests)
+    "connect_connected", "disconnect",
+    # Subscriptions (success only, not requests)
+    "subscribe_success", "subscribed",
+    # Peer lifecycle
+    "peer_startup", "peer_shutdown",
+    # Subscription tree
+    "seeding_started", "seeding_stopped",
+}
 
 # Connected WebSocket clients - now managed via ClientHandler for backpressure
 clients = set()  # Set of ClientHandler instances
@@ -440,7 +466,8 @@ pending_ops = {}
 
 # Transaction tracking - store full event sequences for timeline lanes
 # tx_id -> {"op": type, "contract": key, "events": [...], "start_ns": ts, "end_ns": ts, "status": "pending"|"success"|"failed"}
-MAX_TRANSACTIONS = 2500  # Keep last N transactions (~2 hours at ~18 tx/min)
+MAX_TRANSACTIONS = 10000  # Keep last N transactions
+MAX_INITIAL_TRANSACTIONS = 2000  # Transactions sent to clients on connect
 transactions = {}  # tx_id -> transaction data
 transaction_order = []  # List of tx_ids in order for pruning
 
@@ -1325,8 +1352,9 @@ def process_record(record, store_history=True):
         # Track this event as part of the transaction (pass body_type for specific connect events)
         track_transaction(tx_id, event_type, timestamp, event["peer_id"], contract_key, body_type)
 
-    # Store in history buffer
-    if store_history:
+    # Store in history buffer (only "interesting" events to keep buffer useful
+    # over hours rather than seconds — see HISTORY_EVENT_TYPES)
+    if store_history and event_type in HISTORY_EVENT_TYPES:
         event_history.append(event)
         # Periodically prune old events
         if len(event_history) % 100 == 0:
@@ -1395,7 +1423,7 @@ def get_subscription_trees(active_peer_ids=None):
     result = {}
 
     # Get all contract keys from both sources
-    all_keys = set(subscriptions.keys()) | set(seeding_state.keys())
+    all_keys = set(subscriptions.keys()) | set(seeding_state.keys()) | set(contract_states.keys())
 
     for contract_key in all_keys:
         # Get broadcast tree data (from broadcast_emitted events)
@@ -1427,8 +1455,12 @@ def get_subscription_trees(active_peer_ids=None):
                 "downstream_count": state.get("downstream_count", 0),
             })
 
+        # Also check if this contract has active state tracking
+        cs_peers = contract_states.get(contract_key, {})
+        active_cs_peers = {pid for pid in cs_peers if active_peer_ids is None or pid in active_peer_ids}
+
         # Only include contracts with actual data from active peers
-        if tree or sub_data["subscribers"] or peers_with_data:
+        if tree or sub_data["subscribers"] or peers_with_data or active_cs_peers:
             result[contract_key] = {
                 "subscribers": list(sub_data["subscribers"]),
                 "tree": tree,
@@ -1438,7 +1470,7 @@ def get_subscription_trees(active_peer_ids=None):
                 # Aggregate stats for quick display
                 "total_downstream": total_downstream,
                 "any_seeding": any_seeding,
-                "peer_count": len(peers_with_data),
+                "peer_count": max(len(peers_with_data), len(active_cs_peers)),
             }
     return result
 
@@ -1535,6 +1567,8 @@ def get_network_state():
         version_counts[v] = version_counts.get(v, 0) + 1
 
     # Filter contract_states to only include currently active peers (from topology)
+    # and cap total contracts to keep payload manageable
+    MAX_INITIAL_CONTRACTS = 50
     filtered_contract_states = {}
     for contract_key, peer_states in contract_states.items():
         filtered_peers = {
@@ -1544,6 +1578,25 @@ def get_network_state():
         }
         if filtered_peers:
             filtered_contract_states[contract_key] = filtered_peers
+
+    # If too many contracts, keep only the ones with most active peers
+    if len(filtered_contract_states) > MAX_INITIAL_CONTRACTS:
+        sorted_contracts = sorted(
+            filtered_contract_states.items(),
+            key=lambda item: len(item[1]),
+            reverse=True
+        )
+        filtered_contract_states = dict(sorted_contracts[:MAX_INITIAL_CONTRACTS])
+
+    # Cap subscription trees similarly
+    all_subscriptions = get_subscription_trees(active_peer_ids)
+    if len(all_subscriptions) > MAX_INITIAL_CONTRACTS:
+        sorted_subs = sorted(
+            all_subscriptions.items(),
+            key=lambda item: item[1].get("peer_count", 0),
+            reverse=True
+        )
+        all_subscriptions = dict(sorted_subs[:MAX_INITIAL_CONTRACTS])
 
     # Include lifecycle data for topology peers first (so tooltips work),
     # then fill remaining slots with other active peers
@@ -1559,11 +1612,16 @@ def get_network_state():
         if pid not in topology_peer_ids
     ][:50 - len(topology_lifecycle)]
 
+    # Only send peer_names for active peers (not all historical names)
+    # peer_names keys use ip_hash() format (6 hex chars), not anonymize_ip()
+    active_ip_hashes = {ip_hash(ip) for ip in active_peer_ips}
+    active_peer_names = {h: n for h, n in peer_names.items() if h in active_ip_hashes}
+
     return {
         "type": "state",
         "peers": peer_list,
         "connections": conn_list,
-        "subscriptions": get_subscription_trees(active_peer_ids),
+        "subscriptions": all_subscriptions,
         "contract_states": filtered_contract_states,
         "op_stats": get_operation_stats(),
         "peer_lifecycle": {
@@ -1572,7 +1630,7 @@ def get_network_state():
             "versions": version_counts,
             "peers": topology_lifecycle + other_lifecycle,
         },
-        "peer_names": peer_names,  # ip_hash -> name
+        "peer_names": active_peer_names,  # ip_hash -> name (active peers only)
         "transfers": transfer_events[-200:],  # Last 200 transfer events for scatter plot
         "propagation": get_propagation_data(),  # State propagation timelines
     }
@@ -1607,26 +1665,30 @@ def get_transactions_list():
 def get_history():
     """Get event history for time-travel feature.
 
-    The deque is bounded by maxlen=MAX_HISTORY_EVENTS and events arrive in
-    roughly chronological order, so we convert to a list directly. The deque
-    automatically discards the oldest events when full.
+    Sends a capped subset of recent events/transactions to limit initial
+    payload size.  The full history remains in memory for real-time streaming.
     """
     prune_old_events()
-    # Convert deque to list directly - events arrive approximately in order.
-    # The bounded deque already caps the count at MAX_HISTORY_EVENTS.
-    events_list = list(event_history)
+    # Send only the most recent MAX_INITIAL_EVENTS to clients on connect
+    all_events = list(event_history)
+    events_list = all_events[-MAX_INITIAL_EVENTS:] if len(all_events) > MAX_INITIAL_EVENTS else all_events
 
     # Sort peer presence by first_seen for historical reconstruction
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
+    # Only send last MAX_INITIAL_TRANSACTIONS
+    tx_list = get_transactions_list()
+    if len(tx_list) > MAX_INITIAL_TRANSACTIONS:
+        tx_list = tx_list[-MAX_INITIAL_TRANSACTIONS:]
+
     return {
         "type": "history",
         "events": events_list,
-        "transactions": get_transactions_list(),
+        "transactions": tx_list,
         "peer_presence": sorted_presence,
         "time_range": {
-            "start": events_list[0]["timestamp"] if events_list else 0,
-            "end": events_list[-1]["timestamp"] if events_list else 0,
+            "start": all_events[0]["timestamp"] if all_events else 0,
+            "end": all_events[-1]["timestamp"] if all_events else 0,
         }
     }
 
