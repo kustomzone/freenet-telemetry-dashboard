@@ -167,7 +167,7 @@ REJECT examples: MAGA2024, TransRights, FreePalestine, VoteBlue, JesusIsLord, Al
         else:
             # Rejected - political/NSFW/inappropriate
             print(f"[sanitize_name] Rejected: {name!r}")
-            return "", True
+            return None, True
     except Exception as e:
         print(f"[sanitize_name] OpenAI error: {e}")
         # Fallback to basic filtering - allow common username chars including /
@@ -1984,7 +1984,7 @@ async def handle_client(websocket):
                             await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
-                                "error": "Invalid name"
+                                "error": "Name rejected — please use a nickname, not a slogan or political statement"
                             }))
                     elif not client_ip_hash:
                         await handler.send_direct(json_encode({
