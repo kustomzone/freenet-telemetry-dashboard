@@ -134,20 +134,20 @@ async def sanitize_name(name: str) -> tuple[str, bool]:
             model="gpt-4o-mini",
             messages=[{
                 "role": "system",
-                "content": """You are an NSFW detector. Respond with ONLY "safe" or "nsfw".
+                "content": """You are a peer name moderator. Respond with ONLY "safe" or "reject".
 
-A name is NSFW only if it contains:
+Reject names that contain:
 - Explicit sexual terms (not innuendo, actual explicit words)
 - Racial slurs or hate speech
 - Direct threats of violence
+- Political slogans, advocacy, or culture-war statements (left or right)
+- Religious or ideological proclamations
+- References to political figures, movements, or causes
 
-These are all SAFE (not NSFW):
-- Normal names, words, phrases
-- Technical terms, paths like "user/admin"
-- Mild words: ass, damn, hell, crap, suck
-- Edgy but not explicit: BadAss, hell_yeah, Destroyer
+The dashboard is a technical tool, not a billboard. Names should be nicknames or handles, not statements.
 
-Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate speech."""
+SAFE examples: SpaceCowboy, Node42, BadAss, PizzaLord, hell_yeah, Destroyer, user/admin
+REJECT examples: MAGA2024, TransRights, FreePalestine, VoteBlue, JesusIsLord, AllLivesMatter, DefundPolice"""
             }, {
                 "role": "user",
                 "content": f"Is this username NSFW? Username: {name}"
@@ -158,16 +158,16 @@ Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate 
 
         llm_response = response.choices[0].message.content.strip().lower()
         print(f"[sanitize_name] LLM response: {llm_response!r}")
-        is_nsfw = "nsfw" in llm_response
+        is_rejected = "reject" in llm_response
 
-        if not is_nsfw:
+        if not is_rejected:
             # Safe - return exactly as provided
             print(f"[sanitize_name] Safe, returning unchanged: {name[:20]!r}")
             return name[:20], False
         else:
-            # NSFW - reject it
-            print(f"[sanitize_name] NSFW detected, rejecting")
-            return "[inappropriate]", True
+            # Rejected - political/NSFW/inappropriate
+            print(f"[sanitize_name] Rejected: {name!r}")
+            return "", True
     except Exception as e:
         print(f"[sanitize_name] OpenAI error: {e}")
         # Fallback to basic filtering - allow common username chars including /
