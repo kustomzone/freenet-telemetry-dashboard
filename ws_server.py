@@ -989,6 +989,7 @@ def process_record(record, store_history=True):
         if peer_ip and is_public_ip(peer_ip):
             transfer_event = {
                 "type": "transfer",
+                "event_type": "transfer_completed",
                 "timestamp": timestamp,
                 "peer_id": anonymize_ip(peer_ip),
                 "direction": body.get("direction", "Send"),
@@ -1841,7 +1842,8 @@ async def tail_log():
                 except orjson.JSONDecodeError:
                     continue
                 except Exception as e:
-                    print(f"Error processing line: {e}")
+                    import traceback
+                    print(f"Error processing line: {e}\n{traceback.format_exc()}")
 
 
 GATEWAY_IP = "5.9.111.215"
