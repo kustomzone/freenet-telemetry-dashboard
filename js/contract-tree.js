@@ -525,6 +525,7 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
     const nodeCount = layout.size;
     const NODE_RADIUS = nodeCount > 60 ? 4 : nodeCount > 30 ? 6 : 8;
     const SHOW_LABELS = nodeCount <= 40;
+    const labelCandidates = [];
     const peerStates = state.contractData[state.selectedContract]?.peer_states || [];
 
     for (const [nodeId, pos] of layout) {
@@ -615,7 +616,7 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
             ctx.restore();
         }
 
-        // Pass 4: Label (only for small trees or special nodes)
+        // Collect label candidate (rendered in a separate pass with collision avoidance)
         const peerName = peer?.ip_hash ? state.peerNames[peer.ip_hash] : null;
         const isSpecial = isYou || isGateway || isPeerSelected || peerName;
         if (SHOW_LABELS || isSpecial) {
@@ -626,12 +627,9 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
             else if (SHOW_LABELS) labelText = nodeId.substring(0, 6);
 
             if (labelText) {
-                ctx.save();
-                ctx.font = `${NODE_RADIUS >= 6 ? 9 : 7}px "JetBrains Mono", monospace`;
-                ctx.fillStyle = 'rgba(230, 237, 243, 0.7)';
-                ctx.textAlign = 'center';
-                ctx.fillText(labelText, pos.x, pos.y + NODE_RADIUS + 10);
-                ctx.restore();
+                // Priority: selected=4, you=3, gateway=2, named=1, default=0
+                const priority = isPeerSelected ? 4 : isYou ? 3 : isGateway ? 2 : peerName ? 1 : 0;
+                labelCandidates.push({ text: labelText, x: pos.x, y: pos.y + NODE_RADIUS + 10, priority });
             }
         }
 
@@ -649,6 +647,48 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
             id: nodeId, peer, isYou, peerName, tooltipText
         });
     }
+
+    // Pass 4b: Render labels with collision avoidance
+    const fontSize = NODE_RADIUS >= 6 ? 9 : 7;
+    ctx.save();
+    ctx.font = `${fontSize}px "JetBrains Mono", monospace`;
+
+    // Sort by priority descending so important labels get placed first
+    labelCandidates.sort((a, b) => b.priority - a.priority);
+
+    const placedBoxes = [];
+    const LABEL_PAD_X = 2;
+    const LABEL_PAD_Y = 1;
+
+    for (const lbl of labelCandidates) {
+        const metrics = ctx.measureText(lbl.text);
+        const w = metrics.width + LABEL_PAD_X * 2;
+        const h = fontSize + LABEL_PAD_Y * 2;
+        const box = {
+            x1: lbl.x - w / 2,
+            y1: lbl.y - h + LABEL_PAD_Y,
+            x2: lbl.x + w / 2,
+            y2: lbl.y + LABEL_PAD_Y
+        };
+
+        // Check overlap with already-placed labels
+        let overlaps = false;
+        for (const placed of placedBoxes) {
+            if (box.x1 < placed.x2 && box.x2 > placed.x1 &&
+                box.y1 < placed.y2 && box.y2 > placed.y1) {
+                overlaps = true;
+                break;
+            }
+        }
+
+        if (!overlaps) {
+            ctx.fillStyle = 'rgba(230, 237, 243, 0.7)';
+            ctx.textAlign = 'center';
+            ctx.fillText(lbl.text, lbl.x, lbl.y);
+            placedBoxes.push(box);
+        }
+    }
+    ctx.restore();
 
     // Pass 5: Disconnected segment indicators
     if (segments.length > 1) {
