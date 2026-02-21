@@ -310,29 +310,18 @@ function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
     const segments = findSegments(roots, children, allNodes);
     const layout = new Map();
 
-    const PADDING_X = 40;
-    const PADDING_TOP = 50;
-    const PADDING_BOTTOM = 30;
-    const SEGMENT_GAP = 50;
-    const LAYER_HEIGHT = 70;
+    const PADDING_X = 30;
+    const PADDING_TOP = 30;
+    const PADDING_BOTTOM = 20;
+    const SEGMENT_GAP = 30;
 
     // First pass: compute max depth for each segment and subtree widths
     const segmentLayouts = [];
 
     for (let si = 0; si < segments.length; si++) {
         const segNodes = new Set(segments[si]);
-        // Find roots within this segment
-        const segRoots = segments[si].filter(n => {
-            // A segment root is a node whose parent is not in this segment
-            const kids = children.get(n) || [];
-            // Check: is this node a root or has parent outside segment?
-            return roots.includes(n) || !segNodes.has([...allNodes].find(p => {
-                const pKids = children.get(p) || [];
-                return pKids.includes(n) && segNodes.has(p);
-            }));
-        });
 
-        // Simpler: segment roots = nodes in segment that have no parent in segment
+        // Segment roots = nodes in segment with no parent in the same segment
         const actualRoots = segments[si].filter(n => {
             for (const [parent, kids] of children) {
                 if (kids.includes(n) && segNodes.has(parent)) return false;
@@ -380,7 +369,6 @@ function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
             computeWidth(r);
         }
 
-        // Total width for this segment
         let totalWidth = 0;
         for (const r of actualRoots) {
             totalWidth += subtreeWidth.get(r) || 1;
@@ -400,18 +388,21 @@ function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
     // Compute overall max depth for consistent layer height
     const overallMaxDepth = Math.max(1, ...segmentLayouts.map(s => s.maxDepth));
 
-    // Compute available height and adjust layer height
-    const availableHeight = canvasHeight - PADDING_TOP - PADDING_BOTTOM;
-    const layerH = Math.min(LAYER_HEIGHT, availableHeight / (overallMaxDepth + 1));
-
-    // Compute total width units across all segments
+    // Adaptive spacing: scale to fit canvas
     const totalWidthUnits = segmentLayouts.reduce((sum, s) => sum + s.totalWidth, 0);
-    const availableWidth = canvasWidth - 2 * PADDING_X - (segments.length - 1) * SEGMENT_GAP;
-    const unitWidth = Math.min(60, availableWidth / Math.max(1, totalWidthUnits));
+    const availableWidth = canvasWidth - 2 * PADDING_X - Math.max(0, segments.length - 1) * SEGMENT_GAP;
+    const availableHeight = canvasHeight - PADDING_TOP - PADDING_BOTTOM;
 
-    // Assign x positions for each segment
-    let segmentX = PADDING_X;
+    // Clamp unit width and layer height so tree fits
+    const unitWidth = Math.max(8, Math.min(50, availableWidth / Math.max(1, totalWidthUnits)));
+    const layerH = Math.max(20, Math.min(55, availableHeight / (overallMaxDepth + 1)));
 
+    // Center the tree horizontally
+    const totalTreeWidth = totalWidthUnits * unitWidth + Math.max(0, segments.length - 1) * SEGMENT_GAP;
+    const offsetX = PADDING_X + Math.max(0, (availableWidth - totalTreeWidth + Math.max(0, segments.length - 1) * SEGMENT_GAP) / 2);
+
+    // Assign positions
+    let segmentX = offsetX;
     for (const seg of segmentLayouts) {
         const segWidth = seg.totalWidth * unitWidth;
 
@@ -440,7 +431,6 @@ function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
             assignPositions(root, rx, rx + rootW);
             rx += rootW;
         }
-
         segmentX += segWidth + SEGMENT_GAP;
     }
 
@@ -531,7 +521,10 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
     ctx.restore();
 
     // Pass 3: Nodes
-    const NODE_RADIUS = 8;
+    // Scale node size based on node count
+    const nodeCount = layout.size;
+    const NODE_RADIUS = nodeCount > 60 ? 4 : nodeCount > 30 ? 6 : 8;
+    const SHOW_LABELS = nodeCount <= 40;
     const peerStates = state.contractData[state.selectedContract]?.peer_states || [];
 
     for (const [nodeId, pos] of layout) {
@@ -569,13 +562,15 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
             if (peerState?.hash) stateHash = peerState.hash;
         }
 
-        // Glow
-        ctx.save();
-        ctx.beginPath();
-        ctx.arc(pos.x, pos.y, NODE_RADIUS + 4, 0, Math.PI * 2);
-        ctx.fillStyle = glowColor;
-        ctx.fill();
-        ctx.restore();
+        // Glow (skip for very small nodes)
+        if (NODE_RADIUS >= 6) {
+            ctx.save();
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, NODE_RADIUS + 3, 0, Math.PI * 2);
+            ctx.fillStyle = glowColor;
+            ctx.fill();
+            ctx.restore();
+        }
 
         // Main circle
         ctx.beginPath();
@@ -598,8 +593,9 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
             }
         }
 
-        // Root star marker
-        if (isRoot && (isSeeding || !parentOf.has(nodeId))) {
+        // Root star marker (only show if tree has actual edges, otherwise all are roots)
+        const treeHasEdges = parentOf.size > 0;
+        if (isRoot && treeHasEdges && (isSeeding || !parentOf.has(nodeId))) {
             ctx.save();
             ctx.font = '10px sans-serif';
             ctx.fillStyle = '#fbbf24';
@@ -619,20 +615,25 @@ function drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, c
             ctx.restore();
         }
 
-        // Pass 4: Label
+        // Pass 4: Label (only for small trees or special nodes)
         const peerName = peer?.ip_hash ? state.peerNames[peer.ip_hash] : null;
-        let labelText = '';
-        if (isYou) labelText = peerName || 'YOU';
-        else if (isGateway) labelText = peerName || 'GW';
-        else if (peerName) labelText = peerName;
-        else labelText = nodeId.substring(0, 6);
+        const isSpecial = isYou || isGateway || isPeerSelected || peerName;
+        if (SHOW_LABELS || isSpecial) {
+            let labelText = '';
+            if (isYou) labelText = peerName || 'YOU';
+            else if (isGateway) labelText = peerName || 'GW';
+            else if (peerName) labelText = peerName;
+            else if (SHOW_LABELS) labelText = nodeId.substring(0, 6);
 
-        ctx.save();
-        ctx.font = '9px "JetBrains Mono", monospace';
-        ctx.fillStyle = 'rgba(230, 237, 243, 0.7)';
-        ctx.textAlign = 'center';
-        ctx.fillText(labelText, pos.x, pos.y + NODE_RADIUS + 12);
-        ctx.restore();
+            if (labelText) {
+                ctx.save();
+                ctx.font = `${NODE_RADIUS >= 6 ? 9 : 7}px "JetBrains Mono", monospace`;
+                ctx.fillStyle = 'rgba(230, 237, 243, 0.7)';
+                ctx.textAlign = 'center';
+                ctx.fillText(labelText, pos.x, pos.y + NODE_RADIUS + 10);
+                ctx.restore();
+            }
+        }
 
         // Build hit target
         const peerType = isGateway ? ' (Gateway)' : isYou ? ' (You)' : '';
