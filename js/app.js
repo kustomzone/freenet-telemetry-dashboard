@@ -145,6 +145,8 @@ function _updateViewImpl() {
             const treeStats = getTreeStats(state.selectedContract, peers);
             if (treeStats.nodeCount === 0) {
                 topoSubtitle.textContent = 'No subscription tree data for this contract.';
+            } else if (treeStats.isFlat) {
+                topoSubtitle.textContent = `${treeStats.nodeCount} peers with state (no tree structure available)`;
             } else {
                 let parts = [`${treeStats.nodeCount} nodes`, `depth ${treeStats.depth}`];
                 if (treeStats.segments > 1) parts.push(`${treeStats.segments} segments (disconnected)`);

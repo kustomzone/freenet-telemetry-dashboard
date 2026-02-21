@@ -85,7 +85,7 @@ function buildTree(contractKey, peers) {
             }
         }
     } else if (Object.keys(broadcastTree).length > 0) {
-        // Fallback: use broadcast tree
+        // Fallback 1: use broadcast tree
         for (const [fromId, toIds] of Object.entries(broadcastTree)) {
             const parentId = peerIdToAnonId.get(fromId) || fromId;
             allNodes.add(parentId);
@@ -101,6 +101,16 @@ function buildTree(contractKey, peers) {
                 if (!parentOf.has(childId)) {
                     parentOf.set(childId, parentId);
                 }
+            }
+        }
+    } else {
+        // Fallback 2: use contractStates (peers with state hashes) as flat nodes
+        const csData = state.contractStates[contractKey] || {};
+        for (const peerId of Object.keys(csData)) {
+            const nodeId = peerIdToAnonId.get(peerId) || peerId;
+            if (peers.has(nodeId)) {
+                allNodes.add(nodeId);
+                if (!children.has(nodeId)) children.set(nodeId, []);
             }
         }
     }
@@ -180,10 +190,53 @@ function findSegments(roots, children, allNodes) {
 // ============================================================================
 
 /**
+ * Arrange flat nodes (no edges) in a grid layout.
+ */
+function layoutFlat(allNodes, canvasWidth, canvasHeight) {
+    const layout = new Map();
+    const nodes = [...allNodes];
+    const PADDING_X = 60;
+    const PADDING_TOP = 60;
+    const SPACING_X = 80;
+    const SPACING_Y = 70;
+
+    const cols = Math.max(1, Math.floor((canvasWidth - 2 * PADDING_X) / SPACING_X));
+    const rows = Math.ceil(nodes.length / cols);
+
+    // Center the grid
+    const gridWidth = Math.min(nodes.length, cols) * SPACING_X;
+    const startX = (canvasWidth - gridWidth) / 2 + SPACING_X / 2;
+
+    for (let i = 0; i < nodes.length; i++) {
+        const col = i % cols;
+        const row = Math.floor(i / cols);
+        layout.set(nodes[i], {
+            x: startX + col * SPACING_X,
+            y: PADDING_TOP + row * SPACING_Y,
+            depth: 0,
+            segmentIndex: 0
+        });
+    }
+
+    return {
+        layout,
+        segments: [{ nodes: allNodes, segmentIndex: 0, roots: nodes, depth: new Map(), maxDepth: 0, subtreeWidth: new Map(), totalWidth: nodes.length }],
+        overallMaxDepth: 0,
+        isFlat: true
+    };
+}
+
+/**
  * Assign (x, y) positions using BFS layering with subtree width allocation.
  * Returns Map<nodeId, {x, y, depth, segmentIndex}>
  */
 function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
+    // Detect "flat" mode: all nodes are roots with no children (no tree structure)
+    const hasEdges = [...children.values()].some(kids => kids.length > 0);
+    if (!hasEdges && allNodes.size > 0) {
+        return layoutFlat(allNodes, canvasWidth, canvasHeight);
+    }
+
     const segments = findSegments(roots, children, allNodes);
     const layout = new Map();
 
@@ -785,17 +838,18 @@ export function updateContractTree(container, peers, subscriberPeerIds, callback
  */
 export function getTreeStats(contractKey, peers) {
     if (!contractKey || !state.contractData[contractKey]) {
-        return { nodeCount: 0, depth: 0, segments: 0 };
+        return { nodeCount: 0, depth: 0, segments: 0, isFlat: false };
     }
     const treeData = buildTree(contractKey, peers);
     if (treeData.allNodes.size === 0) {
-        return { nodeCount: 0, depth: 0, segments: 0 };
+        return { nodeCount: 0, depth: 0, segments: 0, isFlat: false };
     }
     const layoutData = layoutTree(treeData.roots, treeData.children, treeData.allNodes, 600, 480);
     return {
         nodeCount: treeData.allNodes.size,
         depth: layoutData.overallMaxDepth + 1,
-        segments: layoutData.segments.length
+        segments: layoutData.segments.length,
+        isFlat: !!layoutData.isFlat
     };
 }
 
