@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, getSubscriptionTreeInfo } from './topology.js';
+import { updateRingSVG } from './topology.js';
 import {
     renderRuler, renderDetailTimeline, renderTimeline,
     updatePlayhead, updateWindowLabel, setupTimeline,
@@ -31,6 +31,7 @@ import {
     reconstructStateAtTime
 } from './websocket.js';
 import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferChart } from './transfers.js';
+import { updateContractTree, getTreeStats, resetContractTree } from './contract-tree.js';
 
 // ============================================================================
 // Main Application Functions
@@ -95,11 +96,43 @@ function _updateViewImpl() {
         }
     }
 
-    // Update ring visualization
-    updateRingSVG(peers, connections, subscriberPeerIds, {
-        selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL),
-        goToTime: goToTime
-    });
+    // Panel swap: show tree when contract selected, ring otherwise
+    const ringContainer = document.getElementById('ring-container');
+    const treeContainer = document.getElementById('tree-container');
+    const ringLegend = document.getElementById('ring-legend');
+    const treeLegend = document.getElementById('tree-legend');
+    const topoPanelTitle = document.querySelector('.panel-title');
+    const overlayIds = ['dist-chart-container', 'transfer-chart-container', 'transfer-backdrop', 'transfer-tooltip'];
+
+    if (state.selectedContract && state.contractData[state.selectedContract]) {
+        // Show contract tree, hide ring + overlays
+        ringContainer.style.display = 'none';
+        treeContainer.style.display = 'flex';
+        if (ringLegend) ringLegend.style.display = 'none';
+        if (treeLegend) treeLegend.style.display = 'flex';
+        overlayIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+        const shortKey = state.contractData[state.selectedContract].short_key || state.selectedContract.substring(0, 12);
+        if (topoPanelTitle) topoPanelTitle.textContent = 'Contract Topology: ' + shortKey;
+
+        updateContractTree(treeContainer, peers, subscriberPeerIds, {
+            selectPeer: (id) => selectPeer(id, updateView, updateURL),
+            goToTime: goToTime
+        });
+    } else {
+        // Show ring, hide tree
+        ringContainer.style.display = '';
+        treeContainer.style.display = 'none';
+        if (ringLegend) ringLegend.style.display = 'flex';
+        if (treeLegend) treeLegend.style.display = 'none';
+        overlayIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+        if (topoPanelTitle) topoPanelTitle.textContent = 'Network Topology';
+        resetContractTree();
+
+        updateRingSVG(peers, connections, subscriberPeerIds, {
+            selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL),
+            goToTime: goToTime
+        });
+    }
 
     // Update stats
     document.getElementById('peer-count').textContent = peers.size;
@@ -109,23 +142,13 @@ function _updateViewImpl() {
     const topoSubtitle = document.querySelector('.panel-subtitle');
     if (topoSubtitle) {
         if (state.selectedContract && state.contractData[state.selectedContract]) {
-            const subData = state.contractData[state.selectedContract];
-            const peerStates = subData.peer_states || [];
-            const totalSubs = peerStates.length;
-            const visibleSubs = [...subscriberPeerIds].filter(id => peers.has(id)).length;
-
-            const treeInfo = getSubscriptionTreeInfo(state.selectedContract, peers, connections);
-            const proximityCount = treeInfo.proximityLinks.length;
-
-            if (totalSubs === 0) {
-                topoSubtitle.textContent = 'No peers subscribed to this contract.';
+            const treeStats = getTreeStats(state.selectedContract, peers);
+            if (treeStats.nodeCount === 0) {
+                topoSubtitle.textContent = 'No subscription tree data for this contract.';
             } else {
-                let parts = [`${visibleSubs} subscribed (pink)`];
-                const linkParts = [];
-                if (treeInfo.nodes > 0) linkParts.push('pink = subscription');
-                if (proximityCount > 0) linkParts.push('cyan = proximity');
-                if (linkParts.length > 0) parts.push(`Links: ${linkParts.join(', ')}`);
-                topoSubtitle.textContent = parts.join(' . ');
+                let parts = [`${treeStats.nodeCount} nodes`, `depth ${treeStats.depth}`];
+                if (treeStats.segments > 1) parts.push(`${treeStats.segments} segments (disconnected)`);
+                topoSubtitle.textContent = parts.join(' \u00b7 ');
             }
         } else {
             topoSubtitle.textContent = 'Peers arranged by their network location (0.0-1.0). Click a peer to filter events.';

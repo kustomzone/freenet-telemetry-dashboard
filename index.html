@@ -53,7 +53,7 @@
                         <span class="panel-title">Network Topology</span>
                         <span class="panel-time-label" id="topology-time-label">Live</span>
                     </div>
-                    <div class="topology-legend-inline">
+                    <div class="topology-legend-inline" id="ring-legend">
                         <span class="legend-item"><span class="legend-marker gateway"></span>Gateway</span>
                         <span class="legend-item"><span class="legend-marker peer"></span>Peer</span>
                         <span class="legend-item"><span class="legend-marker subscriber"></span>Subscriber</span>
@@ -62,11 +62,20 @@
                         <span class="legend-item"><span class="legend-line message"></span>Event (colored by type)</span>
                         <span class="legend-item find-my-peer" id="find-my-peer-btn" style="display: none;" onclick="findMyPeer()"><span class="legend-marker you"></span><a href="#" onclick="event.preventDefault()">Find My Peer</a></span>
                     </div>
+                    <div class="topology-legend-inline" id="tree-legend" style="display: none;">
+                        <span class="legend-item"><span class="legend-marker tree-root"></span>Root (seeder)</span>
+                        <span class="legend-item"><span class="legend-marker subscriber"></span>Subscriber</span>
+                        <span class="legend-item"><span class="legend-marker gateway"></span>Gateway</span>
+                        <span class="legend-item"><span class="legend-marker you"></span>You</span>
+                        <span class="legend-item"><span class="legend-line tree-disconnected"></span>Disconnected</span>
+                    </div>
                     <div class="ring-container" id="ring-container">
                         <div class="empty-state">
                             <div class="empty-state-icon">&#9673;</div>
                             <div>Loading network state...</div>
                         </div>
+                    </div>
+                    <div class="tree-container" id="tree-container" style="display: none;">
                     </div>
                     <!-- Overlay charts (positioned relative to panel) -->
                     <div class="transfer-backdrop" id="transfer-backdrop"></div>

@@ -247,3 +247,33 @@
         .find-my-peer a:hover {
             text-decoration: underline;
         }
+
+        /* Contract Tree Visualization */
+        .tree-container {
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 480px;
+            position: relative;
+        }
+
+        .legend-marker.tree-root {
+            background: #f472b6;
+            position: relative;
+        }
+        .legend-marker.tree-root::after {
+            content: '\2605';
+            position: absolute;
+            top: -5px;
+            left: 50%;
+            transform: translateX(-50%);
+            font-size: 7px;
+            color: #fbbf24;
+        }
+
+        .legend-line.tree-disconnected {
+            width: 20px;
+            height: 3px;
+            border: 1px dashed rgba(248, 113, 113, 0.6);
+            background: none;
+        }
