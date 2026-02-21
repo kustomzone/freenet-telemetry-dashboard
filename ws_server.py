@@ -1580,7 +1580,7 @@ def get_network_state():
 
     # Filter contract_states to only include currently active peers (from topology)
     # and cap total contracts to keep payload manageable
-    MAX_INITIAL_CONTRACTS = 50
+    MAX_INITIAL_CONTRACTS = 500
     filtered_contract_states = {}
     for contract_key, peer_states in contract_states.items():
         filtered_peers = {
@@ -1605,7 +1605,7 @@ def get_network_state():
     if len(all_subscriptions) > MAX_INITIAL_CONTRACTS:
         sorted_subs = sorted(
             all_subscriptions.items(),
-            key=lambda item: item[1].get("peer_count", 0),
+            key=lambda item: max(item[1].get("peer_count", 0), len(item[1].get("subscribers", []))),
             reverse=True
         )
         all_subscriptions = dict(sorted_subs[:MAX_INITIAL_CONTRACTS])
