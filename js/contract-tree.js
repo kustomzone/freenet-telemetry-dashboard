@@ -29,10 +29,11 @@ let lastTreeData = null;
 // ============================================================================
 
 /**
- * Build tree structure from contract peer_states or broadcast tree.
+ * Build tree structure from contract peer_states, broadcast tree, or
+ * inferred from subscribers + network connections.
  * Returns { roots[], children: Map<id, id[]>, allNodes: Set, parentOf: Map }
  */
-function buildTree(contractKey, peers) {
+function buildTree(contractKey, peers, connections) {
     const subData = state.contractData[contractKey];
     if (!subData) return { roots: [], children: new Map(), allNodes: new Set(), parentOf: new Map() };
 
@@ -41,12 +42,8 @@ function buildTree(contractKey, peers) {
 
     // Build peer_id <-> anonId mapping
     const peerIdToAnonId = new Map();
-    const anonIdToPeerId = new Map();
     for (const [anonId, p] of peers) {
-        if (p.peer_id) {
-            peerIdToAnonId.set(p.peer_id, anonId);
-            anonIdToPeerId.set(anonId, p.peer_id);
-        }
+        if (p.peer_id) peerIdToAnonId.set(p.peer_id, anonId);
     }
 
     const children = new Map();  // parent -> [children]
@@ -104,14 +101,28 @@ function buildTree(contractKey, peers) {
             }
         }
     } else {
-        // Fallback 2: use contractStates (peers with state hashes) as flat nodes
+        // Fallback 2: use subscribers list (anonymized IPs = topology peer IDs)
+        // plus contractStates peer_ids, and infer tree from network connections
+        const subscribers = subData.subscribers || [];
+        for (const subId of subscribers) {
+            if (peers.has(subId)) {
+                allNodes.add(subId);
+                if (!children.has(subId)) children.set(subId, []);
+            }
+        }
+        // Also add contractStates peers (may have peer_id not in subscribers)
         const csData = state.contractStates[contractKey] || {};
         for (const peerId of Object.keys(csData)) {
             const nodeId = peerIdToAnonId.get(peerId) || peerId;
-            if (peers.has(nodeId)) {
+            if (peers.has(nodeId) && !allNodes.has(nodeId)) {
                 allNodes.add(nodeId);
                 if (!children.has(nodeId)) children.set(nodeId, []);
             }
+        }
+
+        // Infer tree edges from network connections between subscribers
+        if (allNodes.size > 1 && connections) {
+            inferTreeFromConnections(allNodes, children, parentOf, peers, contractKey, connections);
         }
     }
 
@@ -123,12 +134,12 @@ function buildTree(contractKey, peers) {
         }
     }
 
-    // Sort roots: seeding peers first, then by proximity to contract location
+    // Sort roots by proximity to contract location (closest = "true root")
     const contractLoc = contractKeyToLocation(contractKey);
     roots.sort((a, b) => {
         const peerA = peers.get(a);
         const peerB = peers.get(b);
-        // Seeding peers first
+        // Seeding peers first (when peer_states available)
         const psA = peerStates.find(ps => (peerIdToAnonId.get(ps.peer_id) || ps.peer_id) === a);
         const psB = peerStates.find(ps => (peerIdToAnonId.get(ps.peer_id) || ps.peer_id) === b);
         const seedA = psA?.is_seeding ? 1 : 0;
@@ -144,6 +155,65 @@ function buildTree(contractKey, peers) {
     });
 
     return { roots, children, allNodes, parentOf };
+}
+
+/**
+ * Build a spanning tree from network connections between subscriber nodes.
+ * Uses BFS from the node closest to contract location (approximate root).
+ * This gives a reasonable tree approximation when no explicit tree data exists.
+ */
+function inferTreeFromConnections(allNodes, children, parentOf, peers, contractKey, connections) {
+    // Build adjacency among subscriber nodes only
+    const adj = new Map();
+    for (const nodeId of allNodes) {
+        adj.set(nodeId, []);
+    }
+    connections.forEach(connKey => {
+        const [id1, id2] = connKey.split('|');
+        if (allNodes.has(id1) && allNodes.has(id2)) {
+            adj.get(id1).push(id2);
+            adj.get(id2).push(id1);
+        }
+    });
+
+    // Find the best root: node closest to contract location
+    const contractLoc = contractKeyToLocation(contractKey);
+    let bestRoot = [...allNodes][0];
+    if (contractLoc !== null) {
+        let bestDist = Infinity;
+        for (const nodeId of allNodes) {
+            const peer = peers.get(nodeId);
+            if (!peer) continue;
+            const dist = Math.min(
+                Math.abs(peer.location - contractLoc),
+                1 - Math.abs(peer.location - contractLoc)
+            );
+            if (dist < bestDist) {
+                bestDist = dist;
+                bestRoot = nodeId;
+            }
+        }
+    }
+
+    // BFS from root to build spanning tree
+    const visited = new Set();
+    const queue = [bestRoot];
+    visited.add(bestRoot);
+
+    while (queue.length > 0) {
+        const node = queue.shift();
+        const neighbors = adj.get(node) || [];
+        for (const neighbor of neighbors) {
+            if (visited.has(neighbor)) continue;
+            visited.add(neighbor);
+            // Add tree edge: node -> neighbor
+            if (!children.get(node).includes(neighbor)) {
+                children.get(node).push(neighbor);
+            }
+            parentOf.set(neighbor, node);
+            queue.push(neighbor);
+        }
+    }
 }
 
 // ============================================================================
@@ -774,7 +844,7 @@ export function triggerTreeMessageAnim(fromId, toId, eventType) {
 // Main entry point
 // ============================================================================
 
-export function updateContractTree(container, peers, subscriberPeerIds, callbacks) {
+export function updateContractTree(container, peers, connections, subscriberPeerIds, callbacks) {
     treeCallbacks = callbacks;
 
     const contractKey = state.selectedContract;
@@ -783,7 +853,8 @@ export function updateContractTree(container, peers, subscriberPeerIds, callback
     // Compute a cache key from contract data to avoid unnecessary re-layouts
     const subData = state.contractData[contractKey];
     const peerStates = subData.peer_states || [];
-    const cacheKey = `${contractKey}:${peerStates.length}:${Object.keys(subData.tree || {}).length}:${peers.size}`;
+    const subs = subData.subscribers || [];
+    const cacheKey = `${contractKey}:${peerStates.length}:${Object.keys(subData.tree || {}).length}:${subs.length}:${peers.size}`;
 
     const canvas = getOrCreateTreeCanvas(container);
     const dpr = window.devicePixelRatio || 1;
@@ -809,7 +880,7 @@ export function updateContractTree(container, peers, subscriberPeerIds, callback
         treeData = lastTreeData;
         layoutData = lastLayout;
     } else {
-        treeData = buildTree(contractKey, peers);
+        treeData = buildTree(contractKey, peers, connections);
         layoutData = layoutTree(treeData.roots, treeData.children, treeData.allNodes, displayWidth, displayHeight);
         lastTreeKey = cacheKey;
         lastLayout = layoutData;
@@ -836,11 +907,11 @@ export function updateContractTree(container, peers, subscriberPeerIds, callback
 /**
  * Get tree stats for subtitle display.
  */
-export function getTreeStats(contractKey, peers) {
+export function getTreeStats(contractKey, peers, connections) {
     if (!contractKey || !state.contractData[contractKey]) {
         return { nodeCount: 0, depth: 0, segments: 0, isFlat: false };
     }
-    const treeData = buildTree(contractKey, peers);
+    const treeData = buildTree(contractKey, peers, connections);
     if (treeData.allNodes.size === 0) {
         return { nodeCount: 0, depth: 0, segments: 0, isFlat: false };
     }

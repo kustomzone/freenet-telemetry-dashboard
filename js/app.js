@@ -114,7 +114,7 @@ function _updateViewImpl() {
         const shortKey = state.contractData[state.selectedContract].short_key || state.selectedContract.substring(0, 12);
         if (topoPanelTitle) topoPanelTitle.textContent = 'Contract Topology: ' + shortKey;
 
-        updateContractTree(treeContainer, peers, subscriberPeerIds, {
+        updateContractTree(treeContainer, peers, connections, subscriberPeerIds, {
             selectPeer: (id) => selectPeer(id, updateView, updateURL),
             goToTime: goToTime
         });
@@ -142,7 +142,7 @@ function _updateViewImpl() {
     const topoSubtitle = document.querySelector('.panel-subtitle');
     if (topoSubtitle) {
         if (state.selectedContract && state.contractData[state.selectedContract]) {
-            const treeStats = getTreeStats(state.selectedContract, peers);
+            const treeStats = getTreeStats(state.selectedContract, peers, connections);
             if (treeStats.nodeCount === 0) {
                 topoSubtitle.textContent = 'No subscription tree data for this contract.';
             } else if (treeStats.isFlat) {
