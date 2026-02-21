@@ -252,8 +252,10 @@
         .tree-container {
             display: flex;
             justify-content: center;
-            align-items: center;
+            align-items: flex-start;
             min-height: 480px;
+            max-height: 600px;
+            overflow-y: auto;
             position: relative;
         }
 

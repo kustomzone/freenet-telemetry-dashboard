@@ -860,44 +860,69 @@ export function updateContractTree(container, peers, connections, subscriberPeer
     const canvas = getOrCreateTreeCanvas(container);
     const dpr = window.devicePixelRatio || 1;
     const displayWidth = container.offsetWidth || 600;
-    const displayHeight = Math.max(480, container.offsetHeight || 480);
+    const minHeight = 480;
 
-    const targetW = Math.round(displayWidth * dpr);
-    const targetH = Math.round(displayHeight * dpr);
-    if (canvas.width !== targetW || canvas.height !== targetH) {
-        canvas.width = targetW;
-        canvas.height = targetH;
-        canvas.style.width = displayWidth + 'px';
-        canvas.style.height = displayHeight + 'px';
-    }
-
-    const ctx = canvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, displayWidth, displayHeight);
-
-    // Build tree and layout
+    // Build tree and layout (using min height for initial layout)
     let treeData, layoutData;
     if (cacheKey === lastTreeKey && lastLayout && lastTreeData) {
         treeData = lastTreeData;
         layoutData = lastLayout;
     } else {
         treeData = buildTree(contractKey, peers, connections);
-        layoutData = layoutTree(treeData.roots, treeData.children, treeData.allNodes, displayWidth, displayHeight);
+        layoutData = layoutTree(treeData.roots, treeData.children, treeData.allNodes, displayWidth, minHeight);
         lastTreeKey = cacheKey;
         lastLayout = layoutData;
         lastTreeData = treeData;
     }
 
     if (treeData.allNodes.size === 0) {
-        // Empty state
+        canvas.width = Math.round(displayWidth * dpr);
+        canvas.height = Math.round(minHeight * dpr);
+        canvas.style.width = displayWidth + 'px';
+        canvas.style.height = minHeight + 'px';
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+        ctx.clearRect(0, 0, displayWidth, minHeight);
         ctx.font = '14px "Space Grotesk", sans-serif';
         ctx.fillStyle = 'rgba(230, 237, 243, 0.5)';
         ctx.textAlign = 'center';
-        ctx.fillText('No subscription tree data for this contract', displayWidth / 2, displayHeight / 2);
+        ctx.fillText('No subscription tree data for this contract', displayWidth / 2, minHeight / 2);
         return;
     }
 
-    drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, displayWidth, displayHeight);
+    // Compute actual needed height from layout positions
+    let maxY = 0;
+    for (const pos of layoutData.layout.values()) {
+        maxY = Math.max(maxY, pos.y);
+    }
+    const displayHeight = Math.max(minHeight, maxY + 50);
+
+    // If needed height exceeds min, re-layout with correct height
+    if (displayHeight > minHeight && cacheKey !== lastTreeKey + ':resized') {
+        layoutData = layoutTree(treeData.roots, treeData.children, treeData.allNodes, displayWidth, displayHeight);
+        lastLayout = layoutData;
+        // Recompute maxY after relayout
+        maxY = 0;
+        for (const pos of layoutData.layout.values()) {
+            maxY = Math.max(maxY, pos.y);
+        }
+    }
+
+    const finalHeight = Math.max(minHeight, maxY + 50);
+    const targetW = Math.round(displayWidth * dpr);
+    const targetH = Math.round(finalHeight * dpr);
+    if (canvas.width !== targetW || canvas.height !== targetH) {
+        canvas.width = targetW;
+        canvas.height = targetH;
+        canvas.style.width = displayWidth + 'px';
+        canvas.style.height = finalHeight + 'px';
+    }
+
+    const ctx = canvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, displayWidth, finalHeight);
+
+    drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, displayWidth, finalHeight);
     installTreeEvents(canvas, container);
 
     // Remove empty state if present
