@@ -666,95 +666,123 @@ function drawHoveredEventLine(ctx, peers) {
     if (!state.hoveredEvent) return;
     const fromPeer = state.hoveredEvent.from_peer || state.hoveredEvent.peer_id;
     const toPeer = state.hoveredEvent.to_peer;
-    if (!fromPeer || !toPeer || fromPeer === toPeer) return;
+    if (!fromPeer) return;
 
+    const eventClass = getEventClass(state.hoveredEvent.event_type);
+    const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
+    const eventType = state.hoveredEvent.event_type;
+
+    // Find peer positions
     let fromPos = null, toPos = null;
     peers.forEach((peer, id) => {
         if (id === fromPeer || peer.peer_id === fromPeer) {
             fromPos = locationToXY(peer.location);
         }
-        if (id === toPeer || peer.peer_id === toPeer) {
+        if (toPeer && (id === toPeer || peer.peer_id === toPeer)) {
             toPos = locationToXY(peer.location);
         }
     });
-    if (!fromPos || !toPos) return;
-
-    const eventClass = getEventClass(state.hoveredEvent.event_type);
-    const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
-
-    const dx = toPos.x - fromPos.x;
-    const dy = toPos.y - fromPos.y;
-    const dist = Math.sqrt(dx * dx + dy * dy);
-    if (dist < 10) return;
-
-    // Offset to avoid overlapping peer dots
-    const offsetStart = 12 / dist;
-    const offsetEnd = 12 / dist;
-    const x1 = fromPos.x + dx * offsetStart;
-    const y1 = fromPos.y + dy * offsetStart;
-    const x2 = fromPos.x + dx * (1 - offsetEnd);
-    const y2 = fromPos.y + dy * (1 - offsetEnd);
+    if (!fromPos) return;
 
     ctx.save();
 
-    // Draw line
-    ctx.strokeStyle = color;
-    ctx.lineWidth = 3;
-    ctx.lineCap = 'round';
-    ctx.globalAlpha = 0.85;
-    ctx.beginPath();
-    ctx.moveTo(x1, y1);
-    ctx.lineTo(x2, y2);
-    ctx.stroke();
+    const hasTwoPeers = toPeer && fromPeer !== toPeer && toPos;
 
-    // Arrowhead at destination
-    const angle = Math.atan2(dy, dx);
-    const arrowLen = 10;
-    const arrowWidth = 5;
-    ctx.fillStyle = color;
-    ctx.beginPath();
-    ctx.moveTo(x2, y2);
-    ctx.lineTo(x2 - arrowLen * Math.cos(angle - Math.PI / 6), y2 - arrowLen * Math.sin(angle - Math.PI / 6));
-    ctx.lineTo(x2 - arrowLen * Math.cos(angle + Math.PI / 6), y2 - arrowLen * Math.sin(angle + Math.PI / 6));
-    ctx.closePath();
-    ctx.fill();
+    if (hasTwoPeers) {
+        // --- Two-peer arrow ---
+        const dx = toPos.x - fromPos.x;
+        const dy = toPos.y - fromPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 10) { ctx.restore(); return; }
 
-    // Label at midpoint
-    const eventType = state.hoveredEvent.event_type;
-    if (eventType) {
-        const mx = (x1 + x2) / 2;
-        const my = (y1 + y2) / 2;
-        const label = eventType.replace(/_/g, ' ');
+        const offsetStart = 12 / dist;
+        const offsetEnd = 12 / dist;
+        const x1 = fromPos.x + dx * offsetStart;
+        const y1 = fromPos.y + dy * offsetStart;
+        const x2 = fromPos.x + dx * (1 - offsetEnd);
+        const y2 = fromPos.y + dy * (1 - offsetEnd);
 
-        ctx.font = '9px "JetBrains Mono", monospace';
-        const metrics = ctx.measureText(label);
-        const padX = 5, padY = 3;
-        const boxW = metrics.width + padX * 2;
-        const boxH = 13 + padY * 2;
-
-        // Rounded rect background
-        const bx = mx - boxW / 2;
-        const by = my - boxH / 2;
-        ctx.globalAlpha = 0.85;
-        ctx.fillStyle = 'rgba(13, 17, 23, 0.9)';
-        ctx.beginPath();
-        ctx.roundRect(bx, by, boxW, boxH, 4);
-        ctx.fill();
+        // Line
         ctx.strokeStyle = color;
-        ctx.lineWidth = 1;
+        ctx.lineWidth = 3;
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = 0.85;
         ctx.beginPath();
-        ctx.roundRect(bx, by, boxW, boxH, 4);
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
         ctx.stroke();
 
-        // Label text
-        ctx.globalAlpha = 1;
+        // Arrowhead
+        const angle = Math.atan2(dy, dx);
+        const arrowLen = 10;
         ctx.fillStyle = color;
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'middle';
-        ctx.fillText(label, mx, my);
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - arrowLen * Math.cos(angle - Math.PI / 6), y2 - arrowLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(x2 - arrowLen * Math.cos(angle + Math.PI / 6), y2 - arrowLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+
+        // Label at midpoint
+        if (eventType) {
+            drawEventLabel(ctx, (x1 + x2) / 2, (y1 + y2) / 2, eventType, color);
+        }
+    } else {
+        // --- Single-peer highlight: pulsing ring + label ---
+        const px = fromPos.x;
+        const py = fromPos.y;
+
+        // Outer glow
+        ctx.globalAlpha = 0.3;
+        ctx.fillStyle = color;
+        ctx.beginPath();
+        ctx.arc(px, py, 18, 0, Math.PI * 2);
+        ctx.fill();
+
+        // Ring
+        ctx.globalAlpha = 0.85;
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.beginPath();
+        ctx.arc(px, py, 12, 0, Math.PI * 2);
+        ctx.stroke();
+
+        // Label above the peer
+        if (eventType) {
+            drawEventLabel(ctx, px, py - 22, eventType, color);
+        }
     }
 
     ctx.restore();
+}
+
+/** Draw a labeled pill for an event type at position (mx, my). */
+function drawEventLabel(ctx, mx, my, eventType, color) {
+    const label = eventType.replace(/_/g, ' ');
+    ctx.font = '9px "JetBrains Mono", monospace';
+    const metrics = ctx.measureText(label);
+    const padX = 5, padY = 3;
+    const boxW = metrics.width + padX * 2;
+    const boxH = 13 + padY * 2;
+
+    const bx = mx - boxW / 2;
+    const by = my - boxH / 2;
+    ctx.globalAlpha = 0.85;
+    ctx.fillStyle = 'rgba(13, 17, 23, 0.9)';
+    ctx.beginPath();
+    ctx.roundRect(bx, by, boxW, boxH, 4);
+    ctx.fill();
+    ctx.strokeStyle = color;
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.roundRect(bx, by, boxW, boxH, 4);
+    ctx.stroke();
+
+    ctx.globalAlpha = 1;
+    ctx.fillStyle = color;
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'middle';
+    ctx.fillText(label, mx, my);
 }
 
 // ============================================================================
