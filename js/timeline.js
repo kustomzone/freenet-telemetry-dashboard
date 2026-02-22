@@ -12,8 +12,8 @@ export const MAX_TIME_WINDOW_NS = 60 * 60 * 1_000_000_000;
 
 const K = 6; // exponential scale factor: last ~5min fills ~50% of width
 
-// Lane configuration
-const LANE_ROWS = { put: 0, get: 1, update: 2, subscribe: 3, connect: 4 };
+// Lane configuration (order matches left-side labels)
+const LANE_ROWS = { connect: 0, get: 1, put: 2, subscribe: 3, update: 4 };
 const NUM_LANES = 5;
 const LANE_GAP = 2;
 
@@ -134,10 +134,7 @@ export function renderExponentialTimeline() {
 
     const hasFilter = !!(state.selectedContract || state.selectedPeerId);
 
-    // Additive blending for density glow
-    ctx.globalCompositeOperation = 'lighter';
-
-    // Draw event bars
+    // Draw event bars (normal compositing to preserve lane colors)
     for (const event of state.allEvents) {
         const lane = eventToLane(event.event_type);
         if (lane === null) continue;
@@ -147,7 +144,7 @@ export function renderExponentialTimeline() {
 
         const y = LANE_ROWS[lane] * (laneHeight + LANE_GAP);
 
-        let opacity = isCompleted(event.event_type) ? 0.8 : 0.4;
+        let opacity = isCompleted(event.event_type) ? 0.9 : 0.5;
         if (hasFilter && !eventMatchesFilters(event)) {
             opacity *= 0.15;
         }
@@ -157,8 +154,6 @@ export function renderExponentialTimeline() {
         ctx.fillRect(x - 1.5, y, 3, laneHeight);
     }
 
-    // Reset compositing
-    ctx.globalCompositeOperation = 'source-over';
     ctx.globalAlpha = 1;
 
     // Draw time ticks
