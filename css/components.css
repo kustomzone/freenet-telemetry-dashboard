@@ -16,6 +16,7 @@
             padding: 24px;
             backdrop-filter: blur(10px);
             position: relative;
+            min-width: 0; /* prevent grid child from overflowing */
         }
 
         .panel-header {

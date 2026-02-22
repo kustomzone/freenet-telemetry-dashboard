@@ -251,11 +251,10 @@
 
         /* Contract Tree Visualization */
         .tree-container {
-            display: flex;
-            justify-content: center;
-            align-items: flex-start;
+            display: block;
             min-height: 480px;
             max-height: 600px;
+            max-width: 100%;
             overflow: auto;
             position: relative;
         }
