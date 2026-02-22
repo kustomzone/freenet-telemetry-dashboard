@@ -1361,67 +1361,56 @@ function renderDistChart(connectionDistances) {
 
     if (connectionDistances.length === 0) return;
 
-    // Sort distances for adaptive binning
+    // Sort ascending — shortest at top (y=0), longest at bottom
     const sorted = [...connectionDistances].sort((a, b) => a - b);
-    const total = sorted.length;
+    const n = sorted.length;
+    const maxDist = sorted[n - 1] || 0.5;
 
-    // Create adaptive bins - each bin has roughly equal number of points
-    // but we also want to show the actual distance range
-    const targetBins = distChartZoomed ? 20 : 12;
-    const bins = [];
+    const pad = distChartZoomed ? 20 : 2;
+    const plotW = width - pad * 2;
+    const plotH = height - pad * 2;
 
-    // Use fixed distance ranges but track counts for adaptive width
-    const binSize = 0.5 / targetBins;
-    for (let i = 0; i < targetBins; i++) {
-        bins.push({
-            start: i * binSize,
-            end: (i + 1) * binSize,
-            count: 0
-        });
+    // Build line path: x = connection index, y = distance
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+        const x = pad + (i / (n - 1 || 1)) * plotW;
+        const y = pad + (sorted[i] / maxDist) * plotH;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
 
-    // Count distances in each bin
-    let maxCount = 0;
-    sorted.forEach(d => {
-        const idx = Math.min(Math.floor(d / binSize), targetBins - 1);
-        bins[idx].count++;
-        maxCount = Math.max(maxCount, bins[idx].count);
-    });
+    // Fill under the curve
+    const gradient = ctx.createLinearGradient(0, pad, 0, pad + plotH);
+    gradient.addColorStop(0, 'hsla(265, 70%, 65%, 0.35)');
+    gradient.addColorStop(1, 'hsla(265, 60%, 45%, 0.08)');
+    ctx.lineTo(pad + plotW, pad + plotH);
+    ctx.lineTo(pad, pad + plotH);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
 
-    if (maxCount === 0) return;
+    // Stroke the line
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+        const x = pad + (i / (n - 1 || 1)) * plotW;
+        const y = pad + (sorted[i] / maxDist) * plotH;
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'hsla(265, 70%, 65%, 0.9)';
+    ctx.lineWidth = distChartZoomed ? 2 : 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
 
-    // Calculate total count for width proportions
-    const totalCount = sorted.length;
-
-    // Draw bars with adaptive widths (width proportional to count)
-    // Y position is still based on distance range
-    const baseBarHeight = height / targetBins;
-    const minBarWidth = distChartZoomed ? 3 : 2;
-    const maxBarWidth = width - 4;
-
-    for (let i = 0; i < targetBins; i++) {
-        const bin = bins[i];
-        if (bin.count === 0) continue;
-
-        const y = i * baseBarHeight;
-
-        // Width proportional to count (density)
-        const widthRatio = bin.count / maxCount;
-        const barWidth = minBarWidth + widthRatio * (maxBarWidth - minBarWidth);
-
-        // Height slightly varies with density too
-        const heightRatio = 0.7 + 0.3 * widthRatio;
-        const barHeight = baseBarHeight * heightRatio;
-        const yOffset = (baseBarHeight - barHeight) / 2;
-
-        // Purple gradient - brighter for denser bins
-        const lightness = 45 + widthRatio * 20;
-        const alpha = 0.5 + widthRatio * 0.4;
-        const gradient = ctx.createLinearGradient(0, y, barWidth, y);
-        gradient.addColorStop(0, `hsla(265, 60%, ${lightness}%, ${alpha * 0.8})`);
-        gradient.addColorStop(1, `hsla(265, 70%, ${lightness + 10}%, ${alpha})`);
-        ctx.fillStyle = gradient;
-
-        ctx.fillRect(2, y + yOffset, barWidth, barHeight - 1);
+    // Axis labels when zoomed
+    if (distChartZoomed) {
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'top';
+        ctx.fillText('0.00', pad, pad - 12);
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(maxDist.toFixed(2), pad, pad + plotH + 12);
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${n} conns`, pad + plotW, pad - 12);
     }
 }
