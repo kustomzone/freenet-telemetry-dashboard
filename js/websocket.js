@@ -255,10 +255,8 @@ function handleMessage(data, callbacks) {
             callbacks.addEventMarker(data);
         }
 
-        if (state.isLive) {
-            state.currentTime = data.timestamp;
-            callbacks.updateView();
-        }
+        state.currentTime = data.timestamp;
+        callbacks.updateView();
 
     } else if (data.type === 'transfer') {
         // Real-time transfer event for scatter plot
@@ -301,10 +299,8 @@ function handleMessage(data, callbacks) {
 
         if (events.length > 0) {
             state.timeRange.end = events[events.length - 1].timestamp;
-            if (state.isLive) {
-                state.currentTime = state.timeRange.end;
-                callbacks.updateView();
-            }
+            state.currentTime = state.timeRange.end;
+            callbacks.updateView();
         }
 
     } else if (data.type === 'peers_removed') {
@@ -369,9 +365,7 @@ function handleMessage(data, callbacks) {
 
             console.log(`Removed ${removedAnonIds.size} stale peers, ${removedConns.length} connections`);
 
-            if (state.isLive) {
-                callbacks.updateView();
-            }
+            callbacks.updateView();
         }
     }
 }

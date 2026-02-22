@@ -10,46 +10,43 @@ import { getEventClass, getEventLabel, formatTime } from './utils.js';
 let urlLoaded = false;
 
 /**
- * Select an event and optionally highlight related peers
- * @param {Object} event - Event object to select
- * @param {Function} goToTime - Callback to navigate to event time
- * @param {Function} goLive - Callback to return to live mode
+ * Select an event and highlight related peers on ring/tree.
+ * @param {Object|null} event - Event to select, or null to clear
  * @param {Function} updateView - Callback to refresh the view
  */
-export function selectEvent(event, goToTime, goLive, updateView) {
+export function selectEvent(event, updateView) {
     state.highlightedPeers.clear();
 
-    // Toggle: clicking same event deselects it
-    if (state.selectedEvent === event) {
+    // Toggle: clicking same event deselects it, or null clears
+    if (!event || state.selectedEvent === event) {
         state.selectedEvent = null;
-        state.selectedContract = null;
-        goLive();
+        // Don't clear selectedContract — keep current panel view
+        updateView();
         return;
     }
 
     state.selectedEvent = event;
 
-    if (event) {
-        // Move playhead to event time
-        goToTime(event.timestamp);
+    // Highlight the event's peers
+    if (event.peer_id) {
+        state.highlightedPeers.add(event.peer_id);
+    }
+    if (event.from_peer) {
+        state.highlightedPeers.add(event.from_peer);
+    }
+    if (event.to_peer) {
+        state.highlightedPeers.add(event.to_peer);
+    }
+    if (event.connection) {
+        state.highlightedPeers.add(event.connection[0]);
+        state.highlightedPeers.add(event.connection[1]);
+    }
 
-        // Highlight the event's peer
-        if (event.peer_id) {
-            state.highlightedPeers.add(event.peer_id);
-        }
-
-        // Also highlight connection peers
-        if (event.connection) {
-            state.highlightedPeers.add(event.connection[0]);
-            state.highlightedPeers.add(event.connection[1]);
-        }
-
-        // If event has a contract with subscription tree, select it
-        if (event.contract_full && state.contractData[event.contract_full]) {
-            state.selectedContract = event.contract_full;
-        } else {
-            state.selectedContract = null;
-        }
+    // Panel switching logic:
+    // - If tree view is showing a contract, and event is for a DIFFERENT contract → switch to ring
+    // - Otherwise keep current panel view (don't force-switch to tree)
+    if (state.selectedContract && event.contract_full && event.contract_full !== state.selectedContract) {
+        state.selectedContract = null;
     }
 
     updateView();
@@ -199,7 +196,7 @@ export function clearAllFilters(updateView, updateURL) {
  */
 export function handleEventClick(idx, callbacks) {
     if (state.displayedEvents && state.displayedEvents[idx]) {
-        selectEvent(state.displayedEvents[idx], callbacks.goToTime, callbacks.goLive, callbacks.updateView);
+        selectEvent(state.displayedEvents[idx], callbacks.updateView);
     }
 }
 
@@ -289,10 +286,6 @@ export function updateURL() {
     if (state.selectedTxId) {
         params.set('tx', state.selectedTxId.substring(0, 12));
     }
-    if (!state.isLive && state.currentTime) {
-        params.set('time', new Date(state.currentTime / 1_000_000).toISOString());
-    }
-
     const queryString = params.toString();
     const newUrl = queryString ? `?${queryString}` : window.location.pathname;
     history.replaceState(null, '', newUrl);
@@ -332,21 +325,6 @@ export function loadFromURL(updateView) {
         if (match) {
             state.selectedTxId = match.tx_id;
             console.log('Restored tx from URL:', match.tx_id.substring(0, 12));
-        }
-    }
-
-    // Restore time
-    const timeParam = params.get('time');
-    if (timeParam) {
-        try {
-            const timestamp = new Date(timeParam).getTime() * 1_000_000;
-            if (!isNaN(timestamp) && timestamp > 0) {
-                state.currentTime = timestamp;
-                state.isLive = false;
-                console.log('Restored time from URL:', timeParam);
-            }
-        } catch (e) {
-            console.warn('Invalid time in URL:', timeParam);
         }
     }
 

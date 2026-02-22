@@ -872,12 +872,22 @@ function installTreeEvents(canvas, container) {
 // Message animation trigger (called from event processing)
 // ============================================================================
 
+let lastAnimTrigger = 0;
+const ANIM_THROTTLE_MS = 100; // max 10 animations/sec from hover
+
 export function triggerTreeMessageAnim(fromId, toId, eventType) {
+    const now = performance.now();
+    if (now - lastAnimTrigger < ANIM_THROTTLE_MS) return;
+    lastAnimTrigger = now;
+
+    // Cap concurrent animations
+    if (activeAnims.length > 10) return;
+
     const color = EVENT_COLORS[getEventClass(eventType)] || EVENT_COLORS.other;
     activeAnims.push({
         fromId, toId,
         color,
-        startTime: performance.now()
+        startTime: now
     });
 }
 

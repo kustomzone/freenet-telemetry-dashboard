@@ -2,12 +2,12 @@
         @media (max-width: 768px) {
             .main-content {
                 padding: 8px 12px;
-                padding-bottom: 12px;  /* No extra padding needed - timeline flows below */
+                padding-bottom: 12px;
             }
 
             .timeline-container {
-                position: static;  /* Flow with document instead of fixed */
-                background: var(--bg-primary);  /* Solid background */
+                position: static;
+                background: var(--bg-primary);
                 margin-top: 16px;
                 border-radius: 16px;
                 border: 1px solid var(--border-color);
@@ -83,9 +83,20 @@
                 font-size: 0.8em;
             }
 
-            /* Topology ring */
+            /* Topology ring - let canvas scale naturally */
             .ring-container {
-                height: 280px;
+                min-height: 280px;
+            }
+
+            /* Hide overlay charts on mobile — too small to be useful */
+            .topology-overlay {
+                display: none !important;
+            }
+            .transfer-backdrop {
+                display: none !important;
+            }
+            .transfer-tooltip {
+                display: none !important;
             }
 
             /* Events list */
@@ -94,29 +105,32 @@
                 padding: 6px 8px;
             }
 
-            /* Timeline - more compact */
+            /* Timeline - more compact, inline in document flow */
             .timeline-container {
-                padding: 16px 12px 12px;
+                padding: 12px;
             }
 
             .timeline-header {
-                flex-direction: column;
-                align-items: flex-start;
+                flex-direction: row;
+                align-items: center;
                 gap: 8px;
-                margin-bottom: 8px;
+                margin-bottom: 6px;
             }
 
             .timeline-info {
-                gap: 10px;
+                gap: 8px;
             }
 
             .timeline-time {
-                font-size: 1.4em;
+                font-size: 1.3em;
             }
 
-            .timeline-mode {
-                padding: 6px 14px;
-                font-size: 0.7em;
+            .timeline {
+                height: 70px;
+            }
+
+            .timeline-labels {
+                margin-top: 4px;
             }
 
             /* Filter bar */
@@ -134,10 +148,10 @@
         @media (max-width: 480px) {
             .main-content {
                 padding: 6px 8px;
-                padding-bottom: 8px;  /* No extra padding needed - timeline flows below */
+                padding-bottom: 8px;
             }
 
-            /* Stack stats in single column for very narrow screens */
+            /* Stack stats in 2x2 grid */
             .stats {
                 grid-template-columns: repeat(2, 1fr);
                 gap: 4px;
@@ -161,14 +175,14 @@
                 display: none;
             }
 
-            /* Topology */
+            /* Topology - more compact */
             .ring-container {
-                height: 220px;
+                min-height: 240px;
             }
 
-            #ring-svg {
-                transform: scale(0.8);
-                transform-origin: center center;
+            .tree-container {
+                min-height: 300px;
+                max-height: 400px;
             }
 
             /* Panels */
@@ -176,9 +190,9 @@
                 padding: 10px;
             }
 
-            /* Contracts */
+            /* Contracts - shorter list */
             .contracts-list {
-                max-height: 250px;
+                max-height: 200px;
             }
 
             .event-row {
@@ -190,26 +204,31 @@
                 max-width: 60px;
             }
 
-            /* Timeline - minimal */
+            /* Timeline - minimal, full width */
             .timeline-container {
-                padding: 12px 8px 8px;
+                padding: 10px 8px 8px;
+                margin-top: 12px;
+                border-radius: 12px;
             }
 
             .timeline-time {
-                font-size: 1.2em;
+                font-size: 1.1em;
             }
 
             .timeline-date {
                 font-size: 0.7em;
             }
 
-            .timeline-mode {
-                padding: 4px 10px;
-                font-size: 0.65em;
+            .timeline {
+                height: 60px;
             }
 
             .timeline-lane-labels {
                 display: none;
+            }
+
+            .timeline-events {
+                left: 0;  /* Reclaim lane label space */
             }
 
             .timeline-legend {
@@ -225,12 +244,31 @@
             .contract-key {
                 font-size: 0.75em;
             }
+
+            /* Legend - compact */
+            .topology-legend-inline {
+                gap: 6px;
+                font-size: 0.55em;
+            }
+
+            .legend-item {
+                gap: 4px;
+            }
+
+            .legend-marker {
+                width: 8px;
+                height: 8px;
+            }
+
+            .legend-line {
+                width: 14px;
+            }
         }
 
         /* Landscape phone */
         @media (max-height: 500px) and (orientation: landscape) {
             .main-content {
-                padding-bottom: 8px;  /* Timeline flows below */
+                padding-bottom: 8px;
             }
 
             .stats {
@@ -242,11 +280,11 @@
             }
 
             .ring-container {
-                height: 180px;
+                min-height: 180px;
             }
 
             .timeline-container {
-                position: static;  /* Flow with document */
+                position: static;
                 padding: 8px;
             }
 
@@ -254,7 +292,6 @@
                 flex-direction: row;
                 justify-content: space-between;
             }
-
         }
 
         /* Very small screens (320px) */
@@ -278,5 +315,4 @@
             .stat-value {
                 font-size: 1em;
             }
-
         }

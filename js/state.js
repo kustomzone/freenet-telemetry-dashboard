@@ -14,7 +14,6 @@ export const state = {
     // Event/time state
     allEvents: [],
     timeRange: { start: 0, end: 0 },
-    isLive: true,
     currentTime: Date.now() * 1_000_000,
     timeWindowNs: 5 * 60 * 1_000_000_000, // 5 minutes
 
@@ -73,18 +72,3 @@ export function clearAllFilters() {
     state.highlightedPeers = new Set();
 }
 
-// Helper to go live
-export function goLive() {
-    state.isLive = true;
-    state.currentTime = Date.now() * 1_000_000;
-    state.selectedEvent = null;
-    state.selectedPeerId = null;
-    state.selectedContract = null;
-    state.highlightedPeers = new Set();
-}
-
-// Helper to go to specific time
-export function goToTime(time) {
-    state.isLive = false;
-    state.currentTime = time;
-}

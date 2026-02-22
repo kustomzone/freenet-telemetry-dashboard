@@ -100,7 +100,8 @@ export function renderExponentialTimeline() {
     const canvas = document.getElementById('timeline-canvas');
     if (!canvas) return;
 
-    const tNow = state.currentTime;
+    const tNow = Date.now() * 1_000_000;
+    state.currentTime = tNow;
     const totalDurationNs = tNow - state.timeRange.start;
 
     // Cache check
@@ -163,17 +164,6 @@ export function renderExponentialTimeline() {
     // Draw time ticks
     drawTicks(ctx, tNow, totalDurationNs, width, height);
 
-    // Draw current-time indicator in historical mode
-    if (!state.isLive) {
-        ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(width - 0.5, 0);
-        ctx.lineTo(width - 0.5, height);
-        ctx.stroke();
-        ctx.setLineDash([]);
-    }
 }
 
 /**
@@ -338,16 +328,10 @@ export function updatePlayhead() {
     document.getElementById('playhead-date').textContent = formatDate(state.currentTime);
     document.getElementById('time-display').textContent = formatTime(state.currentTime).split(' ')[0];
 
-    // Update topology time label
+    // Update topology time label — always live
     const topoLabel = document.getElementById('topology-time-label');
-    if (state.isLive) {
-        topoLabel.textContent = 'Live';
-        topoLabel.classList.add('live');
-    } else {
-        const timeStr = new Date(state.currentTime / 1_000_000).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
-        topoLabel.textContent = `at ${timeStr}`;
-        topoLabel.classList.remove('live');
-    }
+    topoLabel.textContent = 'Live';
+    topoLabel.classList.add('live');
 
     renderExponentialTimeline();
 }
@@ -362,37 +346,6 @@ export function renderDetailTimeline() { /* removed */ }
 export function updateWindowLabel() { /* no playhead window */ }
 export function addEventMarker() { /* no-op */ }
 
-/**
- * Go to live mode.
- */
-export function goLive(updateView, updateURL) {
-    state.isLive = true;
-    state.currentTime = Date.now() * 1_000_000;
-    state.selectedEvent = null;
-    state.selectedPeerId = null;
-    state.selectedContract = null;
-    state.highlightedPeers.clear();
-    document.getElementById('mode-button').className = 'timeline-mode live';
-    document.getElementById('mode-button').textContent = 'LIVE';
-    document.getElementById('status-dot').className = 'status-dot live';
-    document.getElementById('status-text').textContent = 'Live';
-    if (updateView) updateView();
-    if (updateURL) updateURL();
-}
-
-/**
- * Go to a specific time (historical mode).
- */
-export function goToTime(time, updateView, updateURL) {
-    state.isLive = false;
-    state.currentTime = time;
-    document.getElementById('mode-button').className = 'timeline-mode historical';
-    document.getElementById('mode-button').textContent = 'HISTORICAL';
-    document.getElementById('status-dot').className = 'status-dot historical';
-    document.getElementById('status-text').textContent = 'Time Travel';
-    if (updateView) updateView();
-    if (updateURL) updateURL();
-}
 
 /**
  * Setup timeline interaction (canvas hover/click, keyboard shortcuts).
@@ -401,7 +354,7 @@ export function setupTimeline(callbacks) {
     const canvas = document.getElementById('timeline-canvas');
     if (!canvas) return;
 
-    // --- Canvas hover for tooltips ---
+    // --- Canvas hover for tooltips + event visualization ---
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -410,18 +363,28 @@ export function setupTimeline(callbacks) {
         if (event) {
             canvas.style.cursor = 'pointer';
             showTooltip(event, e.clientX, e.clientY);
+            state.hoveredEvent = event;
+            if (callbacks.onEventHover) callbacks.onEventHover(event);
         } else {
             canvas.style.cursor = 'crosshair';
             hideTooltip();
+            if (state.hoveredEvent) {
+                state.hoveredEvent = null;
+                if (callbacks.onEventHover) callbacks.onEventHover(null);
+            }
         }
     });
 
     canvas.addEventListener('mouseleave', () => {
         hideTooltip();
         canvas.style.cursor = 'crosshair';
+        if (state.hoveredEvent) {
+            state.hoveredEvent = null;
+            if (callbacks.onEventHover) callbacks.onEventHover(null);
+        }
     });
 
-    // --- Canvas click: select event or navigate time ---
+    // --- Canvas click: select event or clear selection ---
     canvas.addEventListener('click', (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -429,34 +392,14 @@ export function setupTimeline(callbacks) {
         const event = hitTest(x, y, canvas);
 
         if (event) {
-            // Import selectEvent from events module would be circular,
-            // so use the callback pattern
             if (callbacks.selectEvent) {
                 callbacks.selectEvent(event);
             }
         } else {
-            // Click on background: navigate to that time
-            const tNow = state.currentTime;
-            const totalDurationNs = tNow - state.timeRange.start;
-            if (totalDurationNs > 0) {
-                const clickTime = xToTime(x, tNow, totalDurationNs, canvas.clientWidth);
-                callbacks.goToTime(clickTime);
+            // Click on background: clear selection
+            if (callbacks.selectEvent) {
+                callbacks.selectEvent(null);
             }
-        }
-    });
-
-    // --- Keyboard shortcuts ---
-    document.addEventListener('keydown', (e) => {
-        if (e.target.tagName === 'INPUT') return;
-
-        const step = (state.timeRange.end - state.timeRange.start) / 100;
-
-        if (e.key === 'ArrowLeft') {
-            callbacks.goToTime(Math.max(state.timeRange.start, state.currentTime - step));
-        } else if (e.key === 'ArrowRight') {
-            callbacks.goToTime(Math.min(state.timeRange.end, state.currentTime + step));
-        } else if (e.key === 'l' || e.key === 'L') {
-            callbacks.goLive();
         }
     });
 

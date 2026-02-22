@@ -10,7 +10,6 @@ import { updateRingSVG } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
-    goLive as timelineGoLive, goToTime as timelineGoToTime,
     addEventMarker, renderExponentialTimeline
 } from './timeline.js';
 import {
@@ -26,11 +25,10 @@ import {
     updateContractDropdown
 } from './contracts.js';
 import {
-    connect, showPeerNamingPrompt, closePeerNamingPrompt,
-    reconstructStateAtTime
+    connect, showPeerNamingPrompt, closePeerNamingPrompt
 } from './websocket.js';
 import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferChart } from './transfers.js';
-import { updateContractTree, getTreeStats, resetContractTree } from './contract-tree.js';
+import { updateContractTree, getTreeStats, resetContractTree, triggerTreeMessageAnim } from './contract-tree.js';
 
 // ============================================================================
 // Main Application Functions
@@ -55,9 +53,8 @@ function _updateViewImpl() {
     let peers = new Map();
     let connections = new Set();
 
-    // For live view, use direct state data
-    // For historical view, reconstruct from events
-    if (state.isLive && state.initialStatePeers.length > 0) {
+    // Always use live state data
+    if (state.initialStatePeers.length > 0) {
         for (const p of state.initialStatePeers) {
             peers.set(p.id, {
                 location: p.location,
@@ -69,10 +66,6 @@ function _updateViewImpl() {
             const key = [conn[0], conn[1]].sort().join('|');
             connections.add(key);
         }
-    } else {
-        const reconstructed = reconstructStateAtTime(state.currentTime);
-        peers = reconstructed.peers;
-        connections = reconstructed.connections;
     }
 
     // Get subscriber peer IDs for highlighting
@@ -114,8 +107,7 @@ function _updateViewImpl() {
         if (topoPanelTitle) topoPanelTitle.textContent = 'Contract Topology: ' + shortKey;
 
         updateContractTree(treeContainer, peers, connections, subscriberPeerIds, {
-            selectPeer: (id) => selectPeer(id, updateView, updateURL),
-            goToTime: goToTime
+            selectPeer: (id) => selectPeer(id, updateView, updateURL)
         });
     } else {
         // Show ring, hide tree
@@ -128,8 +120,7 @@ function _updateViewImpl() {
         resetContractTree();
 
         updateRingSVG(peers, connections, subscriberPeerIds, {
-            selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL),
-            goToTime: goToTime
+            selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL)
         });
     }
 
@@ -156,10 +147,8 @@ function _updateViewImpl() {
         }
     }
 
-    // Update event count (use total length in live mode to avoid O(n) scan every frame)
-    document.getElementById('event-count').textContent = state.isLive
-        ? state.allEvents.length
-        : state.allEvents.filter(e => e.timestamp <= state.currentTime).length;
+    // Update event count
+    document.getElementById('event-count').textContent = state.allEvents.length;
 
     // Update playhead displays + render canvas timeline
     updatePlayhead();
@@ -170,20 +159,6 @@ function _updateViewImpl() {
 
 // updateView: throttled version used by all callbacks and event handlers
 const updateView = scheduleUpdateView;
-
-/**
- * Go to live mode
- */
-function goLive() {
-    timelineGoLive(updateView, updateURL);
-}
-
-/**
- * Go to specific time (historical mode)
- */
-function goToTime(time) {
-    timelineGoToTime(time, updateView, updateURL);
-}
 
 /**
  * Select a contract
@@ -203,15 +178,32 @@ function clearAllFilters() {
  * Handle event click (from timeline canvas)
  */
 function handleEventClick(event) {
-    selectEvent(event, goToTime, goLive, updateView);
+    selectEvent(event, updateView);
+}
+
+/**
+ * Handle timeline event hover — visualize on ring or contract tree.
+ */
+function handleEventHover(event) {
+    state.hoveredEvent = event;
+
+    if (event && state.selectedContract && event.contract_full === state.selectedContract) {
+        // Trigger tree message animation if event relates to selected contract
+        const fromPeer = event.from_peer || event.peer_id;
+        const toPeer = event.to_peer;
+        if (fromPeer && toPeer && fromPeer !== toPeer) {
+            triggerTreeMessageAnim(fromPeer, toPeer, event.event_type);
+        }
+    }
+
+    // Ring redraw happens via updateView since hoveredEvent is in state
+    updateView();
 }
 
 // ============================================================================
 // Global Window Bindings (for onclick handlers in HTML)
 // ============================================================================
 
-window.goLive = goLive;
-window.goToTime = goToTime;
 window.selectContract = selectContract;
 window.clearAllFilters = clearAllFilters;
 window.togglePeerFilter = (peerId) => togglePeerFilter(peerId, updateView, updateURL);
@@ -244,11 +236,10 @@ function showFindMyPeerButton() {
 
 // Setup timeline interactions (canvas hover/click, keyboard shortcuts)
 setupTimeline({
-    goToTime: goToTime,
-    goLive: goLive,
     updateView: updateView,
     renderContractsList: renderContractsList,
-    selectEvent: handleEventClick
+    selectEvent: handleEventClick,
+    onEventHover: handleEventHover
 });
 
 // Connect to WebSocket
@@ -266,10 +257,6 @@ connect({
         }
         // Show the Find My Peer button if user is a peer
         showFindMyPeerButton();
-        // Auto-select user's peer on first load (if no peer already selected from URL)
-        if (!state.selectedPeerId && state.youArePeer && state.yourPeerId) {
-            selectPeer(state.yourPeerId, updateView, updateURL);
-        }
     }
 });
 

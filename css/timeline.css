@@ -43,34 +43,6 @@
             color: var(--text-muted);
         }
 
-        .timeline-mode {
-            font-family: var(--font-mono);
-            font-size: 0.8em;
-            font-weight: 600;
-            padding: 8px 20px;
-            border-radius: 8px;
-            cursor: pointer;
-            border: none;
-            transition: all 0.2s ease;
-            letter-spacing: 0.05em;
-        }
-
-        .timeline-mode.live {
-            background: var(--accent-primary);
-            color: var(--bg-primary);
-            box-shadow: 0 0 20px var(--accent-glow);
-        }
-
-        .timeline-mode.historical {
-            background: var(--color-put);
-            color: var(--bg-primary);
-            box-shadow: 0 0 20px rgba(251, 191, 36, 0.3);
-        }
-
-        .timeline-mode:hover {
-            transform: scale(1.02);
-        }
-
         /* Timeline Track */
         .timeline {
             position: relative;
@@ -265,28 +237,3 @@
             opacity: 0.5;
         }
 
-        /* Keyboard shortcuts hint */
-        .shortcuts-hint {
-            position: fixed;
-            bottom: 200px;
-            right: 24px;
-            font-family: var(--font-mono);
-            font-size: 0.7em;
-            color: var(--text-muted);
-            opacity: 0;
-            transition: opacity 0.3s;
-            pointer-events: none;
-        }
-
-        body:hover .shortcuts-hint {
-            opacity: 0.5;
-        }
-
-        .shortcuts-hint kbd {
-            display: inline-block;
-            padding: 2px 6px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: 4px;
-            margin: 0 2px;
-        }

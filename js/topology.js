@@ -652,6 +652,16 @@ function startConnectionAnimation() {
 // Canvas: draw hovered event highlight line
 // ============================================================================
 
+// Event type colors for hovered event line (matches CSS vars)
+const EVENT_LINE_COLORS = {
+    connect:   '#7ecfef',
+    put:       '#fbbf24',
+    get:       '#34d399',
+    update:    '#a78bfa',
+    subscribe: '#f472b6',
+    other:     '#9ca3af'
+};
+
 function drawHoveredEventLine(ctx, peers) {
     if (!state.hoveredEvent) return;
     const fromPeer = state.hoveredEvent.from_peer || state.hoveredEvent.peer_id;
@@ -669,14 +679,81 @@ function drawHoveredEventLine(ctx, peers) {
     });
     if (!fromPos || !toPos) return;
 
+    const eventClass = getEventClass(state.hoveredEvent.event_type);
+    const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
+
+    const dx = toPos.x - fromPos.x;
+    const dy = toPos.y - fromPos.y;
+    const dist = Math.sqrt(dx * dx + dy * dy);
+    if (dist < 10) return;
+
+    // Offset to avoid overlapping peer dots
+    const offsetStart = 12 / dist;
+    const offsetEnd = 12 / dist;
+    const x1 = fromPos.x + dx * offsetStart;
+    const y1 = fromPos.y + dy * offsetStart;
+    const x2 = fromPos.x + dx * (1 - offsetEnd);
+    const y2 = fromPos.y + dy * (1 - offsetEnd);
+
     ctx.save();
-    ctx.strokeStyle = 'rgba(251, 191, 36, 0.8)';
+
+    // Draw line
+    ctx.strokeStyle = color;
     ctx.lineWidth = 3;
     ctx.lineCap = 'round';
+    ctx.globalAlpha = 0.85;
     ctx.beginPath();
-    ctx.moveTo(fromPos.x, fromPos.y);
-    ctx.lineTo(toPos.x, toPos.y);
+    ctx.moveTo(x1, y1);
+    ctx.lineTo(x2, y2);
     ctx.stroke();
+
+    // Arrowhead at destination
+    const angle = Math.atan2(dy, dx);
+    const arrowLen = 10;
+    const arrowWidth = 5;
+    ctx.fillStyle = color;
+    ctx.beginPath();
+    ctx.moveTo(x2, y2);
+    ctx.lineTo(x2 - arrowLen * Math.cos(angle - Math.PI / 6), y2 - arrowLen * Math.sin(angle - Math.PI / 6));
+    ctx.lineTo(x2 - arrowLen * Math.cos(angle + Math.PI / 6), y2 - arrowLen * Math.sin(angle + Math.PI / 6));
+    ctx.closePath();
+    ctx.fill();
+
+    // Label at midpoint
+    const eventType = state.hoveredEvent.event_type;
+    if (eventType) {
+        const mx = (x1 + x2) / 2;
+        const my = (y1 + y2) / 2;
+        const label = eventType.replace(/_/g, ' ');
+
+        ctx.font = '9px "JetBrains Mono", monospace';
+        const metrics = ctx.measureText(label);
+        const padX = 5, padY = 3;
+        const boxW = metrics.width + padX * 2;
+        const boxH = 13 + padY * 2;
+
+        // Rounded rect background
+        const bx = mx - boxW / 2;
+        const by = my - boxH / 2;
+        ctx.globalAlpha = 0.85;
+        ctx.fillStyle = 'rgba(13, 17, 23, 0.9)';
+        ctx.beginPath();
+        ctx.roundRect(bx, by, boxW, boxH, 4);
+        ctx.fill();
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.roundRect(bx, by, boxW, boxH, 4);
+        ctx.stroke();
+
+        // Label text
+        ctx.globalAlpha = 1;
+        ctx.fillStyle = color;
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'middle';
+        ctx.fillText(label, mx, my);
+    }
+
     ctx.restore();
 }
 
