@@ -48,37 +48,6 @@
             background: rgba(52, 211, 153, 0.15);
         }
 
-        /* Panel Tabs */
-        .panel-tabs {
-            display: flex;
-            gap: 4px;
-        }
-
-        .panel-tab {
-            font-family: var(--font-mono);
-            font-size: 0.85em;
-            font-weight: 500;
-            padding: 8px 16px;
-            background: transparent;
-            border: none;
-            color: var(--text-muted);
-            cursor: pointer;
-            border-radius: 6px 6px 0 0;
-            transition: all 0.2s;
-            letter-spacing: 0.05em;
-        }
-
-        .panel-tab:hover {
-            color: var(--text-secondary);
-            background: rgba(255, 255, 255, 0.05);
-        }
-
-        .panel-tab.active {
-            color: var(--accent-light);
-            background: rgba(126, 207, 239, 0.1);
-            border-bottom: 2px solid var(--accent-light);
-        }
-
         .tab-count {
             font-size: 0.85em;
             padding: 2px 6px;
@@ -86,32 +55,6 @@
             color: var(--color-subscribe);
             border-radius: 10px;
             margin-left: 4px;
-        }
-
-        .tab-content {
-            display: none;
-        }
-
-        .tab-content.active {
-            display: flex;
-            flex-direction: column;
-            flex: 1;
-            min-height: 0;
-        }
-
-        /* Events Header */
-        .events-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 8px 12px;
-            background: rgba(0, 0, 0, 0.1);
-        }
-
-        .events-title {
-            font-family: var(--font-mono);
-            font-size: 0.8em;
-            color: var(--text-muted);
         }
 
         /* Contracts List */
@@ -524,35 +467,6 @@
             margin-top: 2px;
         }
 
-        /* Event type legend */
-        .event-legend {
-            display: flex;
-            flex-wrap: wrap;
-            gap: 12px;
-            margin-top: 12px;
-            padding-top: 12px;
-            border-top: 1px solid var(--border-color);
-        }
-
-        .event-legend-item {
-            display: flex;
-            align-items: center;
-            gap: 6px;
-            font-size: 0.7em;
-            color: var(--text-muted);
-        }
-
-        .event-legend-dot {
-            width: 8px;
-            height: 8px;
-            border-radius: 2px;
-        }
-
-        .event-legend-dot.connect { background: var(--color-connect); }
-        .event-legend-dot.put { background: var(--color-put); }
-        .event-legend-dot.get { background: var(--color-get); }
-        .event-legend-dot.update { background: var(--color-update); }
-        .event-legend-dot.subscribe { background: var(--color-subscribe); }
 
 
 /* ============================================

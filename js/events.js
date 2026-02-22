@@ -216,95 +216,11 @@ export function handleEventHover(idx, updateView) {
 }
 
 /**
- * Render the events panel
- * @param {Array} nearbyEvents - Events to display
+ * Render the events panel (removed — replaced by timeline canvas tooltips)
  */
-export function renderEventsPanel(nearbyEvents) {
-    const eventsPanel = document.getElementById('events-panel');
-
-    // Update events title based on filtering
-    const eventsTitle = document.getElementById('events-title');
-    if (state.selectedContract && state.contractData[state.selectedContract]) {
-        eventsTitle.textContent = `Events for ${state.contractData[state.selectedContract].short_key}`;
-    } else if (state.selectedPeerId) {
-        eventsTitle.textContent = `Events for ${state.selectedPeerId.substring(0, 12)}...`;
-    } else {
-        eventsTitle.textContent = 'Events';
-    }
-
-    if (nearbyEvents.length === 0) {
-        state.displayedEvents = [];
-        const emptyMsg = state.selectedContract
-            ? 'No subscription events in this time range'
-            : 'No events in this time range';
-        eventsPanel.innerHTML = `
-            <div class="empty-state">
-                <div class="empty-state-icon">&#8709;</div>
-                <div>${emptyMsg}</div>
-            </div>
-        `;
-        return;
-    }
-
-    // Add sticky header row
-    const headerHtml = `
-        <div class="events-header">
-            <span class="header-time">Time</span>
-            <span class="header-type">Type</span>
-            <span class="header-peers">Peers (from -> to)</span>
-            <span class="header-tx">Tx</span>
-        </div>
-    `;
-
-    const eventsHtml = nearbyEvents.map((e, idx) => {
-        const isSelected = state.selectedEvent &&
-            state.selectedEvent.timestamp === e.timestamp &&
-            state.selectedEvent.peer_id === e.peer_id;
-        const classes = ['event-item'];
-        if (isSelected) classes.push('selected');
-
-        // Build peer display: from_peer -> to_peer or just peer_id
-        let peersHtml = '';
-        const fromPeer = e.from_peer || e.peer_id;
-        const toPeer = e.to_peer;
-        const fromActive = state.selectedPeerId === fromPeer ? ' active' : '';
-        const toActive = toPeer && state.selectedPeerId === toPeer ? ' active' : '';
-
-        if (toPeer && toPeer !== fromPeer) {
-            peersHtml = `
-                <span class="event-filter-link${fromActive}" onclick="event.stopPropagation(); togglePeerFilter('${fromPeer}')">${fromPeer.substring(0, 12)}</span>
-                <span class="event-arrow">-></span>
-                <span class="event-filter-link${toActive}" onclick="event.stopPropagation(); togglePeerFilter('${toPeer}')">${toPeer.substring(0, 12)}</span>
-            `;
-        } else {
-            peersHtml = `<span class="event-filter-link${fromActive}" onclick="event.stopPropagation(); togglePeerFilter('${fromPeer}')">${fromPeer.substring(0, 12)}</span>`;
-        }
-
-        // Transaction ID (shortened)
-        const txActive = e.tx_id && state.selectedTxId === e.tx_id ? ' active' : '';
-        const txHtml = e.tx_id ? `<span class="event-tx event-filter-link${txActive}" onclick="event.stopPropagation(); toggleTxFilter('${e.tx_id}')">${e.tx_id.substring(0, 8)}</span>` : '';
-
-        // State hash display
-        let stateHashHtml = '';
-        if (e.state_hash_before && e.state_hash_after) {
-            stateHashHtml = `<span class="state-hash">[${e.state_hash_before.substring(0, 4)}->${e.state_hash_after.substring(0, 4)}]</span>`;
-        } else if (e.state_hash) {
-            stateHashHtml = `<span class="state-hash">[${e.state_hash.substring(0, 4)}]</span>`;
-        }
-
-        return `
-            <div class="${classes.join(' ')}" data-event-idx="${idx}" onclick="handleEventClick(${idx})" onmouseenter="handleEventHover(${idx})" onmouseleave="handleEventHover(null)">
-                <span class="event-time">${e.time_str}</span>
-                <span class="event-badge ${getEventClass(e.event_type)}">${getEventLabel(e.event_type)}</span>
-                <div class="event-peers">${peersHtml}</div>
-                ${stateHashHtml}
-                ${txHtml}
-            </div>
-        `;
-    }).reverse().join('');
-
-    eventsPanel.innerHTML = headerHtml + eventsHtml;
-    state.displayedEvents = nearbyEvents;
+export function renderEventsPanel() {
+    // No-op: events panel has been removed.
+    // Event details are now shown via timeline canvas hover tooltips.
 }
 
 /**
@@ -373,9 +289,6 @@ export function updateURL() {
     if (state.selectedTxId) {
         params.set('tx', state.selectedTxId.substring(0, 12));
     }
-    if (state.activeTab !== 'events') {
-        params.set('tab', state.activeTab);
-    }
     if (!state.isLive && state.currentTime) {
         params.set('time', new Date(state.currentTime / 1_000_000).toISOString());
     }
@@ -387,10 +300,9 @@ export function updateURL() {
 
 /**
  * Load state from URL
- * @param {Function} switchTab - Callback to switch tabs
  * @param {Function} updateView - Callback to refresh view
  */
-export function loadFromURL(switchTab, updateView) {
+export function loadFromURL(updateView) {
     const params = new URLSearchParams(window.location.search);
 
     // Restore contract selection
@@ -423,12 +335,6 @@ export function loadFromURL(switchTab, updateView) {
         }
     }
 
-    // Restore tab
-    const tabParam = params.get('tab');
-    if (tabParam && ['events', 'contracts', 'transactions', 'peers'].includes(tabParam)) {
-        switchTab(tabParam);
-    }
-
     // Restore time
     const timeParam = params.get('time');
     if (timeParam) {
@@ -437,8 +343,6 @@ export function loadFromURL(switchTab, updateView) {
             if (!isNaN(timestamp) && timestamp > 0) {
                 state.currentTime = timestamp;
                 state.isLive = false;
-                const liveBtn = document.getElementById('live-btn');
-                if (liveBtn) liveBtn.classList.remove('active');
                 console.log('Restored time from URL:', timeParam);
             }
         } catch (e) {

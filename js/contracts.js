@@ -5,7 +5,6 @@
 
 import { state } from './state.js';
 import { hashToColor, formatRelativeTime, getContractActivity } from './utils.js';
-import { renderTimeline } from './timeline.js';
 
 /**
  * Render a small SVG sparkline showing propagation timeline.
@@ -89,7 +88,6 @@ export function selectContract(contractKey, updateView, updateURL) {
     clearAllBtn.style.display = hasFilters ? 'inline-block' : 'none';
 
     updateView();
-    renderTimeline(); // Re-render to dim/highlight events based on selected contract
     updateURL();
 }
 
@@ -268,11 +266,10 @@ export function renderContractsList() {
 /**
  * Show transaction detail popup
  * @param {Object} tx - Transaction object
- * @param {Function} switchTab - Callback to switch tabs
  * @param {Function} updateView - Callback to refresh view
  * @param {Function} updateURL - Callback to update URL state
  */
-export function showTransactionDetail(tx, switchTab, updateView, updateURL) {
+export function showTransactionDetail(tx, updateView, updateURL) {
     // Toggle: clicking same transaction clears the filter
     if (state.selectedTxId === tx.tx_id) {
         state.selectedTxId = null;
@@ -289,7 +286,6 @@ export function showTransactionDetail(tx, switchTab, updateView, updateURL) {
             if (evt.from_peer) state.highlightedPeers.add(evt.from_peer);
             if (evt.to_peer) state.highlightedPeers.add(evt.to_peer);
         });
-        switchTab('events');
     }
 
     // Update filter bar
@@ -348,35 +344,8 @@ export function closeTransactionDetail(updateView) {
 }
 
 /**
- * Switch between tabs
- * @param {string} tabName - Tab name to switch to
- * @param {Function} updateURL - Callback to update URL state
- */
-export function switchTab(tabName, updateURL) {
-    state.activeTab = tabName;
-
-    // Update tab buttons
-    document.querySelectorAll('.panel-tab').forEach(tab => {
-        tab.classList.toggle('active', tab.id === `tab-${tabName}`);
-    });
-
-    // Update tab content
-    document.querySelectorAll('.tab-content').forEach(content => {
-        content.classList.toggle('active', content.id === `tab-content-${tabName}`);
-    });
-
-    // Render contracts if switching to that tab
-    if (tabName === 'contracts') {
-        renderContractsList();
-    }
-
-    if (updateURL) updateURL();
-}
-
-/**
  * Update contract dropdown (deprecated - kept for compatibility)
  */
 export function updateContractDropdown() {
-    // Contract dropdown has been replaced by Contracts tab
-    // This function is kept for compatibility but is now a no-op
+    // No-op: kept for compatibility with websocket callback
 }

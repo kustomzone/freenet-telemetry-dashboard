@@ -5,7 +5,7 @@
             left: 0;
             right: 0;
             background: linear-gradient(to top, var(--bg-primary) 0%, var(--bg-primary) 60%, transparent 100%);
-            padding: 30px 24px 20px;
+            padding: 20px 24px 15px;
             z-index: 100;
             overflow-x: hidden;
         }
@@ -20,7 +20,7 @@
             display: flex;
             justify-content: space-between;
             align-items: center;
-            margin-bottom: 12px;
+            margin-bottom: 8px;
         }
 
         .timeline-info {
@@ -74,7 +74,7 @@
         /* Timeline Track */
         .timeline {
             position: relative;
-            height: 115px;
+            height: 95px;
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
             border-radius: 12px;
@@ -82,70 +82,33 @@
             cursor: crosshair;
         }
 
-        .timeline-track {
-            position: absolute;
-            top: 60%;
-            left: 16px;
-            right: 16px;
-            height: 2px;
-            background: var(--border-color);
-            transform: translateY(-50%);
-        }
-
-        /* Timeline Ruler */
-        .timeline-ruler {
-            position: absolute;
-            top: 8px;
-            left: 16px;
-            right: 16px;
-            height: 24px;
-            display: flex;
-            justify-content: space-between;
-            pointer-events: none;
-        }
-
-        .timeline-tick {
-            display: flex;
-            flex-direction: column;
-            align-items: center;
-            font-family: var(--font-mono);
-            font-size: 0.65em;
-            color: var(--text-muted);
-        }
-
-        .timeline-tick::after {
-            content: '';
-            width: 1px;
-            height: 8px;
-            background: var(--border-color);
-            margin-top: 2px;
-        }
-
-        .timeline-tick.major::after {
-            height: 14px;
-            background: var(--text-muted);
-        }
-
         .timeline-events {
             position: absolute;
-            top: 20px;
+            top: 0;
             left: 50px; /* space for labels */
-            right: 16px;
-            height: 75px; /* 5 lanes * 15px each */
+            right: 0;
+            bottom: 0;
+        }
+
+        #timeline-canvas {
+            width: 100%;
+            height: 100%;
+            display: block;
         }
 
         .timeline-lane-labels {
             position: absolute;
-            top: 20px;
+            top: 0;
             left: 8px;
             width: 40px;
-            height: 75px;
+            bottom: 0;
             display: flex;
             flex-direction: column;
+            justify-content: space-around;
+            z-index: 2;
         }
 
         .timeline-lane-label {
-            height: 15px;
             font-family: var(--font-mono);
             font-size: 0.55em;
             font-weight: 500;
@@ -155,166 +118,12 @@
             justify-content: flex-end;
         }
 
-        .timeline-marker {
-            position: absolute;
-            width: 4px;
-            border-radius: 2px;
-            transition: all 0.15s ease;
-            cursor: pointer;
-        }
-
-        .timeline-marker:hover {
-            transform: scaleX(2);
-            z-index: 5;
-        }
-
-        .timeline-marker.connect { background: var(--color-connect); }
-        .timeline-marker.put { background: var(--color-put); }
-        .timeline-marker.get { background: var(--color-get); }
-        .timeline-marker.update { background: var(--color-update); }
-        .timeline-marker.subscribe { background: var(--color-subscribe); }
-        .timeline-marker.other { background: var(--text-muted); }
-
-        /* Playhead - Time Window Range */
-        .timeline-playhead {
-            position: absolute;
-            top: 20px;  /* Align with timeline-events which starts at 20px */
-            bottom: 10px;
-            min-width: 40px;
-            background: rgba(255, 255, 255, 0.08);
-            border: 1px solid rgba(255, 255, 255, 0.3);
-            border-radius: 6px;
-            z-index: 10;
-            touch-action: none;  /* Prevent browser touch gestures */
-        }
-
-        .timeline-playhead::before {
-            content: '';
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            left: var(--center-line-position, 50%);
-            width: 2px;
-            background: var(--text-primary);
-            transform: translateX(-50%);
-            box-shadow: 0 0 8px rgba(255, 255, 255, 0.5);
-        }
-
-        .timeline-playhead-handle {
-            position: absolute;
-            top: -8px;
-            left: var(--center-line-position, 50%);
-            transform: translateX(-50%);
-            width: 20px;
-            height: 16px;
-            background: var(--text-primary);
-            border-radius: 4px 4px 0 0;
-            cursor: grab;
-            display: flex;
-            align-items: center;
-            justify-content: center;
-        }
-
-        .timeline-playhead-handle::after {
-            content: '⋮⋮';
-            font-size: 8px;
-            color: var(--bg-primary);
-            letter-spacing: 1px;
-        }
-
-        .timeline-playhead-label {
-            position: absolute;
-            bottom: -20px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-family: var(--font-mono);
-            font-size: 0.6em;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-
-        /* Resize handles on playhead edges */
-        .timeline-resize-handle {
-            position: absolute;
-            top: 0;
-            bottom: 0;
-            width: 16px;
-            cursor: ew-resize;
-            z-index: 20;
-            touch-action: none;  /* Prevent browser touch gestures */
-        }
-
-        .timeline-resize-handle::before {
-            content: '';
-            position: absolute;
-            top: 50%;
-            transform: translateY(-50%);
-            width: 4px;
-            height: 20px;
-            background: rgba(255, 255, 255, 0.6);
-            border-radius: 2px;
-        }
-
-        .timeline-resize-handle:hover::before {
-            background: var(--text-primary);
-        }
-
-        .timeline-resize-handle.left {
-            left: -8px;
-        }
-
-        .timeline-resize-handle.left::before {
-            left: 6px;
-        }
-
-        .timeline-resize-handle.right {
-            right: -8px;
-        }
-
-        .timeline-resize-handle.right::before {
-            right: 6px;
-        }
-
-        .playhead-window-label {
-            position: absolute;
-            bottom: -18px;
-            left: 50%;
-            transform: translateX(-50%);
-            font-family: var(--font-mono);
-            font-size: 0.6em;
-            color: var(--text-muted);
-            white-space: nowrap;
-        }
-
-        .timeline-live-zone {
-            position: absolute;
-            right: 0;
-            top: 0;
-            bottom: 0;
-            width: 60px;
-            background: linear-gradient(to right, transparent, rgba(0, 212, 170, 0.08));
-            border-left: 1px dashed rgba(0, 212, 170, 0.3);
-        }
-
         .timeline-labels {
             display: flex;
-            justify-content: space-between;
+            justify-content: center;
             align-items: center;
-            margin-top: 10px;
+            margin-top: 6px;
             padding: 0 4px;
-        }
-
-        .timeline-label {
-            font-family: var(--font-mono);
-            font-size: 0.7em;
-            color: var(--text-muted);
-        }
-
-        .timeline-help {
-            font-family: var(--font-mono);
-            font-size: 0.65em;
-            color: var(--text-muted);
-            opacity: 0.7;
         }
 
         .timeline-legend {
@@ -326,71 +135,58 @@
             align-items: center;
         }
 
-        /* Detail Timeline with Transaction Lanes */
-        .timeline-detail-header { display: flex; justify-content: space-between; align-items: center; margin-top: 12px; margin-bottom: 6px; padding: 0 4px; }
-        .timeline-detail-title { font-family: var(--font-mono); font-size: 0.7em; color: var(--text-muted); font-weight: 500; }
-        .timeline-detail-range { font-family: var(--font-mono); font-size: 0.65em; color: var(--text-primary); }
-        .detail-legend { display: flex; gap: 12px; font-family: var(--font-mono); font-size: 0.6em; color: var(--text-muted); }
-        .detail-legend .legend-item { display: flex; align-items: center; gap: 4px; }
-        .detail-legend .legend-dot { width: 10px; height: 10px; border-radius: 5px; }
-        .detail-legend .legend-dot.put { background: var(--color-put); }
-        .detail-legend .legend-dot.get { background: var(--color-get); }
-        .detail-legend .legend-dot.update { background: var(--color-update); }
-        .detail-legend .legend-dot.subscribe { background: var(--color-subscribe); }
-        .timeline-detail { position: relative; height: 120px; background: var(--bg-tertiary); border-radius: 8px; padding: 8px 16px; margin-bottom: 8px; }
-        .timeline-detail .timeline-ruler { top: 8px; }
-        .timeline-lanes { position: absolute; top: 28px; left: 16px; right: 16px; bottom: 8px; overflow: hidden; }
-        .tx-lane { position: absolute; left: 0; right: 0; height: 16px; }
-        /* Transaction container - holds line and pills */
-        .tx-container { position: absolute; height: 14px; min-width: 6px; cursor: pointer; top: 1px; }
-        .tx-container:hover { z-index: 10; }
-        .tx-container:hover .tx-pill { transform: translateX(-50%) translateY(-50%) scale(1.3); }
-        .tx-container.pending { opacity: 0.5; }
-        .tx-container.failed .tx-line { box-shadow: 0 0 4px 1px #ff6b6b; }
-        .tx-container.dimmed { opacity: 0.15; }
-
-        /* Thin line showing transaction duration */
-        .tx-line { position: absolute; top: 50%; left: 0; right: 0; height: 2px; transform: translateY(-50%); border-radius: 1px; }
-        .tx-line.put { background: var(--color-put); opacity: 0.5; }
-        .tx-line.get { background: var(--color-get); opacity: 0.5; }
-        .tx-line.update { background: var(--color-update); opacity: 0.5; }
-        .tx-line.subscribe { background: var(--color-subscribe); opacity: 0.5; }
-        .tx-line.connect { background: var(--color-connect); opacity: 0.5; }
-        .tx-line.disconnect { background: var(--color-error); opacity: 0.5; }
-        .tx-line.other { background: var(--text-muted); opacity: 0.5; }
-
-        /* Event pills along the transaction - prominent like before */
-        .tx-pill { position: absolute; top: 50%; width: 12px; height: 12px; border-radius: 6px; transform: translateX(-50%) translateY(-50%); transition: transform 0.1s; }
-        .tx-pill.put { background: var(--color-put); }
-        .tx-pill.get { background: var(--color-get); }
-        .tx-pill.update { background: var(--color-update); }
-        .tx-pill.subscribe { background: var(--color-subscribe); }
-        .tx-pill.connect { background: var(--color-connect); }
-        .tx-pill.disconnect { background: var(--color-error); }
-        .tx-pill.other { background: var(--text-muted); }
-
-        /* Transaction event markers (Gantt-style) */
-        .tx-event-marker {
-            position: absolute;
-            border-radius: 3px;
-            cursor: pointer;
-            transform: translateX(-50%);
-            transition: transform 0.1s;
+        .timeline-legend .legend-dot {
+            display: inline-block;
+            width: 8px;
+            height: 8px;
+            border-radius: 4px;
         }
-        .tx-event-marker:hover { transform: translateX(-50%) scale(1.3); z-index: 10; }
-        .tx-event-marker.put { background: var(--color-put); }
-        .tx-event-marker.get { background: var(--color-get); }
-        .tx-event-marker.update { background: var(--color-update); }
-        .tx-event-marker.subscribe { background: var(--color-subscribe); }
-        .tx-event-marker.success { background: var(--color-connect); }
-        .tx-event-marker.failed { background: #ff6b6b; }
-        .tx-event-marker.other { background: var(--text-muted); }
-        .tx-connector { opacity: 0.5; }
 
-        /* Playhead grab cursor */
-        .timeline-playhead { cursor: grab; }
+        /* Timeline Tooltip */
+        .timeline-tooltip {
+            position: fixed;
+            display: none;
+            background: var(--bg-tertiary);
+            border: 1px solid var(--border-color);
+            border-radius: 6px;
+            padding: 8px 12px;
+            font-family: var(--font-mono);
+            font-size: 0.8rem;
+            color: var(--text-primary);
+            z-index: 200;
+            pointer-events: none;
+            box-shadow: 0 4px 12px rgba(0, 0, 0, 0.4);
+            max-width: 260px;
+        }
 
-        /* Transaction Detail Gantt View - Floating overlay */
+        .timeline-tooltip .tooltip-type {
+            font-weight: 600;
+            font-size: 0.85em;
+            text-transform: lowercase;
+            margin-bottom: 4px;
+        }
+
+        .timeline-tooltip .tooltip-type.connect { color: var(--color-connect); }
+        .timeline-tooltip .tooltip-type.put { color: var(--color-put); }
+        .timeline-tooltip .tooltip-type.get { color: var(--color-get); }
+        .timeline-tooltip .tooltip-type.update { color: var(--color-update); }
+        .timeline-tooltip .tooltip-type.subscribe { color: var(--color-subscribe); }
+
+        .timeline-tooltip .tooltip-time {
+            color: var(--text-muted);
+            font-size: 0.85em;
+            margin-bottom: 4px;
+        }
+
+        .timeline-tooltip .tooltip-peer,
+        .timeline-tooltip .tooltip-contract,
+        .timeline-tooltip .tooltip-tx {
+            color: var(--text-secondary);
+            font-size: 0.8em;
+            margin-top: 2px;
+        }
+
+        /* Transaction Detail Gantt View - Floating overlay (kept) */
         .tx-detail-container {
             display: none;
             position: fixed;
@@ -494,27 +290,3 @@
             border-radius: 4px;
             margin: 0 2px;
         }
-
-        /* Transaction filter */
-        .filter-input {
-            font-family: var(--font-mono);
-            font-size: 0.8em;
-            padding: 8px 12px;
-            background: var(--bg-tertiary);
-            border: 1px solid var(--border-color);
-            border-radius: 8px;
-            color: var(--text-primary);
-            width: 200px;
-            transition: all 0.2s;
-        }
-
-        .filter-input:focus {
-            outline: none;
-            border-color: var(--accent-primary);
-            box-shadow: 0 0 0 3px var(--accent-glow);
-        }
-
-        .filter-input::placeholder {
-            color: var(--text-muted);
-        }
-

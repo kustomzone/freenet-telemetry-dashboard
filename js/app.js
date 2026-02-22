@@ -8,23 +8,22 @@ import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
 import { updateRingSVG } from './topology.js';
 import {
-    renderRuler, renderDetailTimeline, renderTimeline,
-    updatePlayhead, updateWindowLabel, setupTimeline,
+    renderTimeline, renderRuler,
+    updatePlayhead, setupTimeline,
     goLive as timelineGoLive, goToTime as timelineGoToTime,
-    addEventMarker
+    addEventMarker, renderExponentialTimeline
 } from './timeline.js';
 import {
     selectEvent, selectPeer, togglePeerFilter, toggleTxFilter,
-    clearPeerSelection, updateFilterBar, clearPeerFilter,
+    updateFilterBar, clearPeerFilter,
     clearTxFilter, clearContractFilter, clearAllFilters as eventsClearAllFilters,
-    handleEventClick as eventsHandleEventClick, handleEventHover as eventsHandleEventHover,
-    renderEventsPanel, filterEvents, updateURL, loadFromURL, markURLLoaded,
+    updateURL, loadFromURL, markURLLoaded,
     isURLLoaded, trackTransactionFromEvent
 } from './events.js';
 import {
     selectContract as contractsSelectContract, renderContractsList,
     showTransactionDetail, closeTransactionDetail,
-    switchTab as contractsSwitchTab, updateContractDropdown
+    updateContractDropdown
 } from './contracts.js';
 import {
     connect, showPeerNamingPrompt, closePeerNamingPrompt,
@@ -157,25 +156,16 @@ function _updateViewImpl() {
         }
     }
 
-    // Filter and render events
-    const nearbyEvents = filterEvents();
-    renderEventsPanel(nearbyEvents);
-
     // Update event count (use total length in live mode to avoid O(n) scan every frame)
     document.getElementById('event-count').textContent = state.isLive
         ? state.allEvents.length
         : state.allEvents.filter(e => e.timestamp <= state.currentTime).length;
 
-    // Update timeline markers (has internal cache key, no-ops when unchanged)
-    renderTimeline();
-
-    // Update playhead
+    // Update playhead displays + render canvas timeline
     updatePlayhead();
 
-    // Update contracts list if that tab is active
-    if (state.activeTab === 'contracts') {
-        renderContractsList();
-    }
+    // Update contracts list
+    renderContractsList();
 }
 
 // updateView: throttled version used by all callbacks and event handlers
@@ -196,13 +186,6 @@ function goToTime(time) {
 }
 
 /**
- * Switch between tabs
- */
-function switchTab(tabName) {
-    contractsSwitchTab(tabName, updateURL);
-}
-
-/**
  * Select a contract
  */
 function selectContract(contractKey) {
@@ -217,21 +200,10 @@ function clearAllFilters() {
 }
 
 /**
- * Handle event click in events panel
+ * Handle event click (from timeline canvas)
  */
-function handleEventClick(idx) {
-    eventsHandleEventClick(idx, {
-        goToTime: goToTime,
-        goLive: goLive,
-        updateView: updateView
-    });
-}
-
-/**
- * Handle event hover
- */
-function handleEventHover(idx) {
-    eventsHandleEventHover(idx, updateView);
+function handleEventClick(event) {
+    selectEvent(event, goToTime, goLive, updateView);
 }
 
 // ============================================================================
@@ -240,18 +212,15 @@ function handleEventHover(idx) {
 
 window.goLive = goLive;
 window.goToTime = goToTime;
-window.switchTab = switchTab;
 window.selectContract = selectContract;
 window.clearAllFilters = clearAllFilters;
-window.handleEventClick = handleEventClick;
-window.handleEventHover = handleEventHover;
 window.togglePeerFilter = (peerId) => togglePeerFilter(peerId, updateView, updateURL);
 window.toggleTxFilter = (txId) => toggleTxFilter(txId, updateView, updateURL);
 window.clearPeerFilter = () => clearPeerFilter(updateView, updateURL);
 window.clearTxFilter = () => clearTxFilter(updateView, updateURL);
 window.clearContractFilter = () => clearContractFilter(updateView, updateURL);
 window.closeTransactionDetail = () => closeTransactionDetail(updateView);
-window.showTransactionDetail = (tx) => showTransactionDetail(tx, switchTab, updateView, updateURL);
+window.showTransactionDetail = (tx) => showTransactionDetail(tx, updateView, updateURL);
 
 // Find My Peer: select the user's own peer and show the button
 function findMyPeer() {
@@ -273,12 +242,13 @@ function showFindMyPeerButton() {
 // Initialization
 // ============================================================================
 
-// Setup timeline interactions
+// Setup timeline interactions (canvas hover/click, keyboard shortcuts)
 setupTimeline({
     goToTime: goToTime,
     goLive: goLive,
     updateView: updateView,
-    renderContractsList: renderContractsList
+    renderContractsList: renderContractsList,
+    selectEvent: handleEventClick
 });
 
 // Connect to WebSocket
@@ -292,7 +262,7 @@ connect({
     addEventMarker: addEventMarker,
     loadFromURL: () => {
         if (!isURLLoaded()) {
-            loadFromURL(switchTab, updateView);
+            loadFromURL(updateView);
         }
         // Show the Find My Peer button if user is a peer
         showFindMyPeerButton();

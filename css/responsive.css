@@ -83,15 +83,6 @@
                 font-size: 0.8em;
             }
 
-            .panel-tabs {
-                gap: 2px;
-            }
-
-            .panel-tab {
-                padding: 6px 10px;
-                font-size: 0.75em;
-            }
-
             /* Topology ring */
             .ring-container {
                 height: 280px;
@@ -126,14 +117,6 @@
             .timeline-mode {
                 padding: 6px 14px;
                 font-size: 0.7em;
-            }
-
-            .timeline-detail {
-                height: 80px;
-            }
-
-            .timeline-detail-header {
-                margin-top: 8px;
             }
 
             /* Filter bar */
@@ -193,16 +176,6 @@
                 padding: 10px;
             }
 
-            .panel-tab {
-                padding: 4px 8px;
-                font-size: 0.7em;
-            }
-
-            /* Events */
-            .events-list {
-                max-height: 200px;
-            }
-
             /* Contracts */
             .contracts-list {
                 max-height: 250px;
@@ -233,11 +206,6 @@
             .timeline-mode {
                 padding: 4px 10px;
                 font-size: 0.65em;
-            }
-
-            .timeline-detail {
-                height: 60px;
-                padding: 4px 8px;
             }
 
             .timeline-lane-labels {
@@ -287,13 +255,6 @@
                 justify-content: space-between;
             }
 
-            .timeline-detail {
-                height: 50px;
-            }
-
-            .timeline-detail-header {
-                display: none;
-            }
         }
 
         /* Very small screens (320px) */
@@ -318,8 +279,4 @@
                 font-size: 1em;
             }
 
-            .panel-tabs {
-                overflow-x: auto;
-                -webkit-overflow-scrolling: touch;
-            }
         }

@@ -109,46 +109,21 @@
 
                 <div class="panel">
                     <div class="panel-header">
-                        <div class="panel-tabs">
-                            <button class="panel-tab active" id="tab-contracts" onclick="switchTab('contracts')">Contracts <span class="tab-count" id="contract-tab-count">0</span></button>
-                            <button class="panel-tab" id="tab-events" onclick="switchTab('events')">Events</button>
-                        </div>
+                        <span class="panel-title">Contracts <span class="tab-count" id="contract-tab-count">0</span></span>
                     </div>
-                    <!-- Events Tab Content -->
-                    <div class="tab-content" id="tab-content-events">
-                        <div class="events-header">
-                            <span class="events-title" id="events-title">Events</span>
-                        </div>
-                        <div class="filter-bar" id="filter-bar">
-                            <span class="filter-bar-label">Filters:</span>
-                            <span class="filter-no-active" id="no-filters">None active</span>
-                            <div id="filter-chips"></div>
-                            <button class="filter-clear-all" id="clear-all-btn" onclick="clearAllFilters()" style="display: none;">Clear all</button>
-                        </div>
-                        <div class="events-panel" id="events-panel">
-                            <div class="empty-state">
-                                <div class="empty-state-icon">&#8987;</div>
-                                <div>Waiting for events...</div>
-                            </div>
-                        </div>
-                        <div class="event-legend">
-                            <span class="event-legend-item"><span class="event-legend-dot connect"></span> connect</span>
-                            <span class="event-legend-item"><span class="event-legend-dot put"></span> store</span>
-                            <span class="event-legend-item"><span class="event-legend-dot get"></span> get</span>
-                            <span class="event-legend-item"><span class="event-legend-dot update"></span> update</span>
-                            <span class="event-legend-item"><span class="event-legend-dot subscribe"></span> subscribe</span>
-                        </div>
+                    <div class="filter-bar" id="filter-bar">
+                        <span class="filter-bar-label">Filters:</span>
+                        <span class="filter-no-active" id="no-filters">None active</span>
+                        <div id="filter-chips"></div>
+                        <button class="filter-clear-all" id="clear-all-btn" onclick="clearAllFilters()" style="display: none;">Clear all</button>
                     </div>
-                    <!-- Contracts Tab Content -->
-                    <div class="tab-content active" id="tab-content-contracts">
-                        <div class="contracts-search">
-                            <input type="text" class="contract-search-input" id="contract-search" placeholder="Search by contract ID prefix...">
-                        </div>
-                        <div class="contracts-list" id="contracts-list">
-                            <div class="empty-state">
-                                <div class="empty-state-icon">&#128230;</div>
-                                <div>No contracts with activity</div>
-                            </div>
+                    <div class="contracts-search">
+                        <input type="text" class="contract-search-input" id="contract-search" placeholder="Search by contract ID prefix...">
+                    </div>
+                    <div class="contracts-list" id="contracts-list">
+                        <div class="empty-state">
+                            <div class="empty-state-icon">&#128230;</div>
+                            <div>No contracts with activity</div>
                         </div>
                     </div>
                 </div>
@@ -167,8 +142,6 @@
                 <button class="timeline-mode live" id="mode-button" onclick="goLive()">LIVE</button>
             </div>
             <div class="timeline" id="timeline">
-                <div class="timeline-ruler" id="timeline-ruler"></div>
-                <div class="timeline-track"></div>
                 <div class="timeline-lane-labels">
                     <div class="timeline-lane-label" style="color:var(--color-put)">PUT</div>
                     <div class="timeline-lane-label" style="color:var(--color-get)">GET</div>
@@ -176,17 +149,12 @@
                     <div class="timeline-lane-label" style="color:var(--color-subscribe)">SUB</div>
                     <div class="timeline-lane-label" style="color:var(--color-connect)">CONN</div>
                 </div>
-                <div class="timeline-events" id="timeline-events"></div>
-                <div class="timeline-live-zone"></div>
-                <div class="timeline-playhead" id="playhead">
-                    <div class="timeline-resize-handle left" id="resize-left"></div>
-                    <div class="timeline-playhead-handle"></div>
-                    <div class="timeline-resize-handle right" id="resize-right"></div>
-                    <div class="playhead-window-label" id="window-label">10 min</div>
+                <div class="timeline-events" id="timeline-events">
+                    <canvas id="timeline-canvas"></canvas>
                 </div>
             </div>
+            <div id="timeline-tooltip" class="timeline-tooltip"></div>
             <div class="timeline-labels">
-                <span class="timeline-label" id="timeline-start">--:--</span>
                 <div class="timeline-legend">
                     <span class="legend-item"><span class="legend-dot" style="background:var(--color-put)"></span>put</span>
                     <span class="legend-item"><span class="legend-dot" style="background:var(--color-get)"></span>get</span>
@@ -195,21 +163,6 @@
                     <span class="legend-item"><span class="legend-dot" style="background:var(--color-connect)"></span>conn</span>
                     <span style="color:var(--text-muted);font-size:0.85em;margin-left:6px">bright=completed</span>
                 </div>
-                <span class="timeline-label" id="timeline-end">Now</span>
-            </div>
-            <div class="timeline-detail-header">
-                <span class="timeline-detail-title">Transactions</span>
-                <div class="detail-legend">
-                    <span class="legend-item"><span class="legend-dot put"></span>put</span>
-                    <span class="legend-item"><span class="legend-dot get"></span>get</span>
-                    <span class="legend-item"><span class="legend-dot update"></span>update</span>
-                    <span class="legend-item"><span class="legend-dot subscribe"></span>subscribe</span>
-                </div>
-                <span class="timeline-detail-range" id="detail-range">--:-- to --:--</span>
-            </div>
-            <div class="timeline-detail" id="timeline-detail">
-                <div class="timeline-ruler" id="detail-ruler"></div>
-                <div class="timeline-lanes" id="timeline-lanes"></div>
             </div>
             <div class="tx-detail-container" id="tx-detail-container">
                 <div class="tx-detail-header">
