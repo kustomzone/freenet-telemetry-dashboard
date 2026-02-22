@@ -388,18 +388,25 @@ function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
     // Compute overall max depth for consistent layer height
     const overallMaxDepth = Math.max(1, ...segmentLayouts.map(s => s.maxDepth));
 
-    // Adaptive spacing: scale to fit canvas
+    // Adaptive spacing: scale to fit canvas, but allow horizontal overflow
     const totalWidthUnits = segmentLayouts.reduce((sum, s) => sum + s.totalWidth, 0);
-    const availableWidth = canvasWidth - 2 * PADDING_X - Math.max(0, segments.length - 1) * SEGMENT_GAP;
+    const gapTotal = Math.max(0, segments.length - 1) * SEGMENT_GAP;
+    const availableWidth = canvasWidth - 2 * PADDING_X - gapTotal;
     const availableHeight = canvasHeight - PADDING_TOP - PADDING_BOTTOM;
 
-    // Clamp unit width and layer height so tree fits
-    const unitWidth = Math.max(8, Math.min(50, availableWidth / Math.max(1, totalWidthUnits)));
+    // Use a minimum unit width of 20px so labels are readable; allow canvas to grow wider
+    const MIN_UNIT_WIDTH = 20;
+    const unitWidth = Math.max(MIN_UNIT_WIDTH, Math.min(50, availableWidth / Math.max(1, totalWidthUnits)));
     const layerH = Math.max(20, Math.min(55, availableHeight / (overallMaxDepth + 1)));
 
-    // Center the tree horizontally
-    const totalTreeWidth = totalWidthUnits * unitWidth + Math.max(0, segments.length - 1) * SEGMENT_GAP;
-    const offsetX = PADDING_X + Math.max(0, (availableWidth - totalTreeWidth + Math.max(0, segments.length - 1) * SEGMENT_GAP) / 2);
+    // Compute actual needed width (may exceed canvasWidth)
+    const totalTreeWidth = totalWidthUnits * unitWidth + gapTotal;
+    const neededWidth = totalTreeWidth + 2 * PADDING_X;
+
+    // Center the tree horizontally within the (possibly wider) canvas
+    const finalCanvasWidth = Math.max(canvasWidth, neededWidth);
+    const finalAvailable = finalCanvasWidth - 2 * PADDING_X - gapTotal;
+    const offsetX = PADDING_X + Math.max(0, (finalAvailable - totalTreeWidth + gapTotal) / 2);
 
     // Assign positions
     let segmentX = offsetX;
@@ -434,7 +441,7 @@ function layoutTree(roots, children, allNodes, canvasWidth, canvasHeight) {
         segmentX += segWidth + SEGMENT_GAP;
     }
 
-    return { layout, segments: segmentLayouts, overallMaxDepth };
+    return { layout, segments: segmentLayouts, overallMaxDepth, neededWidth: finalCanvasWidth };
 }
 
 // ============================================================================
@@ -757,7 +764,6 @@ function getOrCreateTreeCanvas(container) {
 
     treeCanvasEl = document.createElement('canvas');
     treeCanvasEl.id = 'tree-canvas';
-    treeCanvasEl.style.maxWidth = '100%';
     container.style.position = 'relative';
     container.appendChild(treeCanvasEl);
     return treeCanvasEl;
@@ -958,21 +964,23 @@ export function updateContractTree(container, peers, connections, subscriberPeer
         }
     }
 
+    // Use the wider of container width or layout's needed width
+    const finalWidth = layoutData.neededWidth || displayWidth;
     const finalHeight = Math.max(minHeight, maxY + 50);
-    const targetW = Math.round(displayWidth * dpr);
+    const targetW = Math.round(finalWidth * dpr);
     const targetH = Math.round(finalHeight * dpr);
     if (canvas.width !== targetW || canvas.height !== targetH) {
         canvas.width = targetW;
         canvas.height = targetH;
-        canvas.style.width = displayWidth + 'px';
+        canvas.style.width = finalWidth + 'px';
         canvas.style.height = finalHeight + 'px';
     }
 
     const ctx = canvas.getContext('2d');
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, displayWidth, finalHeight);
+    ctx.clearRect(0, 0, finalWidth, finalHeight);
 
-    drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, displayWidth, finalHeight);
+    drawContractTree(ctx, layoutData, treeData, peers, subscriberPeerIds, finalWidth, finalHeight);
     installTreeEvents(canvas, container);
 
     // Remove empty state if present
