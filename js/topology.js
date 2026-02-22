@@ -1361,7 +1361,7 @@ function renderDistChart(connectionDistances) {
 
     if (connectionDistances.length === 0) return;
 
-    // Sort ascending — shortest at top (y=0), longest at bottom
+    // Sort ascending — shortest at bottom, longest at top
     const sorted = [...connectionDistances].sort((a, b) => a - b);
     const n = sorted.length;
     const maxDist = sorted[n - 1] || 0.5;
@@ -1370,15 +1370,15 @@ function renderDistChart(connectionDistances) {
     const plotW = width - pad * 2;
     const plotH = height - pad * 2;
 
-    // Build line path: x = connection index, y = distance
+    // Build line path: x = connection index, y = distance (inverted: 0 at bottom)
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
         const x = pad + (i / (n - 1 || 1)) * plotW;
-        const y = pad + (sorted[i] / maxDist) * plotH;
+        const y = pad + plotH - (sorted[i] / maxDist) * plotH;
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
 
-    // Fill under the curve
+    // Fill under the curve (down to baseline)
     const gradient = ctx.createLinearGradient(0, pad, 0, pad + plotH);
     gradient.addColorStop(0, 'hsla(265, 70%, 65%, 0.35)');
     gradient.addColorStop(1, 'hsla(265, 60%, 45%, 0.08)');
@@ -1392,7 +1392,7 @@ function renderDistChart(connectionDistances) {
     ctx.beginPath();
     for (let i = 0; i < n; i++) {
         const x = pad + (i / (n - 1 || 1)) * plotW;
-        const y = pad + (sorted[i] / maxDist) * plotH;
+        const y = pad + plotH - (sorted[i] / maxDist) * plotH;
         if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
     ctx.strokeStyle = 'hsla(265, 70%, 65%, 0.9)';
@@ -1405,10 +1405,10 @@ function renderDistChart(connectionDistances) {
         ctx.font = '10px "JetBrains Mono", monospace';
         ctx.fillStyle = 'rgba(255,255,255,0.4)';
         ctx.textAlign = 'left';
-        ctx.textBaseline = 'top';
-        ctx.fillText('0.00', pad, pad - 12);
         ctx.textBaseline = 'bottom';
-        ctx.fillText(maxDist.toFixed(2), pad, pad + plotH + 12);
+        ctx.fillText('0.00', pad, pad + plotH + 12);
+        ctx.textBaseline = 'top';
+        ctx.fillText(maxDist.toFixed(2), pad, pad - 12);
         ctx.textAlign = 'right';
         ctx.textBaseline = 'top';
         ctx.fillText(`${n} conns`, pad + plotW, pad - 12);
