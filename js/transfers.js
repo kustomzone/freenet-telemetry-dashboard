@@ -1,6 +1,7 @@
 /**
- * Transfer Histogram Module
- * Shows distribution of transfer speeds
+ * Transfer Speeds Module
+ * Sorted cumulative curve showing distribution of transfer speeds.
+ * Mirrors the distance chart style: x = rank, y = speed (log scale).
  */
 
 // Transfer events storage
@@ -11,22 +12,11 @@ let canvas = null;
 let ctx = null;
 let initialized = false;
 
-// Chart dimensions
-let chartWidth = 0;
-let chartHeight = 0;
-const PADDING = { top: 2, right: 2, bottom: 2, left: 2 };
-
-// Speed buckets (log scale)
-const BUCKET_COUNT = 10;
-const MIN_SPEED = 100 * 1024;         // 100 KB/s
-const MAX_SPEED = 500 * 1024 * 1024;  // 500 MB/s
-
 // Track zoom state
 let isZoomed = false;
 
-// Cached bucket data
-let buckets = [];
-let maxBucketCount = 0;
+// Cached sorted speeds for tooltip lookup
+let sortedSpeeds = [];
 
 /**
  * Initialize the transfer chart
@@ -35,27 +25,17 @@ export function initTransferChart() {
     if (initialized) return;
 
     canvas = document.getElementById('transfer-canvas');
-    if (!canvas) {
-        console.log('Transfer chart: canvas not found');
-        return;
-    }
+    if (!canvas) return;
 
     const container = document.getElementById('transfer-chart');
-    if (!container) {
-        console.log('Transfer chart: container not found');
-        return;
-    }
+    if (!container) return;
 
     ctx = canvas.getContext('2d');
     initialized = true;
-    console.log('Transfer histogram: initialized');
 
-    requestAnimationFrame(() => {
-        setupCanvasSize();
-        renderTransferChart();
-    });
+    requestAnimationFrame(() => renderTransferChart());
 
-    // Set up tooltip on hover
+    // Set up tooltip on hover (zoomed only)
     canvas.addEventListener('mousemove', handleMouseMove);
     canvas.addEventListener('mouseleave', hideTooltip);
 
@@ -85,7 +65,6 @@ function toggleZoom(e) {
     if (backdrop) backdrop.classList.toggle('visible', isZoomed);
     if (zoomHint) zoomHint.textContent = isZoomed ? 'click to close' : 'click to zoom';
 
-    setupCanvasSize();
     renderTransferChart();
 }
 
@@ -106,7 +85,6 @@ function setupBackdropClose() {
                 }
                 backdrop.classList.remove('visible');
                 if (zoomHint) zoomHint.textContent = 'click to zoom';
-                setupCanvasSize();
                 renderTransferChart();
             }
         });
@@ -114,11 +92,34 @@ function setupBackdropClose() {
 }
 
 /**
- * Set up canvas size from container
+ * Format speed for display
  */
-function setupCanvasSize() {
+function formatSpeed(bytesPerSec) {
+    if (bytesPerSec >= 1024 * 1024 * 1024) return (bytesPerSec / (1024 * 1024 * 1024)).toFixed(1) + ' GB/s';
+    if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(1) + ' MB/s';
+    if (bytesPerSec >= 1024) return (bytesPerSec / 1024).toFixed(0) + ' KB/s';
+    return bytesPerSec + ' B/s';
+}
+
+/**
+ * Map a speed value to a Y position using log scale
+ */
+function speedToY(speed, minLog, logRange, pad, plotH) {
+    if (speed <= 0) return pad + plotH;
+    const logVal = Math.log10(speed);
+    const ratio = (logVal - minLog) / logRange;
+    // Invert: fastest at top
+    return pad + plotH - Math.max(0, Math.min(1, ratio)) * plotH;
+}
+
+/**
+ * Render the sorted cumulative curve
+ */
+export function renderTransferChart() {
+    if (!ctx || !canvas) return;
+
     const container = document.getElementById('transfer-chart');
-    if (!container || !canvas) return;
+    if (!container) return;
 
     const width = container.offsetWidth || 100;
     const height = container.offsetHeight || 40;
@@ -127,184 +128,161 @@ function setupCanvasSize() {
     canvas.width = Math.round(width * dpr);
     canvas.height = Math.round(height * dpr);
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-
-    chartWidth = width - PADDING.left - PADDING.right;
-    chartHeight = height - PADDING.top - PADDING.bottom;
-}
-
-/**
- * Get bucket index for a speed value (log scale)
- */
-function getBucketIndex(speed) {
-    if (speed <= MIN_SPEED) return 0;
-    if (speed >= MAX_SPEED) return BUCKET_COUNT - 1;
-
-    const logMin = Math.log10(MIN_SPEED);
-    const logMax = Math.log10(MAX_SPEED);
-    const logSpeed = Math.log10(speed);
-
-    const ratio = (logSpeed - logMin) / (logMax - logMin);
-    return Math.floor(ratio * BUCKET_COUNT);
-}
-
-/**
- * Get speed range for a bucket
- */
-function getBucketSpeedRange(index) {
-    const logMin = Math.log10(MIN_SPEED);
-    const logMax = Math.log10(MAX_SPEED);
-    const logRange = logMax - logMin;
-
-    const lowLog = logMin + (index / BUCKET_COUNT) * logRange;
-    const highLog = logMin + ((index + 1) / BUCKET_COUNT) * logRange;
-
-    return {
-        low: Math.pow(10, lowLog),
-        high: Math.pow(10, highLog)
-    };
-}
-
-/**
- * Calculate bucket counts from transfer events
- */
-function calculateBuckets() {
-    buckets = new Array(BUCKET_COUNT).fill(0);
-    maxBucketCount = 0;
-
-    for (const transfer of transferEvents) {
-        const speed = transfer.throughput_bps || 0;
-        if (speed > 0) {
-            const index = getBucketIndex(speed);
-            buckets[index]++;
-            maxBucketCount = Math.max(maxBucketCount, buckets[index]);
-        }
-    }
-}
-
-/**
- * Format speed for display
- */
-function formatSpeed(bytesPerSec) {
-    if (bytesPerSec >= 1024 * 1024 * 1024) return (bytesPerSec / (1024 * 1024 * 1024)).toFixed(0) + 'G/s';
-    if (bytesPerSec >= 1024 * 1024) return (bytesPerSec / (1024 * 1024)).toFixed(0) + 'M/s';
-    if (bytesPerSec >= 1024) return (bytesPerSec / 1024).toFixed(0) + 'K/s';
-    return bytesPerSec + 'B/s';
-}
-
-/**
- * Render the histogram
- */
-export function renderTransferChart() {
-    if (!ctx || !canvas || chartWidth <= 0 || chartHeight <= 0) return;
-
-    calculateBuckets();
-
-    const width = canvas.width / (window.devicePixelRatio || 1);
-    const height = canvas.height / (window.devicePixelRatio || 1);
-
-    // Clear canvas
     ctx.clearRect(0, 0, width, height);
 
-    if (maxBucketCount === 0) return;
+    // Extract and sort speeds ascending
+    const speeds = transferEvents
+        .map(e => e.throughput_bps || 0)
+        .filter(s => s > 0);
 
-    // Draw bars with adaptive widths based on density
-    const baseBarWidth = chartWidth / BUCKET_COUNT;
-    const minBarWidth = isZoomed ? 4 : 2;
-    const maxBarWidthRatio = 0.8;
+    if (speeds.length === 0) return;
 
-    for (let i = 0; i < BUCKET_COUNT; i++) {
-        const count = buckets[i];
-        if (count === 0) continue;
+    speeds.sort((a, b) => a - b);
+    sortedSpeeds = speeds;
+    const n = speeds.length;
 
-        // Height based on count
-        const barHeight = (count / maxBucketCount) * chartHeight;
+    // Log scale range from actual data
+    const minSpeed = speeds[0];
+    const maxSpeed = speeds[n - 1];
+    const minLog = Math.log10(minSpeed);
+    const maxLog = Math.log10(maxSpeed);
+    const logRange = maxLog - minLog || 1; // avoid division by zero
 
-        // Width proportional to density
-        const densityRatio = count / maxBucketCount;
-        const barActualWidth = minBarWidth + densityRatio * (baseBarWidth * maxBarWidthRatio - minBarWidth);
-        const barOffset = (baseBarWidth - barActualWidth) / 2;
+    const pad = isZoomed ? 20 : 2;
+    const plotW = width - pad * 2;
+    const plotH = height - pad * 2;
 
-        const x = PADDING.left + i * baseBarWidth + barOffset;
-        const y = PADDING.top + chartHeight - barHeight;
-
-        // Gradient - brighter for denser buckets
-        const hue = 200 + (i / BUCKET_COUNT) * 15;
-        const saturation = 40 + densityRatio * 30;
-        const lightness = 35 + (i / BUCKET_COUNT) * 10 + densityRatio * 10;
-
-        const gradient = ctx.createLinearGradient(x, y, x, y + barHeight);
-        gradient.addColorStop(0, `hsl(${hue}, ${saturation}%, ${lightness + 15}%)`);
-        gradient.addColorStop(1, `hsl(${hue}, ${saturation}%, ${lightness - 5}%)`);
-        ctx.fillStyle = gradient;
-
-        ctx.fillRect(x, y, barActualWidth, barHeight);
+    // Build path: x = rank (slowest left, fastest right), y = speed (log)
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+        const x = pad + (i / (n - 1 || 1)) * plotW;
+        const y = speedToY(speeds[i], minLog, logRange, pad, plotH);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
     }
 
-    // Draw axis labels when zoomed
-    if (isZoomed) {
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.5)';
-        ctx.font = '10px monospace';
-        ctx.textAlign = 'center';
+    // Fill under curve
+    const gradient = ctx.createLinearGradient(0, pad, 0, pad + plotH);
+    gradient.addColorStop(0, 'hsla(175, 70%, 55%, 0.35)');
+    gradient.addColorStop(1, 'hsla(175, 60%, 35%, 0.08)');
+    ctx.lineTo(pad + plotW, pad + plotH);
+    ctx.lineTo(pad, pad + plotH);
+    ctx.closePath();
+    ctx.fillStyle = gradient;
+    ctx.fill();
 
-        // Draw a few speed labels
-        const labelIndices = [0, Math.floor(BUCKET_COUNT / 2), BUCKET_COUNT - 1];
-        for (const i of labelIndices) {
-            const range = getBucketSpeedRange(i);
-            const x = PADDING.left + (i + 0.5) * barWidth;
-            ctx.fillText(formatSpeed(range.low), x, height - 2);
-        }
+    // Stroke the line
+    ctx.beginPath();
+    for (let i = 0; i < n; i++) {
+        const x = pad + (i / (n - 1 || 1)) * plotW;
+        const y = speedToY(speeds[i], minLog, logRange, pad, plotH);
+        if (i === 0) ctx.moveTo(x, y); else ctx.lineTo(x, y);
+    }
+    ctx.strokeStyle = 'hsla(175, 70%, 55%, 0.9)';
+    ctx.lineWidth = isZoomed ? 2 : 1.5;
+    ctx.lineJoin = 'round';
+    ctx.stroke();
+
+    // Median line when zoomed
+    if (isZoomed && n >= 3) {
+        const medianSpeed = speeds[Math.floor(n / 2)];
+        const medianY = speedToY(medianSpeed, minLog, logRange, pad, plotH);
+
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pad, medianY);
+        ctx.lineTo(pad + plotW, medianY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Median label
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('median ' + formatSpeed(medianSpeed), pad + plotW, medianY - 3);
+    }
+
+    // Axis labels when zoomed
+    if (isZoomed) {
+        ctx.font = '10px "JetBrains Mono", monospace';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+
+        // Bottom-left: min speed
+        ctx.textAlign = 'left';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(formatSpeed(minSpeed), pad, pad + plotH + 14);
+
+        // Top-left: max speed
+        ctx.textBaseline = 'top';
+        ctx.fillText(formatSpeed(maxSpeed), pad, pad - 14);
+
+        // Top-right: count
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'top';
+        ctx.fillText(`${n} transfers`, pad + plotW, pad - 14);
     }
 }
 
 /**
- * Handle mouse move for tooltip
+ * Handle mouse move for tooltip (zoomed only)
  */
 function handleMouseMove(e) {
-    if (!canvas || !isZoomed) {
+    if (!canvas || !isZoomed || sortedSpeeds.length === 0) {
         hideTooltip();
         return;
     }
 
     const rect = canvas.getBoundingClientRect();
-    const x = e.clientX - rect.left;
-    const barWidth = chartWidth / BUCKET_COUNT;
-    const bucketIndex = Math.floor((x - PADDING.left) / barWidth);
+    const container = document.getElementById('transfer-chart');
+    if (!container) return;
 
-    if (bucketIndex >= 0 && bucketIndex < BUCKET_COUNT && buckets[bucketIndex] > 0) {
-        const range = getBucketSpeedRange(bucketIndex);
-        showTooltip(e, bucketIndex, range, buckets[bucketIndex]);
-    } else {
+    const width = container.offsetWidth || 100;
+    const pad = 20; // zoomed padding
+    const plotW = width - pad * 2;
+
+    const mouseX = e.clientX - rect.left;
+    const ratio = (mouseX - pad) / plotW;
+
+    if (ratio < 0 || ratio > 1) {
         hideTooltip();
+        return;
     }
+
+    const index = Math.round(ratio * (sortedSpeeds.length - 1));
+    const speed = sortedSpeeds[index];
+
+    // Find the original event for extra details
+    const event = transferEvents.find(ev => ev.throughput_bps === speed);
+
+    showTooltip(e, index, speed, event);
 }
 
 /**
- * Show tooltip for a bucket
+ * Show tooltip for a data point
  */
-function showTooltip(e, index, range, count) {
+function showTooltip(e, index, speed, event) {
     const tooltip = document.getElementById('transfer-tooltip');
     if (!tooltip) return;
 
-    const html = `<div><strong>${count}</strong> transfers</div>
-        <div>${formatSpeed(range.low)} - ${formatSpeed(range.high)}</div>`;
+    const rank = sortedSpeeds.length - index;
+    let html = `<div><strong>${formatSpeed(speed)}</strong></div>`;
+    html += `<div>#${rank} of ${sortedSpeeds.length}</div>`;
+
+    if (event) {
+        if (event.rtt_ms) html += `<div>RTT: ${event.rtt_ms.toFixed(0)}ms</div>`;
+        if (event.direction) html += `<div>${event.direction}</div>`;
+    }
 
     tooltip.innerHTML = html;
     tooltip.style.display = 'block';
 
-    // Position tooltip above cursor (fixed positioning uses clientX/Y)
-    const tooltipWidth = 150;
-    const tooltipHeight = 60;
-
     let left = e.clientX + 10;
-    let top = e.clientY - tooltipHeight - 10;
+    let top = e.clientY - 70;
 
-    // Keep on screen
-    if (left + tooltipWidth > window.innerWidth) {
-        left = e.clientX - tooltipWidth - 10;
-    }
-    if (top < 10) {
-        top = e.clientY + 20;
-    }
+    if (left + 150 > window.innerWidth) left = e.clientX - 160;
+    if (top < 10) top = e.clientY + 20;
 
     tooltip.style.left = left + 'px';
     tooltip.style.top = top + 'px';
@@ -319,7 +297,7 @@ function hideTooltip() {
 }
 
 /**
- * Add transfer events from server
+ * Add transfer events from server (bulk)
  */
 export function addTransferEvents(events) {
     if (!Array.isArray(events)) return;
