@@ -381,7 +381,10 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     // Draw connections on canvas
     drawConnectionsCanvas(ctx, peers, connections);
 
-    // Draw highlighted connection for hovered event
+    // Draw arrows for all events in selected transaction
+    drawSelectedTransactionArrows(ctx, peers);
+
+    // Draw highlighted connection for hovered event (on top of transaction arrows)
     drawHoveredEventLine(ctx, peers);
 
     // Draw subscription/proximity links when contract selected
@@ -751,6 +754,187 @@ function drawHoveredEventLine(ctx, peers) {
         if (eventType) {
             drawEventLabel(ctx, px, py - 22, eventType, color);
         }
+    }
+
+    ctx.restore();
+}
+
+/**
+ * Draw arrows for all events in the selected transaction.
+ *
+ * Infers message flow from the transaction's events:
+ * - Finds the "origin" peer (the one with a request/emitted event)
+ * - Finds "receiver" peers (those with received/applied/success events)
+ * - Draws arrows from origin → each receiver
+ * - Falls back to per-event from_peer/to_peer when they differ
+ */
+function drawSelectedTransactionArrows(ctx, peers) {
+    const txEvents = state.selectedTxEvents;
+    if (!txEvents || txEvents.length === 0) return;
+
+    // Build peer position lookup (anon_id and peer_id both map to position)
+    const peerPos = new Map();
+    peers.forEach((peer, id) => {
+        const pos = locationToXY(peer.location);
+        peerPos.set(id, pos);
+        if (peer.peer_id) peerPos.set(peer.peer_id, pos);
+    });
+
+    const sorted = [...txEvents].sort((a, b) => a.timestamp - b.timestamp);
+
+    // Classify events: find origin peer and receiver peers
+    // "request" or "emitted" events → origin; "received"/"applied"/"success" → receiver
+    const REQUEST_PATTERNS = ['_request', '_emitted', 'broadcast_emitted'];
+    const RECEIVE_PATTERNS = ['_received', '_applied', '_success', '_not_found', 'subscribed', 'connected'];
+
+    let originPeer = null;
+    const receiverPeers = new Map(); // peerId → {eventType, color}
+    const explicitArrows = new Map(); // "from|to" → {fromPos, toPos, eventType, color}
+
+    // First pass: find explicit two-peer arrows and classify peers
+    for (const evt of sorted) {
+        const peerId = evt.peer_id;
+        const fromPeer = evt.from_peer;
+        const toPeer = evt.to_peer;
+        const et = evt.event_type || '';
+        const eventClass = getEventClass(et);
+        const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
+
+        // Check for explicit two-peer events (from_peer ≠ to_peer)
+        if (fromPeer && toPeer && fromPeer !== toPeer && peerPos.get(fromPeer) && peerPos.get(toPeer)) {
+            const key = fromPeer + '|' + toPeer;
+            explicitArrows.set(key, {
+                fromPos: peerPos.get(fromPeer), toPos: peerPos.get(toPeer),
+                eventType: et, color
+            });
+            continue;
+        }
+
+        // Classify by event type pattern
+        const isOrigin = REQUEST_PATTERNS.some(p => et.includes(p));
+        const isReceiver = RECEIVE_PATTERNS.some(p => et.includes(p));
+
+        if (isOrigin && peerId && peerPos.get(peerId)) {
+            originPeer = { id: peerId, eventType: et, color };
+        } else if (isReceiver && peerId && peerPos.get(peerId)) {
+            // Don't overwrite origin as a receiver
+            if (!originPeer || originPeer.id !== peerId) {
+                receiverPeers.set(peerId, { eventType: et, color });
+            }
+        }
+    }
+
+    // If no explicit origin found, use the earliest event's peer
+    if (!originPeer && sorted.length > 0) {
+        const first = sorted[0];
+        const pid = first.peer_id;
+        if (pid && peerPos.get(pid)) {
+            const ec = getEventClass(first.event_type);
+            originPeer = { id: pid, eventType: first.event_type, color: EVENT_LINE_COLORS[ec] || EVENT_LINE_COLORS.other };
+        }
+    }
+
+    // Build inferred arrows: origin → each receiver
+    const arrowMap = new Map(explicitArrows);
+    if (originPeer) {
+        const originPos = peerPos.get(originPeer.id);
+        for (const [recvId, info] of receiverPeers) {
+            if (recvId === originPeer.id) continue;
+            const recvPos = peerPos.get(recvId);
+            if (!recvPos) continue;
+            const key = originPeer.id + '|' + recvId;
+            if (!arrowMap.has(key)) {
+                arrowMap.set(key, {
+                    fromPos: originPos, toPos: recvPos,
+                    eventType: info.eventType, color: info.color
+                });
+            }
+        }
+    }
+
+    ctx.save();
+
+    // Glow on origin peer
+    if (originPeer) {
+        const pos = peerPos.get(originPeer.id);
+        if (pos) {
+            ctx.globalAlpha = 0.3;
+            ctx.fillStyle = originPeer.color;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 18, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.8;
+            ctx.strokeStyle = originPeer.color;
+            ctx.lineWidth = 2.5;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 12, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+    }
+
+    // If no arrows to draw (single-peer transaction), glow all involved peers
+    if (arrowMap.size === 0) {
+        for (const evt of sorted) {
+            const pid = evt.peer_id;
+            if (!pid) continue;
+            const pos = peerPos.get(pid);
+            if (!pos) continue;
+            const ec = getEventClass(evt.event_type);
+            const color = EVENT_LINE_COLORS[ec] || EVENT_LINE_COLORS.other;
+            ctx.globalAlpha = 0.25;
+            ctx.fillStyle = color;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 16, 0, Math.PI * 2);
+            ctx.fill();
+            ctx.globalAlpha = 0.7;
+            ctx.strokeStyle = color;
+            ctx.lineWidth = 2;
+            ctx.beginPath();
+            ctx.arc(pos.x, pos.y, 11, 0, Math.PI * 2);
+            ctx.stroke();
+        }
+        ctx.restore();
+        return;
+    }
+
+    // Draw arrows
+    for (const { fromPos, toPos, eventType, color } of arrowMap.values()) {
+        const dx = toPos.x - fromPos.x;
+        const dy = toPos.y - fromPos.y;
+        const dist = Math.sqrt(dx * dx + dy * dy);
+        if (dist < 10) continue;
+
+        const offsetStart = 12 / dist;
+        const offsetEnd = 12 / dist;
+        const x1 = fromPos.x + dx * offsetStart;
+        const y1 = fromPos.y + dy * offsetStart;
+        const x2 = fromPos.x + dx * (1 - offsetEnd);
+        const y2 = fromPos.y + dy * (1 - offsetEnd);
+
+        // Line
+        ctx.strokeStyle = color;
+        ctx.lineWidth = 2.5;
+        ctx.lineCap = 'round';
+        ctx.globalAlpha = 0.75;
+        ctx.beginPath();
+        ctx.moveTo(x1, y1);
+        ctx.lineTo(x2, y2);
+        ctx.stroke();
+
+        // Arrowhead
+        const angle = Math.atan2(dy, dx);
+        const arrowLen = 9;
+        ctx.fillStyle = color;
+        ctx.globalAlpha = 0.85;
+        ctx.beginPath();
+        ctx.moveTo(x2, y2);
+        ctx.lineTo(x2 - arrowLen * Math.cos(angle - Math.PI / 6), y2 - arrowLen * Math.sin(angle - Math.PI / 6));
+        ctx.lineTo(x2 - arrowLen * Math.cos(angle + Math.PI / 6), y2 - arrowLen * Math.sin(angle + Math.PI / 6));
+        ctx.closePath();
+        ctx.fill();
+
+        // Label at midpoint
+        drawEventLabel(ctx, (x1 + x2) / 2, (y1 + y2) / 2, eventType, color);
     }
 
     ctx.restore();
@@ -1400,17 +1584,45 @@ function renderDistChart(connectionDistances) {
     ctx.lineJoin = 'round';
     ctx.stroke();
 
+    // Median line and labels when zoomed
+    if (distChartZoomed && n >= 3) {
+        const medianDist = sorted[Math.floor(n / 2)];
+        const medianY = pad + plotH - (medianDist / maxDist) * plotH;
+
+        ctx.setLineDash([4, 4]);
+        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.beginPath();
+        ctx.moveTo(pad, medianY);
+        ctx.lineTo(pad + plotW, medianY);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        // Median label
+        ctx.font = '9px "JetBrains Mono", monospace';
+        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.textAlign = 'right';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText('median ' + medianDist.toFixed(3), pad + plotW, medianY - 3);
+    }
+
     // Axis labels when zoomed
     if (distChartZoomed) {
         ctx.font = '10px "JetBrains Mono", monospace';
         ctx.fillStyle = 'rgba(255,255,255,0.4)';
+
+        // Bottom-left: min distance
         ctx.textAlign = 'left';
         ctx.textBaseline = 'bottom';
-        ctx.fillText('0.00', pad, pad + plotH + 12);
+        ctx.fillText(sorted[0].toFixed(3), pad, pad + plotH + 14);
+
+        // Top-left: max distance
         ctx.textBaseline = 'top';
-        ctx.fillText(maxDist.toFixed(2), pad, pad - 12);
+        ctx.fillText(maxDist.toFixed(3), pad, pad - 14);
+
+        // Top-right: count
         ctx.textAlign = 'right';
         ctx.textBaseline = 'top';
-        ctx.fillText(`${n} conns`, pad + plotW, pad - 12);
+        ctx.fillText(`${n} conns`, pad + plotW, pad - 14);
     }
 }
