@@ -9,6 +9,44 @@
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
     <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@300;400;500;600;700&family=Space+Grotesk:wght@300;400;500;600;700&display=swap" rel="stylesheet">
     <link rel="stylesheet" href="css/styles.css?v=20260222a">
+    <script>
+        // Apply saved theme before render to avoid flash of wrong theme.
+        // Wrapped in try/catch because localStorage throws in Safari private browsing.
+        // Icon convention: ☀️ = "switch to light", 🌙 = "switch to dark" (shows target mode).
+        // This script is intentionally a plain <script> (not a module) so it runs
+        // synchronously before render and so toggleTheme() is accessible via onclick.
+        (function() {
+            try {
+                if (localStorage.getItem('theme') === 'light') {
+                    document.documentElement.setAttribute('data-theme', 'light');
+                }
+            } catch (e) { /* localStorage unavailable (private browsing) — default to dark */ }
+        })();
+
+        function toggleTheme() {
+            const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+            const icon = document.getElementById('theme-icon');
+            if (isLight) {
+                // Switching to dark (default) — remove the key; no need to store default
+                document.documentElement.removeAttribute('data-theme');
+                if (icon) icon.textContent = '☀️';
+                try { localStorage.removeItem('theme'); } catch (e) {}
+            } else {
+                // Switching to light
+                document.documentElement.setAttribute('data-theme', 'light');
+                if (icon) icon.textContent = '🌙';
+                try { localStorage.setItem('theme', 'light'); } catch (e) {}
+            }
+        }
+
+        // Sync icon on load when light mode was restored from localStorage
+        document.addEventListener('DOMContentLoaded', function() {
+            const icon = document.getElementById('theme-icon');
+            if (icon && document.documentElement.getAttribute('data-theme') === 'light') {
+                icon.textContent = '🌙';
+            }
+        });
+    </script>
 </head>
 <body>
     <div class="main-content">
@@ -18,9 +56,14 @@
                     <img src="https://freenet.org/freenet_logo.svg" alt="Freenet" class="header-logo">
                     <h1>FREENET</h1>
                 </div>
-                <div class="status-badge">
-                    <span id="status-dot" class="status-dot"></span>
-                    <span id="status-text">Connecting...</span>
+                <div class="header-controls">
+                    <div class="status-badge">
+                        <span id="status-dot" class="status-dot"></span>
+                        <span id="status-text">Connecting...</span>
+                    </div>
+                    <button class="theme-toggle" id="theme-toggle" title="Toggle dark/light mode" onclick="toggleTheme()">
+                        <span class="theme-toggle-icon" id="theme-icon">☀️</span>
+                    </button>
                 </div>
             </header>
 
