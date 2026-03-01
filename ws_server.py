@@ -458,9 +458,9 @@ op_stats = {
     "subscribe": {"requests": 0, "successes": 0},
 }
 
-# ── Time-series metrics (60-minute buckets, kept for 48 hours) ──
-METRICS_BUCKET_NS = 60 * 60 * 1_000_000_000       # 60 minutes
-METRICS_MAX_AGE_NS = 48 * 60 * 60 * 1_000_000_000  # 48 hours
+# ── Time-series metrics (4-hour buckets, kept for 8 days) ──
+METRICS_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000    # 4 hours
+METRICS_MAX_AGE_NS = 8 * 24 * 60 * 60 * 1_000_000_000  # 8 days
 METRICS_MIN_SAMPLES = 5  # Minimum ops in a bucket to compute a meaningful rate
 # Each bucket: {ts, put_req, put_ok, get_req, get_ok, get_nf, upd_req, upd_ok, sub_ok, peers, latencies_put, latencies_get, latencies_upd}
 metrics_buckets = deque()  # ordered list of bucket dicts
