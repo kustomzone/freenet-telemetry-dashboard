@@ -458,9 +458,10 @@ op_stats = {
     "subscribe": {"requests": 0, "successes": 0},
 }
 
-# ── Time-series metrics (5-minute buckets, kept for 48 hours) ──
-METRICS_BUCKET_NS = 5 * 60 * 1_000_000_000       # 5 minutes
+# ── Time-series metrics (30-minute buckets, kept for 48 hours) ──
+METRICS_BUCKET_NS = 30 * 60 * 1_000_000_000       # 30 minutes
 METRICS_MAX_AGE_NS = 48 * 60 * 60 * 1_000_000_000  # 48 hours
+METRICS_MIN_SAMPLES = 3  # Minimum ops in a bucket to compute a meaningful rate
 # Each bucket: {ts, put_req, put_ok, get_req, get_ok, get_nf, upd_req, upd_ok, sub_ok, peers, latencies_put, latencies_get, latencies_upd}
 metrics_buckets = deque()  # ordered list of bucket dicts
 _current_bucket = None     # the bucket we're currently filling
@@ -550,23 +551,29 @@ def get_metrics_timeseries():
     """Build the time series payload for clients."""
     active_count = len(peers)  # Use topology peer count (IP-based, staleness-filtered)
 
+    def p50(lats):
+        if not lats:
+            return None
+        s = sorted(lats)
+        return s[len(s) // 2]
+
+    def rate_or_none(ok, total):
+        """Only compute rate if we have enough samples to be meaningful."""
+        if total < METRICS_MIN_SAMPLES:
+            return None
+        return round(ok / total * 100, 1)
+
     series = []
     for b in metrics_buckets:
-        def p50(lats):
-            if not lats:
-                return None
-            s = sorted(lats)
-            return s[len(s) // 2]
-
-        put_total = b["put_req"] or b["put_ok"]  # fallback if only successes logged
+        put_total = b["put_req"] or b["put_ok"]
         get_total = b["get_ok"] + b["get_nf"]
         upd_total = b["upd_req"] or b["upd_ok"]
 
         series.append({
             "t": b["ts"],
-            "put_rate": round(b["put_ok"] / put_total * 100, 1) if put_total else None,
-            "get_rate": round(b["get_ok"] / get_total * 100, 1) if get_total else None,
-            "upd_rate": round(b["upd_ok"] / upd_total * 100, 1) if upd_total else None,
+            "put_rate": rate_or_none(b["put_ok"], put_total),
+            "get_rate": rate_or_none(b["get_ok"], get_total),
+            "upd_rate": rate_or_none(b["upd_ok"], upd_total),
             "put_n": put_total,
             "get_n": get_total,
             "upd_n": upd_total,
@@ -577,9 +584,30 @@ def get_metrics_timeseries():
             "lat_upd": p50(b["lat_upd"]),
         })
 
+    # Deduplicate version markers: only show genuinely distinct releases
+    # Many peers report slight version variations (0.1.13 vs 0.1.131) so we
+    # normalize aggressively and require minimum time spacing.
+    MIN_VERSION_GAP_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours between markers
+    filtered_versions = []
+    seen_short = set()
+    last_ts = 0
+    for ts, v in sorted(version_markers):
+        # Normalize to major.minor.patch (first 3 components only)
+        short = v.split("-")[0].split("+")[0]
+        parts = short.split(".")
+        if len(parts) > 3:
+            short = ".".join(parts[:3])
+        if short in seen_short:
+            continue
+        if ts - last_ts < MIN_VERSION_GAP_NS and filtered_versions:
+            continue
+        seen_short.add(short)
+        filtered_versions.append((ts, short))
+        last_ts = ts
+
     return {
         "series": series,
-        "versions": [(ts, v) for ts, v in version_markers],
+        "versions": filtered_versions,
     }
 
 
