@@ -576,7 +576,6 @@ def get_metrics_timeseries():
             "get_n": get_total,
             "upd_n": upd_total,
             "sub_n": b["sub_ok"],
-            "peers": len(b.get("reporting_peers", set())),
             "lat_put": p50(b["lat_put"]),
             "lat_get": p50(b["lat_get"]),
             "lat_upd": p50(b["lat_upd"]),

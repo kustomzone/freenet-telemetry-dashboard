@@ -130,21 +130,6 @@ export function initMetricsChart(container) {
                     spanGaps: false,
                     order: 4,
                 },
-                {
-                    label: 'Peers',
-                    data: series.map(p => p.peers || null),
-                    borderColor: COLORS.peers + '70',
-                    borderWidth: 1.5,
-                    borderDash: [6, 3],
-                    pointRadius: 0,
-                    pointHoverRadius: 3,
-                    pointHitRadius: 12,
-                    tension: 0.4,
-                    fill: false,
-                    yAxisID: 'y2',
-                    spanGaps: true,
-                    order: 1,
-                },
             ]
         },
         options: {
@@ -192,9 +177,6 @@ export function initMetricsChart(container) {
                             const idx = item.dataIndex;
                             const s = series[idx];
                             if (!s) return '';
-                            if (item.dataset.yAxisID === 'y2') {
-                                return ` Peers: ${item.raw != null ? item.raw : '-'}`;
-                            }
                             // Show raw (unsmoothed) value + sample count
                             const lbl = item.dataset.label;
                             let raw, count;
@@ -245,22 +227,6 @@ export function initMetricsChart(container) {
                     },
                     border: { display: false },
                 },
-                y2: {
-                    position: 'right',
-                    min: 0,
-                    title: {
-                        display: true,
-                        text: 'peers',
-                        color: COLORS.peers + '80',
-                        font: { size: 9, family: "'JetBrains Mono', monospace" },
-                    },
-                    grid: { drawOnChartArea: false },
-                    ticks: {
-                        color: COLORS.peers + '80',
-                        font: { size: 9, family: "'JetBrains Mono', monospace" },
-                    },
-                    border: { display: false },
-                }
             }
         },
     });
@@ -289,7 +255,6 @@ export function updateMetricsChart() {
     chart.data.datasets[0].data = ema(rawGet);
     chart.data.datasets[1].data = ema(rawPut);
     chart.data.datasets[2].data = ema(rawUpd);
-    chart.data.datasets[3].data = series.map(p => p.peers || null);
 
     chart._rawGet = rawGet;
     chart._rawPut = rawPut;
