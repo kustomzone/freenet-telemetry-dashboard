@@ -47,6 +47,9 @@
             }
         });
     </script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js@4.4.7/dist/chart.umd.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-adapter-date-fns@3.0.0/dist/chartjs-adapter-date-fns.bundle.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chartjs-plugin-annotation@3.1.0/dist/chartjs-plugin-annotation.min.js"></script>
 </head>
 <body>
     <div class="main-content">
@@ -148,8 +151,12 @@
 
                 <div class="panel">
                     <div class="panel-header">
-                        <span class="panel-title">Contracts <span class="tab-count" id="contract-tab-count">0</span></span>
+                        <div class="panel-tabs">
+                            <button class="panel-tab active" id="tab-contracts" onclick="switchRightTab('contracts')">Contracts <span class="tab-count" id="contract-tab-count">0</span></button>
+                            <button class="panel-tab" id="tab-performance" onclick="switchRightTab('performance')">Performance</button>
+                        </div>
                     </div>
+                    <div id="contracts-panel-content">
                     <div class="filter-bar" id="filter-bar">
                         <span class="filter-bar-label">Filters:</span>
                         <span class="filter-no-active" id="no-filters">None active</span>
@@ -163,6 +170,15 @@
                         <div class="empty-state">
                             <div class="empty-state-icon">&#128230;</div>
                             <div>No contracts with activity</div>
+                        </div>
+                    </div>
+                    </div><!-- /contracts-panel-content -->
+                    <div id="performance-panel-content" class="performance-panel" style="display: none;">
+                        <div class="metrics-chart-container" id="metrics-chart-container">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">&#128200;</div>
+                                <div>Loading performance data...</div>
+                            </div>
                         </div>
                     </div>
                 </div>
@@ -218,6 +234,6 @@
     </div>
 
 
-    <script type="module" src="js/app.js?v=20260222a"></script>
+    <script type="module" src="js/app.js?v=20260228a"></script>
 </body>
 </html>

@@ -48,6 +48,10 @@ export const state = {
 
     // Operations
     opStats: null,
+    metricsTimeseries: null,
+
+    // Right panel tab
+    rightPanelTab: 'contracts',  // 'contracts' | 'performance'
 
     // Display
     displayedEvents: [],
@@ -56,6 +60,7 @@ export const state = {
     allTransactions: [],
     transactionMap: new Map(),
     selectedTransaction: null,
+    selectedTxEvents: [],     // Full events for the selected transaction (for topology arrows)
 
     // Network state from server
     initialStatePeers: [],

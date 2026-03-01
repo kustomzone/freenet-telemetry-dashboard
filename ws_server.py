@@ -186,13 +186,9 @@ MAX_INITIAL_EVENTS = 20000  # Events sent to clients on connect (subset of histo
 event_history = deque(maxlen=MAX_HISTORY_EVENTS)  # bounded deque of event dicts
 
 # Event types worth keeping in history for time-travel / contract tracking.
-# High-volume routine events (connect_*, subscribe_*, disconnect) are still
-# processed for state tracking and sent to clients in real-time, but excluded
-# from history to keep the buffer useful over hours, not seconds.
-# At ~136 events/sec total, contract ops are ~1-2/sec →
-# 50K buffer ≈ 7+ hours; 20K initial events ≈ 2+ hours.
+# get_request excluded — too noisy at ~3/sec.
 HISTORY_EVENT_TYPES = {
-    # Contract operations (get_request excluded — too noisy at ~3/sec)
+    # Contract operations
     "put_request", "put_success",
     "get_success", "get_not_found",
     "update_request", "update_success",
@@ -204,14 +200,15 @@ HISTORY_EVENT_TYPES = {
     "peer_startup", "peer_shutdown",
     # Subscription tree
     "seeding_started", "seeding_stopped",
-}
-
-# Broader set sent in the real-time stream — includes subscribe/connect
-# completions and get_request so they appear live but don't flood history.
-REALTIME_EVENT_TYPES = HISTORY_EVENT_TYPES | {
-    "get_request",
+    # Connection / subscription completions (needed for timeline CONN/SUB lanes)
     "connect_connected", "disconnect",
     "subscribe_success", "subscribed",
+}
+
+# Broader set sent in the real-time stream — adds get_request which is too
+# noisy for history but useful to see live.
+REALTIME_EVENT_TYPES = HISTORY_EVENT_TYPES | {
+    "get_request",
 }
 
 # Connected WebSocket clients - now managed via ClientHandler for backpressure
@@ -460,6 +457,131 @@ op_stats = {
     "update": {"requests": 0, "successes": 0, "broadcasts": 0, "latencies": []},
     "subscribe": {"requests": 0, "successes": 0},
 }
+
+# ── Time-series metrics (5-minute buckets, kept for 48 hours) ──
+METRICS_BUCKET_NS = 5 * 60 * 1_000_000_000       # 5 minutes
+METRICS_MAX_AGE_NS = 48 * 60 * 60 * 1_000_000_000  # 48 hours
+# Each bucket: {ts, put_req, put_ok, get_req, get_ok, get_nf, upd_req, upd_ok, sub_ok, peers, latencies_put, latencies_get, latencies_upd}
+metrics_buckets = deque()  # ordered list of bucket dicts
+_current_bucket = None     # the bucket we're currently filling
+
+# Version/release markers: [(timestamp_ns, version_string), ...]
+version_markers = []
+_seen_versions = set()
+
+
+def _bucket_key(timestamp_ns):
+    """Round timestamp down to bucket boundary."""
+    return (timestamp_ns // METRICS_BUCKET_NS) * METRICS_BUCKET_NS
+
+
+def _get_or_create_bucket(timestamp_ns):
+    """Get the current bucket for this timestamp, creating if needed."""
+    global _current_bucket
+    key = _bucket_key(timestamp_ns)
+
+    if _current_bucket and _current_bucket["ts"] == key:
+        return _current_bucket
+
+    # Prune old buckets
+    cutoff = timestamp_ns - METRICS_MAX_AGE_NS
+    while metrics_buckets and metrics_buckets[0]["ts"] < cutoff:
+        metrics_buckets.popleft()
+
+    # Check if last bucket matches
+    if metrics_buckets and metrics_buckets[-1]["ts"] == key:
+        _current_bucket = metrics_buckets[-1]
+        return _current_bucket
+
+    # Snapshot peer count on the previous bucket before creating new one
+    # Use the topology peer set (IP-based, staleness-filtered) for accurate count
+    if metrics_buckets:
+        metrics_buckets[-1]["peers"] = len(peers)
+
+    # Create new bucket
+    _current_bucket = {
+        "ts": key,
+        "put_req": 0, "put_ok": 0,
+        "get_req": 0, "get_ok": 0, "get_nf": 0,
+        "upd_req": 0, "upd_ok": 0,
+        "sub_ok": 0,
+        "peers": 0,  # snapshot at bucket close
+        "lat_put": [], "lat_get": [], "lat_upd": [],
+    }
+    metrics_buckets.append(_current_bucket)
+    return _current_bucket
+
+
+def record_metric(event_type, timestamp_ns, latency_ms=None):
+    """Record an operation into the current time bucket."""
+    b = _get_or_create_bucket(timestamp_ns)
+    if event_type == "put_request":
+        b["put_req"] += 1
+    elif event_type == "put_success":
+        b["put_ok"] += 1
+        if latency_ms is not None:
+            b["lat_put"].append(latency_ms)
+    elif event_type == "get_request":
+        b["get_req"] += 1
+    elif event_type == "get_success":
+        b["get_ok"] += 1
+        if latency_ms is not None:
+            b["lat_get"].append(latency_ms)
+    elif event_type == "get_not_found":
+        b["get_nf"] += 1
+    elif event_type == "update_request":
+        b["upd_req"] += 1
+    elif event_type == "update_success":
+        b["upd_ok"] += 1
+        if latency_ms is not None:
+            b["lat_upd"].append(latency_ms)
+    elif event_type == "subscribed":
+        b["sub_ok"] += 1
+
+
+def record_version(version_str, timestamp_ns):
+    """Track when a new version first appears."""
+    if version_str and version_str != "unknown" and version_str not in _seen_versions:
+        _seen_versions.add(version_str)
+        version_markers.append((timestamp_ns, version_str))
+
+
+def get_metrics_timeseries():
+    """Build the time series payload for clients."""
+    active_count = len(peers)  # Use topology peer count (IP-based, staleness-filtered)
+
+    series = []
+    for b in metrics_buckets:
+        def p50(lats):
+            if not lats:
+                return None
+            s = sorted(lats)
+            return s[len(s) // 2]
+
+        put_total = b["put_req"] or b["put_ok"]  # fallback if only successes logged
+        get_total = b["get_ok"] + b["get_nf"]
+        upd_total = b["upd_req"] or b["upd_ok"]
+
+        series.append({
+            "t": b["ts"],
+            "put_rate": round(b["put_ok"] / put_total * 100, 1) if put_total else None,
+            "get_rate": round(b["get_ok"] / get_total * 100, 1) if get_total else None,
+            "upd_rate": round(b["upd_ok"] / upd_total * 100, 1) if upd_total else None,
+            "put_n": put_total,
+            "get_n": get_total,
+            "upd_n": upd_total,
+            "sub_n": b["sub_ok"],
+            "peers": b["peers"] or active_count,
+            "lat_put": p50(b["lat_put"]),
+            "lat_get": p50(b["lat_get"]),
+            "lat_upd": p50(b["lat_upd"]),
+        })
+
+    return {
+        "series": series,
+        "versions": [(ts, v) for ts, v in version_markers],
+    }
+
 
 # Peer lifecycle tracking
 # peer_id -> {version, arch, os, os_version, is_gateway, startup_time, shutdown_time, graceful}
@@ -807,10 +929,7 @@ def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None, 
         parts = event_type.split("_")
         op_type = parts[0] if parts else "other"
 
-    # Only track contract-relevant transactions (put/get/update/broadcast).
-    # Subscribe/connect transactions are too noisy (~40/sec) and would push
-    # contract ops out of the 10K transaction buffer within minutes.
-    TRACKED_TX_OPS = {"put", "get", "update", "broadcast"}
+    TRACKED_TX_OPS = {"put", "get", "update", "broadcast", "connect", "subscribe"}
     if op_type not in TRACKED_TX_OPS and tx_id not in transactions:
         return  # Skip noisy transaction types
 
@@ -933,54 +1052,67 @@ def process_record(record, store_history=True):
 
     if event_type == "put_request":
         op_stats["put"]["requests"] += 1
+        record_metric("put_request", timestamp)
         if tx_id:
             pending_ops[tx_id] = {"op": "put", "start_ns": timestamp}
     elif event_type == "put_success":
         op_stats["put"]["successes"] += 1
+        _lat = None
         if tx_id and tx_id in pending_ops:
             latency_ms = (timestamp - pending_ops[tx_id]["start_ns"]) / 1_000_000
             if 0 < latency_ms < 300_000:  # Sanity check: < 5 minutes
                 op_stats["put"]["latencies"].append(latency_ms)
-                # Keep only last 1000 latencies
+                _lat = latency_ms
                 if len(op_stats["put"]["latencies"]) > 1000:
                     op_stats["put"]["latencies"] = op_stats["put"]["latencies"][-1000:]
             del pending_ops[tx_id]
+        record_metric("put_success", timestamp, _lat)
     elif event_type == "get_request":
         op_stats["get"]["requests"] += 1
+        record_metric("get_request", timestamp)
         if tx_id:
             pending_ops[tx_id] = {"op": "get", "start_ns": timestamp}
     elif event_type == "get_success":
         op_stats["get"]["successes"] += 1
+        _lat = None
         if tx_id and tx_id in pending_ops:
             latency_ms = (timestamp - pending_ops[tx_id]["start_ns"]) / 1_000_000
             if 0 < latency_ms < 300_000:
                 op_stats["get"]["latencies"].append(latency_ms)
+                _lat = latency_ms
                 if len(op_stats["get"]["latencies"]) > 1000:
                     op_stats["get"]["latencies"] = op_stats["get"]["latencies"][-1000:]
             del pending_ops[tx_id]
+        record_metric("get_success", timestamp, _lat)
     elif event_type == "get_not_found":
         op_stats["get"]["not_found"] += 1
+        record_metric("get_not_found", timestamp)
         if tx_id and tx_id in pending_ops:
             del pending_ops[tx_id]
     elif event_type == "update_request":
         op_stats["update"]["requests"] += 1
+        record_metric("update_request", timestamp)
         if tx_id:
             pending_ops[tx_id] = {"op": "update", "start_ns": timestamp}
     elif event_type == "update_success":
         op_stats["update"]["successes"] += 1
+        _lat = None
         if tx_id and tx_id in pending_ops:
             latency_ms = (timestamp - pending_ops[tx_id]["start_ns"]) / 1_000_000
             if 0 < latency_ms < 300_000:
                 op_stats["update"]["latencies"].append(latency_ms)
+                _lat = latency_ms
                 if len(op_stats["update"]["latencies"]) > 1000:
                     op_stats["update"]["latencies"] = op_stats["update"]["latencies"][-1000:]
             del pending_ops[tx_id]
+        record_metric("update_success", timestamp, _lat)
     elif event_type in ("update_broadcast_emitted", "broadcast_emitted"):
         op_stats["update"]["broadcasts"] += 1
     elif event_type == "subscribe_request":
         op_stats["subscribe"]["requests"] += 1
     elif event_type == "subscribed":
         op_stats["subscribe"]["successes"] += 1
+        record_metric("subscribed", timestamp)
 
     # Handle transfer_completed events for congestion control visualization
     elif event_type == "transfer_completed":
@@ -1119,8 +1251,9 @@ def process_record(record, store_history=True):
         # and filter later when building topology/stats
         peer_id = attrs.get("peer_id", "")
         if peer_id:
+            version_str = body.get("version", "unknown")
             peer_lifecycle[peer_id] = {
-                "version": body.get("version", "unknown"),
+                "version": version_str,
                 "arch": body.get("arch", "unknown"),
                 "os": body.get("os", "unknown"),
                 "os_version": body.get("os_version"),
@@ -1129,6 +1262,7 @@ def process_record(record, store_history=True):
                 "shutdown_time": None,
                 "graceful": None,
             }
+            record_version(version_str, timestamp)
     elif event_type == "peer_shutdown":
         # Track peer shutdown
         peer_id = attrs.get("peer_id", "")
@@ -1646,6 +1780,7 @@ def get_network_state():
         "peer_names": active_peer_names,  # ip_hash -> name (active peers only)
         "transfers": transfer_events[-200:],  # Last 200 transfer events for scatter plot
         "propagation": get_propagation_data(),  # State propagation timelines
+        "metrics_timeseries": get_metrics_timeseries(),
     }
 
 
@@ -1690,9 +1825,7 @@ def get_history():
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
     # Only send contract-relevant transactions in initial history.
-    # Subscribe/connect transactions are too noisy and would push out
-    # the contract ops the user actually wants to see in the timeline.
-    HISTORY_TX_OPS = {"put", "get", "update", "broadcast"}
+    HISTORY_TX_OPS = {"put", "get", "update", "broadcast", "connect", "subscribe"}
     tx_list = [tx for tx in get_transactions_list() if tx["op"] in HISTORY_TX_OPS]
     if len(tx_list) > MAX_INITIAL_TRANSACTIONS:
         tx_list = tx_list[-MAX_INITIAL_TRANSACTIONS:]

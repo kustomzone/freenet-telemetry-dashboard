@@ -29,6 +29,7 @@ import {
 } from './websocket.js';
 import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferChart } from './transfers.js';
 import { updateContractTree, getTreeStats, resetContractTree, triggerTreeMessageAnim } from './contract-tree.js';
+import { initMetricsChart, updateMetricsChart, destroyMetricsChart } from './metrics.js';
 
 // ============================================================================
 // Main Application Functions
@@ -206,6 +207,34 @@ function handleEventHover(event) {
 
 window.selectContract = selectContract;
 window.clearAllFilters = clearAllFilters;
+
+/**
+ * Switch between Contracts and Performance tabs in the right panel
+ */
+function switchRightTab(tab) {
+    state.rightPanelTab = tab;
+    const contractsContent = document.getElementById('contracts-panel-content');
+    const performanceContent = document.getElementById('performance-panel-content');
+    const tabContracts = document.getElementById('tab-contracts');
+    const tabPerformance = document.getElementById('tab-performance');
+
+    if (tab === 'performance') {
+        contractsContent.style.display = 'none';
+        performanceContent.style.display = 'flex';
+        tabContracts.classList.remove('active');
+        tabPerformance.classList.add('active');
+        // Init chart when tab is shown
+        const container = document.getElementById('metrics-chart-container');
+        initMetricsChart(container);
+    } else {
+        contractsContent.style.display = '';
+        performanceContent.style.display = 'none';
+        tabContracts.classList.add('active');
+        tabPerformance.classList.remove('active');
+        destroyMetricsChart();
+    }
+}
+window.switchRightTab = switchRightTab;
 window.togglePeerFilter = (peerId) => togglePeerFilter(peerId, updateView, updateURL);
 window.toggleTxFilter = (txId) => toggleTxFilter(txId, updateView, updateURL);
 window.clearPeerFilter = () => clearPeerFilter(updateView, updateURL);
@@ -257,6 +286,12 @@ connect({
         }
         // Show the Find My Peer button if user is a peer
         showFindMyPeerButton();
+    },
+    onMetricsData: () => {
+        // Update chart if performance tab is active
+        if (state.rightPanelTab === 'performance') {
+            updateMetricsChart();
+        }
     }
 });
 

@@ -168,6 +168,14 @@ function handleMessage(data, callbacks) {
             console.log('Op stats loaded');
         }
 
+        // Store metrics time series
+        if (data.metrics_timeseries) {
+            state.metricsTimeseries = data.metrics_timeseries;
+            console.log('Metrics timeseries:', data.metrics_timeseries.series?.length, 'buckets,',
+                data.metrics_timeseries.versions?.length, 'version markers');
+            if (callbacks.onMetricsData) callbacks.onMetricsData();
+        }
+
         // Load initial transfer events for scatter plot
         if (data.transfers) {
             addTransferEvents(data.transfers);

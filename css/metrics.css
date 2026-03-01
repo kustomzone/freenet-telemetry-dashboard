@@ -1,0 +1,59 @@
+        /* ── Right Panel Tabs ── */
+        .panel-tabs {
+            display: flex;
+            gap: 0;
+            width: 100%;
+        }
+
+        .panel-tab {
+            font-family: var(--font-mono);
+            font-size: 0.85em;
+            font-weight: 500;
+            color: var(--text-muted);
+            letter-spacing: 0.06em;
+            background: none;
+            border: none;
+            border-bottom: 2px solid transparent;
+            padding: 0 12px 12px 12px;
+            cursor: pointer;
+            transition: color 0.2s, border-color 0.2s;
+            white-space: nowrap;
+        }
+
+        .panel-tab:hover {
+            color: var(--text-secondary);
+        }
+
+        .panel-tab.active {
+            color: var(--text-primary);
+            border-bottom-color: var(--accent-primary);
+        }
+
+        /* ── Performance Panel ── */
+        .performance-panel {
+            display: flex;
+            flex-direction: column;
+            flex: 1;
+            min-height: 0;
+        }
+
+        .metrics-chart-container {
+            flex: 1;
+            min-height: 300px;
+            position: relative;
+            padding: 4px 0;
+        }
+
+        .metrics-chart-container canvas {
+            width: 100% !important;
+            height: 100% !important;
+        }
+
+        /* Ensure the panel stretches for the chart */
+        .performance-panel .empty-state {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            justify-content: center;
+        }
