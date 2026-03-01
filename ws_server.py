@@ -463,7 +463,7 @@ METRICS_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000    # 4 hours
 METRICS_MAX_AGE_NS = 8 * 24 * 60 * 60 * 1_000_000_000  # 8 days
 METRICS_MIN_SAMPLES = 5  # Minimum ops in a bucket to compute a meaningful rate
 # Each bucket: {ts, put_req, put_ok, get_req, get_ok, get_nf, upd_req, upd_ok, sub_ok, peers, latencies_put, latencies_get, latencies_upd}
-metrics_buckets = deque()  # ordered list of bucket dicts
+metrics_buckets = {}       # bucket_key -> bucket dict (dict for O(1) lookup by timestamp)
 _current_bucket = None     # the bucket we're currently filling
 
 # Version/release markers: [(timestamp_ns, version_string), ...]
@@ -486,15 +486,14 @@ def _get_or_create_bucket(timestamp_ns):
 
     # Prune old buckets
     cutoff = timestamp_ns - METRICS_MAX_AGE_NS
-    while metrics_buckets and metrics_buckets[0]["ts"] < cutoff:
-        metrics_buckets.popleft()
+    stale = [k for k in metrics_buckets if k < cutoff]
+    for k in stale:
+        del metrics_buckets[k]
 
-    # Check if last bucket matches
-    if metrics_buckets and metrics_buckets[-1]["ts"] == key:
-        _current_bucket = metrics_buckets[-1]
+    # Look up existing bucket by key
+    if key in metrics_buckets:
+        _current_bucket = metrics_buckets[key]
         return _current_bucket
-
-    # No special peer snapshot needed — we track reporting peers per bucket
 
     # Create new bucket
     _current_bucket = {
@@ -503,10 +502,10 @@ def _get_or_create_bucket(timestamp_ns):
         "get_req": 0, "get_ok": 0, "get_nf": 0,
         "upd_req": 0, "upd_ok": 0,
         "sub_ok": 0,
-        "reporting_peers": set(),  # unique peer IPs that reported events in this bucket
+        "reporting_peers": set(),
         "lat_put": [], "lat_get": [], "lat_upd": [],
     }
-    metrics_buckets.append(_current_bucket)
+    metrics_buckets[key] = _current_bucket
     return _current_bucket
 
 
@@ -562,7 +561,8 @@ def get_metrics_timeseries():
         return round(ok / total * 100, 1)
 
     series = []
-    for b in metrics_buckets:
+    for key in sorted(metrics_buckets):
+        b = metrics_buckets[key]
         put_total = b["put_req"] or b["put_ok"]
         get_total = b["get_ok"] + b["get_nf"]
         upd_total = b["upd_req"] or b["upd_ok"]
