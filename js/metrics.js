@@ -78,28 +78,7 @@ export function initMetricsChart(container) {
     const smoothPut = ema(rawPut);
     const smoothUpd = ema(rawUpd);
 
-    // Version annotations — positioned at the top of the chart
-    const versionAnnotations = {};
-    versions.forEach(([tsNs, ver], i) => {
-        versionAnnotations['version' + i] = {
-            type: 'line',
-            xMin: new Date(tsNs / 1_000_000),
-            xMax: new Date(tsNs / 1_000_000),
-            borderColor: COLORS.versionLine,
-            borderWidth: 1,
-            borderDash: [3, 3],
-            label: {
-                display: true,
-                content: ver,
-                position: 'end',          // top of the chart
-                yAdjust: -2,
-                backgroundColor: 'rgba(6, 8, 12, 0.8)',
-                color: COLORS.versionText,
-                font: { size: 8, family: "'JetBrains Mono', monospace" },
-                padding: { top: 1, bottom: 1, left: 3, right: 3 },
-            }
-        };
-    });
+    // Version annotations removed — were adding visual clutter
 
     chart = new Chart(chartCanvas, {
         type: 'line',
@@ -228,7 +207,7 @@ export function initMetricsChart(container) {
                     }
                 },
                 annotation: {
-                    annotations: versionAnnotations
+                    annotations: {}
                 }
             },
             scales: {

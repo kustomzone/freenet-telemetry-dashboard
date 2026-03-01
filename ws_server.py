@@ -494,10 +494,7 @@ def _get_or_create_bucket(timestamp_ns):
         _current_bucket = metrics_buckets[-1]
         return _current_bucket
 
-    # Snapshot peer count on the previous bucket before creating new one
-    # Use the topology peer set (IP-based, staleness-filtered) for accurate count
-    if metrics_buckets:
-        metrics_buckets[-1]["peers"] = len(peers)
+    # No special peer snapshot needed — we track reporting peers per bucket
 
     # Create new bucket
     _current_bucket = {
@@ -506,16 +503,18 @@ def _get_or_create_bucket(timestamp_ns):
         "get_req": 0, "get_ok": 0, "get_nf": 0,
         "upd_req": 0, "upd_ok": 0,
         "sub_ok": 0,
-        "peers": 0,  # snapshot at bucket close
+        "reporting_peers": set(),  # unique peer IPs that reported events in this bucket
         "lat_put": [], "lat_get": [], "lat_upd": [],
     }
     metrics_buckets.append(_current_bucket)
     return _current_bucket
 
 
-def record_metric(event_type, timestamp_ns, latency_ms=None):
+def record_metric(event_type, timestamp_ns, latency_ms=None, peer_id=None):
     """Record an operation into the current time bucket."""
     b = _get_or_create_bucket(timestamp_ns)
+    if peer_id:
+        b["reporting_peers"].add(peer_id)
     if event_type == "put_request":
         b["put_req"] += 1
     elif event_type == "put_success":
@@ -549,7 +548,6 @@ def record_version(version_str, timestamp_ns):
 
 def get_metrics_timeseries():
     """Build the time series payload for clients."""
-    active_count = len(peers)  # Use topology peer count (IP-based, staleness-filtered)
 
     def p50(lats):
         if not lats:
@@ -578,36 +576,15 @@ def get_metrics_timeseries():
             "get_n": get_total,
             "upd_n": upd_total,
             "sub_n": b["sub_ok"],
-            "peers": b["peers"] or active_count,
+            "peers": len(b.get("reporting_peers", set())),
             "lat_put": p50(b["lat_put"]),
             "lat_get": p50(b["lat_get"]),
             "lat_upd": p50(b["lat_upd"]),
         })
 
-    # Deduplicate version markers: only show genuinely distinct releases
-    # Many peers report slight version variations (0.1.13 vs 0.1.131) so we
-    # normalize aggressively and require minimum time spacing.
-    MIN_VERSION_GAP_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours between markers
-    filtered_versions = []
-    seen_short = set()
-    last_ts = 0
-    for ts, v in sorted(version_markers):
-        # Normalize to major.minor.patch (first 3 components only)
-        short = v.split("-")[0].split("+")[0]
-        parts = short.split(".")
-        if len(parts) > 3:
-            short = ".".join(parts[:3])
-        if short in seen_short:
-            continue
-        if ts - last_ts < MIN_VERSION_GAP_NS and filtered_versions:
-            continue
-        seen_short.add(short)
-        filtered_versions.append((ts, short))
-        last_ts = ts
-
     return {
         "series": series,
-        "versions": filtered_versions,
+        "versions": [],
     }
 
 
@@ -1080,7 +1057,7 @@ def process_record(record, store_history=True):
 
     if event_type == "put_request":
         op_stats["put"]["requests"] += 1
-        record_metric("put_request", timestamp)
+        record_metric("put_request", timestamp, peer_id=event_peer_id)
         if tx_id:
             pending_ops[tx_id] = {"op": "put", "start_ns": timestamp}
     elif event_type == "put_success":
@@ -1094,10 +1071,10 @@ def process_record(record, store_history=True):
                 if len(op_stats["put"]["latencies"]) > 1000:
                     op_stats["put"]["latencies"] = op_stats["put"]["latencies"][-1000:]
             del pending_ops[tx_id]
-        record_metric("put_success", timestamp, _lat)
+        record_metric("put_success", timestamp, _lat, peer_id=event_peer_id)
     elif event_type == "get_request":
         op_stats["get"]["requests"] += 1
-        record_metric("get_request", timestamp)
+        record_metric("get_request", timestamp, peer_id=event_peer_id)
         if tx_id:
             pending_ops[tx_id] = {"op": "get", "start_ns": timestamp}
     elif event_type == "get_success":
@@ -1111,15 +1088,15 @@ def process_record(record, store_history=True):
                 if len(op_stats["get"]["latencies"]) > 1000:
                     op_stats["get"]["latencies"] = op_stats["get"]["latencies"][-1000:]
             del pending_ops[tx_id]
-        record_metric("get_success", timestamp, _lat)
+        record_metric("get_success", timestamp, _lat, peer_id=event_peer_id)
     elif event_type == "get_not_found":
         op_stats["get"]["not_found"] += 1
-        record_metric("get_not_found", timestamp)
+        record_metric("get_not_found", timestamp, peer_id=event_peer_id)
         if tx_id and tx_id in pending_ops:
             del pending_ops[tx_id]
     elif event_type == "update_request":
         op_stats["update"]["requests"] += 1
-        record_metric("update_request", timestamp)
+        record_metric("update_request", timestamp, peer_id=event_peer_id)
         if tx_id:
             pending_ops[tx_id] = {"op": "update", "start_ns": timestamp}
     elif event_type == "update_success":
@@ -1133,14 +1110,14 @@ def process_record(record, store_history=True):
                 if len(op_stats["update"]["latencies"]) > 1000:
                     op_stats["update"]["latencies"] = op_stats["update"]["latencies"][-1000:]
             del pending_ops[tx_id]
-        record_metric("update_success", timestamp, _lat)
+        record_metric("update_success", timestamp, _lat, peer_id=event_peer_id)
     elif event_type in ("update_broadcast_emitted", "broadcast_emitted"):
         op_stats["update"]["broadcasts"] += 1
     elif event_type == "subscribe_request":
         op_stats["subscribe"]["requests"] += 1
     elif event_type == "subscribed":
         op_stats["subscribe"]["successes"] += 1
-        record_metric("subscribed", timestamp)
+        record_metric("subscribed", timestamp, peer_id=event_peer_id)
 
     # Handle transfer_completed events for congestion control visualization
     elif event_type == "transfer_completed":
