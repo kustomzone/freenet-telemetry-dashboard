@@ -187,6 +187,104 @@ let hoveredPeerTarget = null; // currently hovered hit target (for cursor)
 let connectionAnimOffset = 0;
 let connectionAnimFrame = null;
 
+// Tree edge animation state
+let treeAnimCanvas = null;
+let treeAnimFrame = null;
+let treeAnimEdges = []; // [{from, to, cp1, cp2}]
+let treeAnimT = 0;
+
+
+function getOrCreateTreeAnimCanvas(container) {
+    if (treeAnimCanvas && treeAnimCanvas.parentNode === container) return treeAnimCanvas;
+    if (treeAnimCanvas) treeAnimCanvas.remove();
+    treeAnimCanvas = document.createElement('canvas');
+    treeAnimCanvas.id = 'tree-anim-canvas';
+    treeAnimCanvas.style.position = 'absolute';
+    treeAnimCanvas.style.top = '0';
+    treeAnimCanvas.style.left = '50%';
+    treeAnimCanvas.style.transform = 'translateX(-50%)';
+    treeAnimCanvas.style.zIndex = '2';
+    treeAnimCanvas.style.pointerEvents = 'none';
+    container.appendChild(treeAnimCanvas);
+    return treeAnimCanvas;
+}
+
+function startTreeEdgeAnimation(container) {
+    if (treeAnimEdges.length === 0) { stopTreeEdgeAnimation(); return; }
+    const canvas = getOrCreateTreeAnimCanvas(container);
+    const dpr = window.devicePixelRatio || 1;
+    const displaySize = parseInt(canvas.style.width) || SVG_SIZE;
+    const scale = displaySize / SVG_SIZE;
+
+    let lastFrameTime = 0;
+    const FRAME_INTERVAL = 50; // ~20fps — plenty for dash animation
+
+    function step(now) {
+        treeAnimFrame = requestAnimationFrame(step);
+        if (now - lastFrameTime < FRAME_INTERVAL) return;
+        lastFrameTime = now;
+
+        treeAnimT = (treeAnimT + 1) % 20; // dash period = 20
+        const ctx = canvas.getContext('2d');
+        ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+        ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
+
+        ctx.lineCap = 'round';
+        ctx.setLineDash([4, 8]);
+        ctx.lineDashOffset = -treeAnimT;
+
+        const selPeer = state.selectedPeerId;
+        const hasSelection = !!selPeer;
+
+        // Three tiers: dim (unrelated), normal (no selection), highlighted (selected peer's edges)
+        // Batch into paths by tier to minimize draw calls
+        const dimPath = new Path2D();
+        const normalPath = new Path2D();
+        const highlightPath = new Path2D();
+
+        for (const edge of treeAnimEdges) {
+            const touches = hasSelection && edge.peerIds.includes(selPeer);
+            const target = hasSelection
+                ? (touches ? highlightPath : dimPath)
+                : normalPath;
+            target.moveTo(edge.from.x, edge.from.y);
+            target.bezierCurveTo(edge.cp1.x, edge.cp1.y, edge.cp2.x, edge.cp2.y, edge.to.x, edge.to.y);
+        }
+
+        if (hasSelection) {
+            // Dim edges
+            ctx.lineWidth = 1;
+            ctx.strokeStyle = 'rgba(126, 207, 239, 0.1)';
+            ctx.stroke(dimPath);
+            // Highlighted edges
+            ctx.lineWidth = 2.5;
+            ctx.strokeStyle = 'rgba(126, 207, 239, 0.9)';
+            ctx.stroke(highlightPath);
+        } else {
+            ctx.lineWidth = treeAnimEdges.length > 80 ? 1 : 2;
+            ctx.strokeStyle = treeAnimEdges.length > 80
+                ? 'rgba(126, 207, 239, 0.2)'
+                : 'rgba(126, 207, 239, 0.7)';
+            ctx.stroke(normalPath);
+        }
+
+        ctx.setLineDash([]);
+    }
+    if (!treeAnimFrame) treeAnimFrame = requestAnimationFrame(step);
+}
+
+function stopTreeEdgeAnimation() {
+    if (treeAnimFrame) {
+        cancelAnimationFrame(treeAnimFrame);
+        treeAnimFrame = null;
+    }
+    treeAnimEdges = [];
+    if (treeAnimCanvas) {
+        const ctx = treeAnimCanvas.getContext('2d');
+        if (ctx) ctx.clearRect(0, 0, treeAnimCanvas.width, treeAnimCanvas.height);
+    }
+}
+
 // ============================================================================
 // Main ring SVG rendering function (hybrid: SVG decorations + Canvas peers)
 // ============================================================================
@@ -299,7 +397,80 @@ function getOrCreateStaticSvg() {
     return svg;
 }
 
-export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(), callbacks = {}) {
+// ============================================================================
+// Radial tree overlay helpers (contract topology on ring)
+// ============================================================================
+
+/**
+ * Build animated dashed-line edges for the entire subscription tree.
+ * All peers stay at their normal ring positions; edges arc through the interior.
+ * Dashes animate outward from the contract location: the peer closer to the
+ * contract on the ring is always "from", the peer further away is "to".
+ */
+function drawTreeEdgesOnRing(ctx, treeData, peers) {
+    treeAnimEdges = [];
+
+    // Count edges to scale line weight
+    let edgeCount = 0;
+    for (const kids of treeData.children.values()) edgeCount += kids.length;
+    const isLarge = edgeCount > 80;
+
+    // Ring distance helper (shortest arc on 0..1 ring)
+    const contractLoc = contractKeyToLocation(state.selectedContract);
+    function ringDist(loc) {
+        if (contractLoc === null) return 0;
+        const d = Math.abs(loc - contractLoc);
+        return Math.min(d, 1 - d);
+    }
+
+    for (const [parentId, kids] of treeData.children) {
+        const parentPeer = peers.get(parentId);
+        if (!parentPeer) continue;
+
+        for (const kidId of kids) {
+            const kidPeer = peers.get(kidId);
+            if (!kidPeer) continue;
+
+            // Orient edge so "from" is closer to contract location on the ring
+            const parentDist = ringDist(parentPeer.location);
+            const kidDist = ringDist(kidPeer.location);
+            const [nearPeer, farPeer] = parentDist <= kidDist
+                ? [parentPeer, kidPeer]
+                : [kidPeer, parentPeer];
+
+            const fromPos = locationToXY(nearPeer.location);
+            const toPos = locationToXY(farPeer.location);
+            const fromAngle = nearPeer.location * 2 * Math.PI - Math.PI / 2;
+            const toAngle = farPeer.location * 2 * Math.PI - Math.PI / 2;
+
+            // Quadratic bezier with control point pulled toward center.
+            // Pull strength proportional to angular distance.
+            let angleDiff = toAngle - fromAngle;
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+
+            const midAngle = fromAngle + angleDiff / 2;
+            const angularDist = Math.abs(angleDiff) / Math.PI; // 0..1
+            const pullFrac = 0.3 + angularDist * 0.5;
+            const cpRadius = RADIUS * (1 - pullFrac);
+            const cp = {
+                x: CENTER + cpRadius * Math.cos(midAngle),
+                y: CENTER + cpRadius * Math.sin(midAngle)
+            };
+
+            treeAnimEdges.push({
+                from: fromPos, to: toPos,
+                cp1: cp, cp2: cp,
+                isPrimary: !isLarge,
+                peerIds: [parentId, kidId]
+            });
+        }
+    }
+
+    if (treeAnimEdges.length === 0) { stopTreeEdgeAnimation(); return; }
+}
+
+export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(), callbacks = {}, treeData = null) {
     lastCallbacks = callbacks;
     const container = document.getElementById('ring-container');
 
@@ -314,20 +485,35 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
         const contractLocation = contractKeyToLocation(state.selectedContract);
         if (contractLocation !== null) {
             const angle = contractLocation * 2 * Math.PI - Math.PI / 2;
-            const ringX = CENTER + RADIUS * Math.cos(angle);
-            const ringY = CENTER + RADIUS * Math.sin(angle);
-            const diamond = document.createElementNS('http://www.w3.org/2000/svg', 'polygon');
-            const size = 7;
-            diamond.setAttribute('points', `${ringX},${ringY-size} ${ringX+size},${ringY} ${ringX},${ringY+size} ${ringX-size},${ringY}`);
-            diamond.setAttribute('fill', '#f472b6');
-            diamond.setAttribute('stroke', '#fff');
-            diamond.setAttribute('stroke-width', '1.5');
-            diamond.setAttribute('style', 'cursor: pointer; pointer-events: auto;');
+            const cosA = Math.cos(angle), sinA = Math.sin(angle);
+            const ringX = CENTER + RADIUS * cosA;
+            const ringY = CENTER + RADIUS * sinA;
 
-            const title = document.createElementNS('http://www.w3.org/2000/svg', 'title');
-            const shortKey = state.selectedContract.substring(0, 12) + '...';
-            title.textContent = `Location of contract ${shortKey}\n@ ${contractLocation.toFixed(4)}`;
-            diamond.appendChild(title);
+            // Bullseye target outside the ring
+            const markerR = RADIUS + 22;
+            const mx = CENTER + markerR * cosA;
+            const my = CENTER + markerR * sinA;
+
+            // Thin line from ring edge to marker
+            const tick = document.createElementNS('http://www.w3.org/2000/svg', 'line');
+            tick.setAttribute('x1', ringX);
+            tick.setAttribute('y1', ringY);
+            tick.setAttribute('x2', CENTER + (markerR - 10) * cosA);
+            tick.setAttribute('y2', CENTER + (markerR - 10) * sinA);
+            tick.setAttribute('stroke', '#7ecfef');
+            tick.setAttribute('stroke-width', '1');
+            tick.setAttribute('stroke-opacity', '0.6');
+            dynamicGroup.appendChild(tick);
+
+            const diamond = document.createElementNS('http://www.w3.org/2000/svg', 'text');
+            diamond.setAttribute('x', mx);
+            diamond.setAttribute('y', my);
+            diamond.setAttribute('text-anchor', 'middle');
+            diamond.setAttribute('dominant-baseline', 'central');
+            diamond.setAttribute('font-size', '26');
+            diamond.setAttribute('fill', '#7ecfef');
+            diamond.setAttribute('style', 'pointer-events: none;');
+            diamond.textContent = '\u25CE';
             dynamicGroup.appendChild(diamond);
         }
     }
@@ -341,19 +527,27 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     }
 
     // --- Canvas: dynamic peer/connection rendering ---
+    // Compute tree overlay data if tree data provided
+    let treeOverlay = null;
+    if (treeData && treeData.allNodes.size > 0) {
+        treeOverlay = { treeData };
+    }
+
     // Compute connection distances (needed for dist chart regardless of drawing)
-    const connectionDistances = [];
-    connections.forEach(connKey => {
-        const [id1, id2] = connKey.split('|');
-        const peer1 = peers.get(id1);
-        const peer2 = peers.get(id2);
-        if (peer1 && peer2) {
-            const rawDist = Math.abs(peer1.location - peer2.location);
-            connectionDistances.push(Math.min(rawDist, 1 - rawDist));
+    if (!treeOverlay) {
+        const connectionDistances = [];
+        connections.forEach(connKey => {
+            const [id1, id2] = connKey.split('|');
+            const peer1 = peers.get(id1);
+            const peer2 = peers.get(id2);
+            if (peer1 && peer2) {
+                const rawDist = Math.abs(peer1.location - peer2.location);
+                connectionDistances.push(Math.min(rawDist, 1 - rawDist));
+            }
+        });
+        if (connectionDistances.length > 0) {
+            drawDistanceChartOverlay(connectionDistances);
         }
-    });
-    if (connectionDistances.length > 0) {
-        drawDistanceChartOverlay(connectionDistances);
     }
 
     // Ensure canvas element exists and is sized to fit container (square)
@@ -378,22 +572,33 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
     ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
 
-    // Draw connections on canvas
-    drawConnectionsCanvas(ctx, peers, connections);
+    if (treeOverlay) {
+        // Subscription tree: animated dashed lines between parent-child on ring
+        drawTreeEdgesOnRing(ctx, treeOverlay.treeData, peers);
 
-    // Draw arrows for all events in selected transaction
-    drawSelectedTransactionArrows(ctx, peers);
+        // Set up animation overlay canvas (same size as peer canvas)
+        const animCanvas = getOrCreateTreeAnimCanvas(container);
+        if (animCanvas.width !== targetPx || animCanvas.height !== targetPx) {
+            animCanvas.width = targetPx;
+            animCanvas.height = targetPx;
+            animCanvas.style.width = displaySize + 'px';
+            animCanvas.style.height = displaySize + 'px';
+        }
+        startTreeEdgeAnimation(container);
+    } else {
+        // Normal ring: connections + arrows
+        stopTreeEdgeAnimation();
+        drawConnectionsCanvas(ctx, peers, connections);
+        drawSelectedTransactionArrows(ctx, peers);
+        drawHoveredEventLine(ctx, peers);
 
-    // Draw highlighted connection for hovered event (on top of transaction arrows)
-    drawHoveredEventLine(ctx, peers);
-
-    // Draw subscription/proximity links when contract selected
-    if (state.selectedContract && state.contractData[state.selectedContract]) {
-        drawSubscriptionLinksCanvas(ctx, peers, connections);
+        if (state.selectedContract && state.contractData[state.selectedContract]) {
+            drawSubscriptionLinksCanvas(ctx, peers, connections);
+        }
     }
 
     // Draw peers on canvas and build hit-test array
-    drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks);
+    drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, treeOverlay);
 
     // Install mouse events once
     installCanvasEvents(canvas, container);
@@ -602,42 +807,84 @@ function drawConnectionsCanvas(ctx, peers, connections) {
         const pos2 = locationToXY(peer2.location);
         const opacity = (isFocusConn && !showAllConnections) ? 0.6 : 0.3;
         const color = isFocusConn ? focusConnColor : '0, 127, 255';
-        lines.push({ x1: pos1.x, y1: pos1.y, x2: pos2.x, y2: pos2.y, opacity, color });
+
+        // Curved connections for focused peer, straight for background
+        let cp = null;
+        if (isFocusConn) {
+            const a1 = peer1.location * 2 * Math.PI - Math.PI / 2;
+            const a2 = peer2.location * 2 * Math.PI - Math.PI / 2;
+            let angleDiff = a2 - a1;
+            while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+            while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+            const midAngle = a1 + angleDiff / 2;
+            const angularDist = Math.abs(angleDiff) / Math.PI;
+            const pullFrac = 0.3 + angularDist * 0.5;
+            const cpRadius = RADIUS * (1 - pullFrac);
+            cp = { x: CENTER + cpRadius * Math.cos(midAngle), y: CENTER + cpRadius * Math.sin(midAngle) };
+        }
+        lines.push({ x1: pos1.x, y1: pos1.y, x2: pos2.x, y2: pos2.y, opacity, color, cp });
     });
 
     if (lines.length === 0) return;
 
     ctx.lineCap = 'round';
-    ctx.lineWidth = 1.5;
 
-    if (animateConnections) {
-        // Animated dashed lines
-        ctx.setLineDash([8, 4]);
-        ctx.lineDashOffset = -connectionAnimOffset;
-        startConnectionAnimation();
-    } else {
+    // Split into background (straight) and focused (curved/animated)
+    const bgLines = [];
+    const focusLines = [];
+    for (const l of lines) {
+        (l.cp ? focusLines : bgLines).push(l);
+    }
+
+    // Background connections: straight, solid or small-network animated
+    if (bgLines.length > 0) {
+        ctx.lineWidth = 1.5;
+        if (animateConnections) {
+            ctx.setLineDash([8, 4]);
+            ctx.lineDashOffset = -connectionAnimOffset;
+            startConnectionAnimation();
+        } else {
+            ctx.setLineDash([]);
+        }
+        const byStyle = new Map();
+        for (const l of bgLines) {
+            const key = `rgba(${l.color}, ${l.opacity})`;
+            if (!byStyle.has(key)) byStyle.set(key, []);
+            byStyle.get(key).push(l);
+        }
+        for (const [style, batch] of byStyle) {
+            ctx.strokeStyle = style;
+            ctx.beginPath();
+            for (const l of batch) {
+                ctx.moveTo(l.x1, l.y1);
+                ctx.lineTo(l.x2, l.y2);
+            }
+            ctx.stroke();
+        }
         ctx.setLineDash([]);
     }
 
-    // Batch by color+opacity for fewer state changes
-    const byStyle = new Map();
-    for (const l of lines) {
-        const key = `rgba(${l.color}, ${l.opacity})`;
-        if (!byStyle.has(key)) byStyle.set(key, []);
-        byStyle.get(key).push(l);
-    }
-
-    for (const [style, batch] of byStyle) {
-        ctx.strokeStyle = style;
-        ctx.beginPath();
-        for (const l of batch) {
-            ctx.moveTo(l.x1, l.y1);
-            ctx.lineTo(l.x2, l.y2);
+    // Focused connections: curved, static
+    if (focusLines.length > 0) {
+        ctx.lineWidth = 1.5;
+        ctx.setLineDash([]);
+        const byStyle = new Map();
+        for (const l of focusLines) {
+            const key = `rgba(${l.color}, ${l.opacity})`;
+            if (!byStyle.has(key)) byStyle.set(key, []);
+            byStyle.get(key).push(l);
         }
-        ctx.stroke();
+        for (const [style, batch] of byStyle) {
+            ctx.strokeStyle = style;
+            ctx.beginPath();
+            for (const l of batch) {
+                ctx.moveTo(l.x1, l.y1);
+                ctx.quadraticCurveTo(l.cp.x, l.cp.y, l.x2, l.y2);
+            }
+            ctx.stroke();
+        }
     }
 
-    ctx.setLineDash([]);
     ctx.lineDashOffset = 0;
 }
 
@@ -1046,7 +1293,7 @@ function drawSubscriptionLinksCanvas(ctx, peers, connections) {
 // Canvas: draw peers (replaces SVG drawPeers -- the main scalability win)
 // ============================================================================
 
-function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) {
+function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, treeOverlay = null) {
     const { showPeerNamingPrompt } = callbacks;
     const isLargeNetwork = peers.size > 50;
     const isVeryLargeNetwork = peers.size > 500;
@@ -1105,48 +1352,28 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) 
         let peerStateHash = null;
         let isNonSubscriber = false;
 
-        if (state.selectedContract) {
-            if (isSubscriber) {
-                if (state.contractStates[state.selectedContract] && peer.peer_id) {
-                    const peerState = state.contractStates[state.selectedContract][peer.peer_id];
-                    if (peerState && peerState.hash) {
-                        peerStateHash = peerState.hash;
-                    }
-                }
-                fillColor = '#f472b6';
-                glowColor = 'rgba(244, 114, 182, 0.3)';
-            } else {
-                isNonSubscriber = true;
-                fillColor = '#3a4550';
-                glowColor = 'rgba(58, 69, 80, 0.15)';
-            }
+        if (state.selectedContract && !isSubscriber) {
+            isNonSubscriber = true;
+            fillColor = '#3a4550';
+            glowColor = 'rgba(58, 69, 80, 0.15)';
         }
 
         const peerName = peer.ip_hash ? state.peerNames[peer.ip_hash] : null;
 
         if (isGateway) {
-            if (!state.selectedContract || isSubscriber) {
+            if (!isNonSubscriber) {
                 fillColor = '#f59e0b';
                 glowColor = 'rgba(245, 158, 11, 0.3)';
-            } else if (isNonSubscriber) {
-                fillColor = '#6b5a30';
-                glowColor = 'rgba(107, 90, 48, 0.2)';
             }
             label = peerName || 'GW';
         } else if (isYou) {
-            if (!state.selectedContract || isSubscriber) {
+            if (!isNonSubscriber) {
                 fillColor = '#10b981';
                 glowColor = 'rgba(16, 185, 129, 0.3)';
-            } else if (isNonSubscriber) {
-                fillColor = '#2d5a4a';
-                glowColor = 'rgba(45, 90, 74, 0.2)';
             }
             label = peerName || 'YOU';
         } else if (peerName) {
             label = peerName;
-        } else if (isSubscriber && !state.selectedContract) {
-            fillColor = '#f472b6';
-            glowColor = 'rgba(244, 114, 182, 0.3)';
         }
 
         if (isEventSelected) {
@@ -1165,7 +1392,20 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) 
 
         const isSpecial = isEventHovered || isHighlighted || isPeerSelected || isGateway || isYou;
         let nodeSize, glowSize;
-        if (isVeryLargeNetwork) {
+        if (treeOverlay) {
+            // Tree overlay: subscribers normal, non-subscribers nearly invisible
+            if (isNonSubscriber) {
+                nodeSize = 1;
+                glowSize = 0;
+                fillColor = 'rgba(58, 69, 80, 0.15)';
+            } else if (isSpecial) {
+                nodeSize = 6;
+                glowSize = 10;
+            } else {
+                nodeSize = 4;
+                glowSize = 7;
+            }
+        } else if (isVeryLargeNetwork) {
             nodeSize = isSpecial ? 3 : 2;
             glowSize = 0; // no glow for very large networks
         } else if (isLargeNetwork) {
@@ -1261,7 +1501,9 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) 
     }
 
     // --- Pass 3: State indicators (small colored squares for contract state) ---
+    // Skip when tree overlay is active — uniform peer styling is cleaner
     for (const d of peerRenderData) {
+        if (treeOverlay) break;
         if (!d.peerStateHash || !state.selectedContract) continue;
         const stateColors = hashToColor(d.peerStateHash);
         const squareSize = d.nodeSize * 0.7;
@@ -1337,7 +1579,7 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) 
 
         // Draw radial label
         const angle = loc * 2 * Math.PI - Math.PI / 2;
-        const labelRadius = RADIUS + 18;
+        let labelRadius = RADIUS + 18;
         const lx = CENTER + labelRadius * Math.cos(angle);
         const ly = CENTER + labelRadius * Math.sin(angle);
         const onLeft = Math.cos(angle) < 0;
@@ -1360,6 +1602,8 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) 
 
     // --- Build hit targets for mouse events ---
     for (const d of peerRenderData) {
+        // Skip non-subscribers when contract is selected — they're not interactive
+        if (treeOverlay && d.isNonSubscriber) continue;
         canvasHitTargets.push({
             x: d.pos.x,
             y: d.pos.y,
@@ -1370,6 +1614,26 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks) 
             peerName: d.peerName,
             tooltipText: d.tooltipText
         });
+    }
+
+    // Contract location marker hit target
+    if (state.selectedContract) {
+        const contractLoc = contractKeyToLocation(state.selectedContract);
+        if (contractLoc !== null) {
+            const angle = contractLoc * 2 * Math.PI - Math.PI / 2;
+            const markerR = RADIUS + 22;
+            const shortKey = state.selectedContract.substring(0, 12) + '...';
+            canvasHitTargets.push({
+                x: CENTER + markerR * Math.cos(angle),
+                y: CENTER + markerR * Math.sin(angle),
+                radius: 14,
+                id: '__contract_location__',
+                peer: null,
+                isYou: false,
+                peerName: null,
+                tooltipText: `Contract location: ${shortKey}\nRing position: ${contractLoc.toFixed(4)}`
+            });
+        }
     }
 }
 

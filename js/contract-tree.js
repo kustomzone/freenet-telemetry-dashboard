@@ -33,7 +33,7 @@ let lastTreeData = null;
  * inferred from subscribers + network connections.
  * Returns { roots[], children: Map<id, id[]>, allNodes: Set, parentOf: Map }
  */
-function buildTree(contractKey, peers, connections) {
+export function buildTree(contractKey, peers, connections) {
     const subData = state.contractData[contractKey];
     if (!subData) return { roots: [], children: new Map(), allNodes: new Set(), parentOf: new Map() };
 
@@ -195,23 +195,34 @@ function inferTreeFromConnections(allNodes, children, parentOf, peers, contractK
         }
     }
 
-    // BFS from root to build spanning tree
+    // BFS from root to build spanning tree, handling disconnected components
     const visited = new Set();
-    const queue = [bestRoot];
-    visited.add(bestRoot);
 
-    while (queue.length > 0) {
-        const node = queue.shift();
-        const neighbors = adj.get(node) || [];
-        for (const neighbor of neighbors) {
-            if (visited.has(neighbor)) continue;
-            visited.add(neighbor);
-            // Add tree edge: node -> neighbor
-            if (!children.get(node).includes(neighbor)) {
-                children.get(node).push(neighbor);
+    // Start with bestRoot, then pick unvisited nodes for remaining components
+    // Prefer nodes with more connections as component roots
+    const startOrder = [...allNodes].sort((a, b) => (adj.get(b)?.length || 0) - (adj.get(a)?.length || 0));
+    // But put bestRoot first if it has connections
+    if (bestRoot && (adj.get(bestRoot)?.length || 0) > 0) {
+        const idx = startOrder.indexOf(bestRoot);
+        if (idx > 0) { startOrder.splice(idx, 1); startOrder.unshift(bestRoot); }
+    }
+
+    for (const startNode of startOrder) {
+        if (visited.has(startNode)) continue;
+        visited.add(startNode);
+        const queue = [startNode];
+        while (queue.length > 0) {
+            const node = queue.shift();
+            const neighbors = adj.get(node) || [];
+            for (const neighbor of neighbors) {
+                if (visited.has(neighbor)) continue;
+                visited.add(neighbor);
+                if (!children.get(node).includes(neighbor)) {
+                    children.get(node).push(neighbor);
+                }
+                parentOf.set(neighbor, node);
+                queue.push(neighbor);
             }
-            parentOf.set(neighbor, node);
-            queue.push(neighbor);
         }
     }
 }

@@ -286,6 +286,9 @@ export function updateURL() {
     if (state.selectedTxId) {
         params.set('tx', state.selectedTxId.substring(0, 12));
     }
+    if (state.rightPanelTab && state.rightPanelTab !== 'contracts') {
+        params.set('tab', state.rightPanelTab);
+    }
     const queryString = params.toString();
     const newUrl = queryString ? `?${queryString}` : window.location.pathname;
     history.replaceState(null, '', newUrl);
@@ -326,6 +329,16 @@ export function loadFromURL(updateView) {
             state.selectedTxId = match.tx_id;
             console.log('Restored tx from URL:', match.tx_id.substring(0, 12));
         }
+    }
+
+    // Restore right panel tab
+    const tabParam = params.get('tab');
+    if (tabParam === 'performance') {
+        state.rightPanelTab = 'performance';
+        // Defer tab switch to after DOM is ready
+        setTimeout(() => {
+            if (window.switchRightTab) window.switchRightTab('performance');
+        }, 0);
     }
 
     urlLoaded = true;

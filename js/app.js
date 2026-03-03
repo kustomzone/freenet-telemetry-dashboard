@@ -28,7 +28,7 @@ import {
     connect, showPeerNamingPrompt, closePeerNamingPrompt
 } from './websocket.js';
 import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferChart } from './transfers.js';
-import { updateContractTree, getTreeStats, resetContractTree, triggerTreeMessageAnim } from './contract-tree.js';
+import { updateContractTree, getTreeStats, resetContractTree, triggerTreeMessageAnim, buildTree } from './contract-tree.js';
 import { initMetricsChart, updateMetricsChart, destroyMetricsChart } from './metrics.js';
 
 // ============================================================================
@@ -89,7 +89,7 @@ function _updateViewImpl() {
         }
     }
 
-    // Panel swap: show tree when contract selected, ring otherwise
+    // Always show ring; tree overlay renders on ring canvas when contract selected
     const ringContainer = document.getElementById('ring-container');
     const treeContainer = document.getElementById('tree-container');
     const ringLegend = document.getElementById('ring-legend');
@@ -97,33 +97,30 @@ function _updateViewImpl() {
     const topoPanelTitle = document.querySelector('.panel-title');
     const overlayIds = ['dist-chart-container', 'transfer-chart-container', 'transfer-backdrop', 'transfer-tooltip'];
 
+    // Always show ring, always hide old tree container
+    ringContainer.style.display = '';
+    treeContainer.style.display = 'none';
+    if (treeLegend) treeLegend.style.display = 'none';
+
+    let treeData = null;
     if (state.selectedContract && state.contractData[state.selectedContract]) {
-        // Show contract tree, hide ring + overlays
-        ringContainer.style.display = 'none';
-        treeContainer.style.display = 'flex';
-        if (ringLegend) ringLegend.style.display = 'none';
-        if (treeLegend) treeLegend.style.display = 'flex';
-        overlayIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
+        // Build tree data for radial overlay on ring
+        treeData = buildTree(state.selectedContract, peers, connections);
         const shortKey = state.contractData[state.selectedContract].short_key || state.selectedContract.substring(0, 12);
         if (topoPanelTitle) topoPanelTitle.textContent = 'Contract Topology: ' + shortKey;
-
-        updateContractTree(treeContainer, peers, connections, subscriberPeerIds, {
-            selectPeer: (id) => selectPeer(id, updateView, updateURL)
-        });
-    } else {
-        // Show ring, hide tree
-        ringContainer.style.display = '';
-        treeContainer.style.display = 'none';
+        // Hide distance/transfer overlays when showing contract topology
+        overlayIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = 'none'; });
         if (ringLegend) ringLegend.style.display = 'flex';
-        if (treeLegend) treeLegend.style.display = 'none';
-        overlayIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+    } else {
         if (topoPanelTitle) topoPanelTitle.textContent = 'Network Topology';
+        overlayIds.forEach(id => { const el = document.getElementById(id); if (el) el.style.display = ''; });
+        if (ringLegend) ringLegend.style.display = 'flex';
         resetContractTree();
-
-        updateRingSVG(peers, connections, subscriberPeerIds, {
-            selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL)
-        });
     }
+
+    updateRingSVG(peers, connections, subscriberPeerIds, {
+        selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL)
+    }, treeData);
 
     // Update stats
     document.getElementById('peer-count').textContent = peers.size;
@@ -233,6 +230,7 @@ function switchRightTab(tab) {
         tabPerformance.classList.remove('active');
         destroyMetricsChart();
     }
+    updateURL();
 }
 window.switchRightTab = switchRightTab;
 window.togglePeerFilter = (peerId) => togglePeerFilter(peerId, updateView, updateURL);
@@ -294,9 +292,6 @@ connect({
         }
     }
 });
-
-// Mark URL as loaded after initial setup
-markURLLoaded();
 
 // Initialize transfer chart
 initTransferChart();
