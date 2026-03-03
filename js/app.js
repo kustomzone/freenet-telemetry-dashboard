@@ -106,6 +106,8 @@ function _updateViewImpl() {
     if (state.selectedContract && state.contractData[state.selectedContract]) {
         // Build tree data for radial overlay on ring
         treeData = buildTree(state.selectedContract, peers, connections);
+        // Use treeData.allNodes as subscriber set so highlighted peers match tree edges exactly
+        subscriberPeerIds = treeData.allNodes;
         const shortKey = state.contractData[state.selectedContract].short_key || state.selectedContract.substring(0, 12);
         if (topoPanelTitle) topoPanelTitle.textContent = 'Contract Topology: ' + shortKey;
         // Hide distance/transfer overlays when showing contract topology
