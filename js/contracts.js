@@ -249,6 +249,20 @@ export function renderContractsList() {
             }
         }
 
+        // State size (from telemetry state_size field)
+        if (data.state_size != null) {
+            const sizeBytes = data.state_size;
+            let sizeStr;
+            if (sizeBytes < 1024) {
+                sizeStr = `${sizeBytes} B`;
+            } else if (sizeBytes < 1024 * 1024) {
+                sizeStr = `${(sizeBytes / 1024).toFixed(1)} KB`;
+            } else {
+                sizeStr = `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
+            }
+            statsRow2.push(`<span class="contract-stat" title="Contract state size: ${sizeBytes.toLocaleString()} bytes">&#128190; ${sizeStr}</span>`);
+        }
+
         const allStats = statsRow1.concat(statsRow2);
 
         return `

@@ -358,6 +358,10 @@ seeding_state = {}  # contract_key -> {peer_id -> state}
 # contract_key -> {peer_id -> {hash: str, timestamp: int, event_type: str}}
 contract_states = {}
 
+# Contract state sizes - latest known size per contract (from state_size telemetry field)
+# contract_key -> {size: int, timestamp: int}
+contract_state_sizes = {}
+
 # Contract propagation tracking - tracks how quickly new states spread across peers
 # contract_key -> {current_hash, first_seen, peers: {peer_id -> timestamp}, previous: {...}}
 contract_propagation = {}
@@ -1015,6 +1019,9 @@ def process_record(record, store_history=True):
     state_hash_before = body.get("state_hash_before")
     state_hash_after = body.get("state_hash_after")
 
+    # Extract state size (from PR #3406 - added to put_success, update_success, broadcast_applied)
+    state_size = body.get("state_size")
+
     # Get contract key for state tracking
     # Telemetry may use "contract_key", "key", or "instance_id" depending on event type
     contract_key = body.get("contract_key") or body.get("key") or body.get("instance_id")
@@ -1056,6 +1063,14 @@ def process_record(record, store_history=True):
         elif event_type == "update_broadcast_applied" and state_hash_after:
             # broadcast_applied is the definitive post-merge state - takes precedence
             update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
+
+    # Track contract state sizes (from put_success, update_success, broadcast_applied)
+    if contract_key and state_size is not None:
+        try:
+            size_val = int(state_size)
+            contract_state_sizes[contract_key] = {"size": size_val, "timestamp": timestamp}
+        except (ValueError, TypeError):
+            pass
 
     if event_type == "put_request":
         op_stats["put"]["requests"] += 1
@@ -1626,6 +1641,10 @@ def get_subscription_trees(active_peer_ids=None):
                 "any_seeding": any_seeding,
                 "peer_count": max(len(peers_with_data), len(active_cs_peers)),
             }
+            # Include state size if known
+            size_info = contract_state_sizes.get(contract_key)
+            if size_info:
+                result[contract_key]["state_size"] = size_info["size"]
     return result
 
 
