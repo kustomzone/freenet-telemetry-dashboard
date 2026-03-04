@@ -187,6 +187,9 @@ event_history = deque(maxlen=MAX_HISTORY_EVENTS)  # bounded deque of event dicts
 
 # Event types worth keeping in history for time-travel / contract tracking.
 # get_request excluded — too noisy at ~3/sec.
+# connect_connected/disconnect excluded — too noisy (~83% of all events),
+# they flood the buffer and push out contract operations within minutes.
+# Connection state is tracked via live peer topology, not history replay.
 HISTORY_EVENT_TYPES = {
     # Contract operations
     "put_request", "put_success",
@@ -200,15 +203,15 @@ HISTORY_EVENT_TYPES = {
     "peer_startup", "peer_shutdown",
     # Subscription tree
     "seeding_started", "seeding_stopped",
-    # Connection / subscription completions (needed for timeline CONN/SUB lanes)
-    "connect_connected", "disconnect",
+    # Subscription completions (needed for timeline SUB lane)
     "subscribe_success", "subscribed",
 }
 
-# Broader set sent in the real-time stream — adds get_request which is too
-# noisy for history but useful to see live.
+# Broader set sent in the real-time stream — includes noisy types that
+# are useful to see live but would flood the history buffer.
 REALTIME_EVENT_TYPES = HISTORY_EVENT_TYPES | {
     "get_request",
+    "connect_connected", "disconnect",
 }
 
 # Connected WebSocket clients - now managed via ClientHandler for backpressure

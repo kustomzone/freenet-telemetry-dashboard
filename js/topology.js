@@ -573,7 +573,9 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
 
     if (treeOverlay) {
-        // Subscription tree: animated dashed lines between parent-child on ring
+        // Contract selected: show connections between hosting peers (faded),
+        // then overlay animated subscription tree edges
+        drawConnectionsCanvas(ctx, peers, connections, subscriberPeerIds);
         drawTreeEdgesOnRing(ctx, treeOverlay.treeData, peers);
 
         // Set up animation overlay canvas (same size as peer canvas)
@@ -588,13 +590,9 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     } else {
         // Normal ring: connections + arrows
         stopTreeEdgeAnimation();
-        drawConnectionsCanvas(ctx, peers, connections);
+        drawConnectionsCanvas(ctx, peers, connections, subscriberPeerIds);
         drawSelectedTransactionArrows(ctx, peers);
         drawHoveredEventLine(ctx, peers);
-
-        if (state.selectedContract && state.contractData[state.selectedContract]) {
-            drawSubscriptionLinksCanvas(ctx, peers, connections);
-        }
     }
 
     // Draw peers on canvas and build hit-test array
@@ -769,11 +767,15 @@ function findHitTarget(mx, my) {
 // Canvas: draw connections
 // ============================================================================
 
-function drawConnectionsCanvas(ctx, peers, connections) {
+function drawConnectionsCanvas(ctx, peers, connections, subscriberPeerIds = new Set()) {
+    const contractSelected = state.selectedContract && subscriberPeerIds.size > 0;
     const CONN_HIDE_THRESHOLD = 50;
     const CONN_ANIM_THRESHOLD = 30;
-    const showAllConnections = peers.size <= CONN_HIDE_THRESHOLD;
-    const animateConnections = peers.size <= CONN_ANIM_THRESHOLD;
+    // When contract selected, show all connections between hosting peers
+    // (the contract filter already restricts to hosting peers only)
+    const hostingPeerCount = contractSelected ? subscriberPeerIds.size : peers.size;
+    const showAllConnections = contractSelected || hostingPeerCount <= CONN_HIDE_THRESHOLD;
+    const animateConnections = !contractSelected && hostingPeerCount <= CONN_ANIM_THRESHOLD;
     const focusPeerId = state.selectedPeerId || null;
 
     // Determine connection color based on focused peer type
@@ -800,13 +802,30 @@ function drawConnectionsCanvas(ctx, peers, connections) {
         const peer2 = peers.get(id2);
         if (!peer1 || !peer2) return;
 
+        // Contract filter: only show connections to/from the selected peer
+        // (between hosting peers). The subscription tree edges are drawn
+        // separately by the tree animation overlay.
+        if (contractSelected) {
+            const bothHost = subscriberPeerIds.has(id1) && subscriberPeerIds.has(id2);
+            const isFocusConn = focusPeerId && (id1 === focusPeerId || id2 === focusPeerId);
+            if (!bothHost || !isFocusConn) return;
+        }
+
         const isFocusConn = focusPeerId && (id1 === focusPeerId || id2 === focusPeerId);
         if (!showAllConnections && !isFocusConn) return;
 
         const pos1 = locationToXY(peer1.location);
         const pos2 = locationToXY(peer2.location);
-        const opacity = (isFocusConn && !showAllConnections) ? 0.6 : 0.3;
-        const color = isFocusConn ? focusConnColor : '0, 127, 255';
+
+        let opacity, color;
+        if (contractSelected) {
+            // Contract mode: only showing selected peer's connections
+            opacity = 0.5;
+            color = focusConnColor;
+        } else {
+            opacity = (isFocusConn && !showAllConnections) ? 0.6 : 0.3;
+            color = isFocusConn ? focusConnColor : '0, 127, 255';
+        }
 
         // Curved connections for focused peer, straight for background
         let cp = null;

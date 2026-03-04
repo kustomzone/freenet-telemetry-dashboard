@@ -52,24 +52,29 @@ export function buildTree(contractKey, peers, connections) {
 
     if (peerStates.length > 0) {
         // Primary: use peer_states upstream/downstream
+        // Only include peers that are live in the topology
         for (const ps of peerStates) {
-            const nodeId = peerIdToAnonId.get(ps.peer_id) || ps.peer_id;
+            const nodeId = peerIdToAnonId.get(ps.peer_id);
+            if (!nodeId) continue; // skip stale peers not in live topology
             allNodes.add(nodeId);
             if (!children.has(nodeId)) children.set(nodeId, []);
 
             if (ps.upstream) {
-                const parentId = peerIdToAnonId.get(ps.upstream) || ps.upstream;
-                allNodes.add(parentId);
-                if (!children.has(parentId)) children.set(parentId, []);
-                if (!children.get(parentId).includes(nodeId)) {
-                    children.get(parentId).push(nodeId);
+                const parentId = peerIdToAnonId.get(ps.upstream);
+                if (parentId) {
+                    allNodes.add(parentId);
+                    if (!children.has(parentId)) children.set(parentId, []);
+                    if (!children.get(parentId).includes(nodeId)) {
+                        children.get(parentId).push(nodeId);
+                    }
+                    parentOf.set(nodeId, parentId);
                 }
-                parentOf.set(nodeId, parentId);
             }
 
             if (ps.downstream) {
                 for (const ds of ps.downstream) {
-                    const childId = peerIdToAnonId.get(ds) || ds;
+                    const childId = peerIdToAnonId.get(ds);
+                    if (!childId) continue; // skip stale downstream peers
                     allNodes.add(childId);
                     if (!children.has(childId)) children.set(childId, []);
                     if (!children.get(nodeId).includes(childId)) {
@@ -82,14 +87,16 @@ export function buildTree(contractKey, peers, connections) {
             }
         }
     } else if (Object.keys(broadcastTree).length > 0) {
-        // Fallback 1: use broadcast tree
+        // Fallback 1: use broadcast tree (only live peers)
         for (const [fromId, toIds] of Object.entries(broadcastTree)) {
-            const parentId = peerIdToAnonId.get(fromId) || fromId;
+            const parentId = peerIdToAnonId.get(fromId);
+            if (!parentId) continue;
             allNodes.add(parentId);
             if (!children.has(parentId)) children.set(parentId, []);
 
             for (const toId of toIds) {
-                const childId = peerIdToAnonId.get(toId) || toId;
+                const childId = peerIdToAnonId.get(toId);
+                if (!childId) continue;
                 allNodes.add(childId);
                 if (!children.has(childId)) children.set(childId, []);
                 if (!children.get(parentId).includes(childId)) {
@@ -110,11 +117,11 @@ export function buildTree(contractKey, peers, connections) {
                 if (!children.has(subId)) children.set(subId, []);
             }
         }
-        // Also add contractStates peers (may have peer_id not in subscribers)
+        // Also add contractStates peers (only if they map to live topology peers)
         const csData = state.contractStates[contractKey] || {};
         for (const peerId of Object.keys(csData)) {
-            const nodeId = peerIdToAnonId.get(peerId) || peerId;
-            if (peers.has(nodeId) && !allNodes.has(nodeId)) {
+            const nodeId = peerIdToAnonId.get(peerId);
+            if (nodeId && peers.has(nodeId) && !allNodes.has(nodeId)) {
                 allNodes.add(nodeId);
                 if (!children.has(nodeId)) children.set(nodeId, []);
             }
