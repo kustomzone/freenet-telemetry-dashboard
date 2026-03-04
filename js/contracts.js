@@ -260,7 +260,7 @@ export function renderContractsList() {
             } else {
                 sizeStr = `${(sizeBytes / (1024 * 1024)).toFixed(1)} MB`;
             }
-            statsRow2.push(`<span class="contract-stat" title="Contract state size: ${sizeBytes.toLocaleString()} bytes">&#128190; ${sizeStr}</span>`);
+            statsRow2.push(`<span class="contract-stat" title="Contract state size: ${sizeBytes.toLocaleString()} bytes">${sizeStr}</span>`);
         }
 
         const allStats = statsRow1.concat(statsRow2);
