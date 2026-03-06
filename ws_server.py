@@ -1436,10 +1436,11 @@ def process_record(record, store_history=True):
 
         sub_data = subscriptions[contract_key]
 
-        # Track subscribed events (telemetry uses "subscribe_success" not "subscribed")
+        # Track subscriber events — include requests (not just successes) since
+        # subscribe_request is 10x more common and many contracts only emit requests
         # Use event_peer_ip which is extracted from requester/target/this_peer fields (line 495-507)
-        if event_type in ("subscribed", "subscribe_success"):
-            # Try this_ip first (from this_peer field), then event_peer_ip (from requester/target)
+        if event_type in ("subscribed", "subscribe_success", "subscribe_request",
+                          "get_success", "get_request"):
             subscriber_ip = this_ip or event_peer_ip
             if subscriber_ip and is_public_ip(subscriber_ip):
                 sub_data["subscribers"].add(anonymize_ip(subscriber_ip))
