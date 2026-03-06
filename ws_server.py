@@ -331,7 +331,7 @@ class ClientHandler:
 
 # Network state (current/live)
 peers = {}  # ip -> {id, location, last_seen, connections: set()}
-connections = set()  # frozenset({ip1, ip2})
+connections = {}  # frozenset({ip1, ip2}) -> timestamp_ns
 
 # Track IP <-> peer_id mappings for liveness tracking
 ip_to_peer_id = {}  # ip -> peer_id (from body fields like target, this_peer)
@@ -772,7 +772,7 @@ def cleanup_stale_peers():
     removed_connections = []
     stale_conns = {conn for conn in connections if conn & stale_ips}
     for conn in stale_conns:
-        connections.discard(conn)
+        connections.pop(conn, None)
         ips = list(conn)
         if len(ips) == 2:
             removed_connections.append((anonymize_ip(ips[0]), anonymize_ip(ips[1])))
@@ -1394,7 +1394,7 @@ def process_record(record, store_history=True):
         if is_public_ip(this_ip) and is_public_ip(other_ip):
             conn = frozenset({this_ip, other_ip})
             if conn not in connections:
-                connections.add(conn)
+                connections[conn] = timestamp
                 if this_ip in peers:
                     peers[this_ip]["connections"].add(other_ip)
                 if other_ip in peers:
@@ -1417,7 +1417,7 @@ def process_record(record, store_history=True):
             if reporter_ip and disconnected_ip and is_public_ip(reporter_ip) and is_public_ip(disconnected_ip):
                 conn = frozenset({reporter_ip, disconnected_ip})
                 if conn in connections:
-                    connections.discard(conn)
+                    connections.pop(conn, None)
                     if reporter_ip in peers:
                         peers[reporter_ip]["connections"].discard(disconnected_ip)
                     if disconnected_ip in peers:
@@ -1920,6 +1920,7 @@ async def flush_event_buffer():
 
 
 CLEANUP_INTERVAL_SECONDS = 60  # Run cleanup every 60 seconds
+CONNECTION_TTL_NS = 15 * 60 * 10**9  # 15 minutes in nanoseconds
 
 
 async def periodic_cleanup():
@@ -1936,6 +1937,22 @@ async def periodic_cleanup():
 
             # Clean old propagation tracking
             cleanup_stale_propagation()
+
+            # Prune connections older than TTL
+            now_ns = time.time_ns()
+            expired_conns = [conn for conn, ts in connections.items()
+                             if now_ns - ts > CONNECTION_TTL_NS]
+            for conn in expired_conns:
+                connections.pop(conn, None)
+                ips = list(conn)
+                if len(ips) == 2:
+                    for ip in ips:
+                        other = ips[1] if ip == ips[0] else ips[0]
+                        if ip in peers:
+                            peers[ip]['connections'].discard(other)
+                    pass  # Don't broadcast TTL-pruned connections (too many on first cleanup)
+            if expired_conns:
+                print(f"[cleanup] Pruned {len(expired_conns)} expired connections (TTL={CONNECTION_TTL_NS // 10**9}s)")
 
             # Broadcast removals to connected clients so they update in real-time
             if clients and (removed_peers or removed_connections):
