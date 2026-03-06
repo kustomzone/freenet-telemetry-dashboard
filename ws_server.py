@@ -1407,16 +1407,22 @@ def process_record(record, store_history=True):
         from_peer_addr = body.get("from_peer_addr", "")
         if from_peer_addr and ":" in from_peer_addr:
             disconnected_ip = from_peer_addr.split(":")[0]
-            # this_ip is the peer reporting the disconnect
-            if this_ip and disconnected_ip and is_public_ip(this_ip) and is_public_ip(disconnected_ip):
-                conn = frozenset({this_ip, disconnected_ip})
+            # this_ip is the peer reporting the disconnect.
+            # Disconnect events don't have a "this_peer" field, so this_ip is
+            # usually None.  Fall back to the attrs_peer_id -> IP mapping that
+            # was populated from earlier connect events.
+            reporter_ip = this_ip
+            if not reporter_ip and attrs_peer_id and attrs_peer_id in attrs_peer_id_to_ip:
+                reporter_ip = attrs_peer_id_to_ip[attrs_peer_id]
+            if reporter_ip and disconnected_ip and is_public_ip(reporter_ip) and is_public_ip(disconnected_ip):
+                conn = frozenset({reporter_ip, disconnected_ip})
                 if conn in connections:
                     connections.discard(conn)
-                    if this_ip in peers:
-                        peers[this_ip]["connections"].discard(disconnected_ip)
+                    if reporter_ip in peers:
+                        peers[reporter_ip]["connections"].discard(disconnected_ip)
                     if disconnected_ip in peers:
-                        peers[disconnected_ip]["connections"].discard(this_ip)
-                    connection_removed = (anonymize_ip(this_ip), anonymize_ip(disconnected_ip))
+                        peers[disconnected_ip]["connections"].discard(reporter_ip)
+                    connection_removed = (anonymize_ip(reporter_ip), anonymize_ip(disconnected_ip))
 
     # Track subscription tree data FIRST (before potentially returning None)
     # Use same pattern as line 492 - telemetry may use any of these field names
