@@ -280,9 +280,8 @@ export function updateURL() {
     if (state.selectedContract) {
         params.set('contract', state.selectedContract.substring(0, 16));
     }
-    if (state.selectedPeerId) {
-        params.set('peer', state.selectedPeerId.substring(0, 16));
-    }
+    // Don't persist peer selection — it's transient and confusing on reload
+    // (users think the dashboard is misidentifying them as the selected peer)
     if (state.selectedTxId) {
         params.set('tx', state.selectedTxId.substring(0, 12));
     }
@@ -311,15 +310,7 @@ export function loadFromURL(updateView) {
         }
     }
 
-    // Restore peer selection
-    const peerParam = params.get('peer');
-    if (peerParam && state.initialStatePeers) {
-        const match = state.initialStatePeers.find(p => p.id && p.id.startsWith(peerParam));
-        if (match) {
-            state.selectedPeerId = match.id;
-            console.log('Restored peer from URL:', match.id.substring(0, 16));
-        }
-    }
+    // Peer selection is not persisted (transient interaction)
 
     // Restore transaction filter
     const txParam = params.get('tx');
