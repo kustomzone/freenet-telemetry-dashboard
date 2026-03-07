@@ -154,8 +154,8 @@ export function renderContractsList() {
         const activeUniqueHashes = new Set(activePeerStates.map(([_, s]) => s.hash));
         const isDiverged = activeUniqueHashes.size > 1;
 
-        // Use all hashes for display, active hashes for warning
-        const uniqueHashes = allUniqueHashes;
+        // Use active hashes for both display and warning
+        const uniqueHashes = activeUniqueHashes;
         const latestHash = peerStateHashes.length > 0
             ? peerStateHashes.sort((a, b) => b[1].timestamp - a[1].timestamp)[0][1].hash
             : null;

@@ -789,8 +789,18 @@ def cleanup_stale_peers():
             del seeding_state[contract_key]
 
     # 10. Remove stale peer_ids from contract_states
+    #     Also remove entries whose own timestamp is older than the cutoff,
+    #     since some peer_ids may never have been mapped to an IP
+    #     (e.g. peers only seen via get_success or broadcast_applied).
     for contract_key in list(contract_states.keys()):
         for pid in stale_peer_ids:
+            contract_states[contract_key].pop(pid, None)
+        # Timestamp-based cleanup for unmapped peers
+        stale_entries = [
+            pid for pid, entry in contract_states[contract_key].items()
+            if entry.get("timestamp", 0) < cutoff
+        ]
+        for pid in stale_entries:
             contract_states[contract_key].pop(pid, None)
         if not contract_states[contract_key]:
             del contract_states[contract_key]
