@@ -598,73 +598,76 @@ def get_version_rollout():
     """Build version rollout timeseries from peer lifecycle data.
 
     Merges pre-extracted historical data (from rotated logs) with
-    live peer_lifecycle data for a complete version rollout picture.
+    live peer_lifecycle data. At each time bucket, counts peers that
+    are considered active: started before the bucket and either not yet
+    shut down or shut down after the bucket. Peers without a shutdown
+    event expire after PEER_TTL_NS.
     """
     import time as _time
 
     if not peer_lifecycle and not _version_history:
         return {"series": [], "versions": []}
 
-    ROLLOUT_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours (same as metrics)
+    ROLLOUT_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours
+    PEER_TTL_NS = 12 * 60 * 60 * 1_000_000_000       # 12 hours assumed max uptime without re-report
 
-    # Collect all startup/shutdown events with timestamps
-    events = []  # (timestamp_ns, version, +1/-1)
+    # Build list of (version, startup_ns, shutdown_ns_or_None)
+    peers = []
 
-    # Historical data: [version, startup_ns, shutdown_ns?]
     for entry in _version_history:
         v = entry[0]
-        events.append((entry[1], v, 1))
-        if len(entry) > 2 and entry[2]:
-            events.append((entry[2], v, -1))
+        st = entry[1]
+        sd = entry[2] if len(entry) > 2 else None
+        peers.append((v, st, sd))
 
-    # Live data from current log
     for pid, data in peer_lifecycle.items():
         v = data.get("version", "unknown")
         st = data.get("startup_time")
         if st:
-            events.append((st, v, 1))
-        sd = data.get("shutdown_time")
-        if sd:
-            events.append((sd, v, -1))
+            sd = data.get("shutdown_time")
+            peers.append((v, st, sd))
 
-    if not events:
+    if not peers:
         return {"series": [], "versions": []}
 
-    events.sort(key=lambda e: e[0])
-
     # Determine time range
-    min_t = events[0][0]
-    max_t = max(events[-1][0], int(_time.time() * 1_000_000_000))
+    all_times = [p[1] for p in peers]
+    min_t = min(all_times)
+    max_t = max(max(all_times), int(_time.time() * 1_000_000_000))
 
-    # Build buckets
-    bucket_start = (min_t // ROLLOUT_BUCKET_NS) * ROLLOUT_BUCKET_NS
-    # Current version counts (running tally)
-    current_counts = {}  # version -> count
-    event_idx = 0
+    # Sort peers by startup time for efficient scanning
+    peers.sort(key=lambda p: p[1])
 
-    series = []
+    # Build time buckets
     all_versions = set()
+    series = []
+    t = (min_t // ROLLOUT_BUCKET_NS) * ROLLOUT_BUCKET_NS
 
-    t = bucket_start
     while t <= max_t + ROLLOUT_BUCKET_NS:
-        # Process all events up to this bucket boundary
-        while event_idx < len(events) and events[event_idx][0] <= t:
-            _, v, delta = events[event_idx]
-            current_counts[v] = max(0, current_counts.get(v, 0) + delta)
-            all_versions.add(v)
-            event_idx += 1
+        counts = {}  # version -> count
+        for v, st, sd in peers:
+            if st > t:
+                break  # sorted, no more peers started before this bucket
+            # Peer is active at time t if:
+            # - started before t, AND
+            # - either shut down after t, or no shutdown and within TTL
+            if sd is not None:
+                if sd > t:
+                    counts[v] = counts.get(v, 0) + 1
+            else:
+                # No shutdown: assume active for PEER_TTL_NS after startup
+                if st + PEER_TTL_NS > t:
+                    counts[v] = counts.get(v, 0) + 1
 
-        # Record snapshot (only if we have data)
-        if any(c > 0 for c in current_counts.values()):
+        if counts:
             bucket_data = {"t": t}
-            for v, c in current_counts.items():
-                if c > 0:
-                    bucket_data[v] = c
+            for v, c in counts.items():
+                bucket_data[v] = c
+                all_versions.add(v)
             series.append(bucket_data)
 
         t += ROLLOUT_BUCKET_NS
 
-    # Sort versions for consistent ordering (newest first by semver-like sort)
     sorted_versions = sorted(all_versions, key=lambda v: [int(x) if x.isdigit() else 0 for x in v.replace("-", ".").split(".")], reverse=True)
 
     return {
