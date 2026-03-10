@@ -630,10 +630,11 @@ def get_version_rollout():
     if not peers:
         return {"series": [], "versions": []}
 
-    # Determine time range
-    all_times = [p[1] for p in peers]
-    min_t = min(all_times)
-    max_t = max(max(all_times), int(_time.time() * 1_000_000_000))
+    # Determine time range: last 48 hours
+    now_ns = int(_time.time() * 1_000_000_000)
+    WINDOW_NS = 48 * 60 * 60 * 1_000_000_000
+    min_t = now_ns - WINDOW_NS
+    max_t = now_ns
 
     # Sort peers by startup time for efficient scanning
     peers.sort(key=lambda p: p[1])
