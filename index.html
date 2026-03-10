@@ -152,6 +152,7 @@
                         <div class="panel-tabs">
                             <button class="panel-tab active" id="tab-contracts" onclick="switchRightTab('contracts')">Contracts <span class="tab-count" id="contract-tab-count">0</span></button>
                             <button class="panel-tab" id="tab-performance" onclick="switchRightTab('performance')">Performance</button>
+                            <button class="panel-tab" id="tab-versions" onclick="switchRightTab('versions')">Versions</button>
                         </div>
                     </div>
                     <div id="contracts-panel-content">
@@ -176,6 +177,14 @@
                             <div class="empty-state">
                                 <div class="empty-state-icon">&#128200;</div>
                                 <div>Loading performance data...</div>
+                            </div>
+                        </div>
+                    </div>
+                    <div id="versions-panel-content" class="performance-panel" style="display: none;">
+                        <div class="metrics-chart-container" id="versions-chart-container">
+                            <div class="empty-state">
+                                <div class="empty-state-icon">&#128230;</div>
+                                <div>Loading version data...</div>
                             </div>
                         </div>
                     </div>

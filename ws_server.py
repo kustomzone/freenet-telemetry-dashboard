@@ -594,6 +594,76 @@ def get_metrics_timeseries():
     }
 
 
+def get_version_rollout():
+    """Build version rollout timeseries from peer lifecycle data.
+
+    Returns time-bucketed counts of active peers per version,
+    suitable for a line chart showing version adoption over time.
+    """
+    import time as _time
+
+    if not peer_lifecycle:
+        return {"series": [], "versions": []}
+
+    ROLLOUT_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours (same as metrics)
+
+    # Collect all startup/shutdown events with timestamps
+    events = []  # (timestamp_ns, version, +1/-1)
+    for pid, data in peer_lifecycle.items():
+        v = data.get("version", "unknown")
+        st = data.get("startup_time")
+        if st:
+            events.append((st, v, 1))
+        sd = data.get("shutdown_time")
+        if sd:
+            events.append((sd, v, -1))
+
+    if not events:
+        return {"series": [], "versions": []}
+
+    events.sort(key=lambda e: e[0])
+
+    # Determine time range
+    min_t = events[0][0]
+    max_t = max(events[-1][0], int(_time.time() * 1_000_000_000))
+
+    # Build buckets
+    bucket_start = (min_t // ROLLOUT_BUCKET_NS) * ROLLOUT_BUCKET_NS
+    # Current version counts (running tally)
+    current_counts = {}  # version -> count
+    event_idx = 0
+
+    series = []
+    all_versions = set()
+
+    t = bucket_start
+    while t <= max_t + ROLLOUT_BUCKET_NS:
+        # Process all events up to this bucket boundary
+        while event_idx < len(events) and events[event_idx][0] <= t:
+            _, v, delta = events[event_idx]
+            current_counts[v] = max(0, current_counts.get(v, 0) + delta)
+            all_versions.add(v)
+            event_idx += 1
+
+        # Record snapshot (only if we have data)
+        if any(c > 0 for c in current_counts.values()):
+            bucket_data = {"t": t}
+            for v, c in current_counts.items():
+                if c > 0:
+                    bucket_data[v] = c
+            series.append(bucket_data)
+
+        t += ROLLOUT_BUCKET_NS
+
+    # Sort versions for consistent ordering (newest first by semver-like sort)
+    sorted_versions = sorted(all_versions, key=lambda v: [int(x) if x.isdigit() else 0 for x in v.replace("-", ".").split(".")], reverse=True)
+
+    return {
+        "series": series,
+        "versions": sorted_versions,
+    }
+
+
 # Peer lifecycle tracking
 # peer_id -> {version, arch, os, os_version, is_gateway, startup_time, shutdown_time, graceful}
 peer_lifecycle = {}
@@ -1824,6 +1894,7 @@ def get_network_state():
         "transfers": transfer_events[-200:],  # Last 200 transfer events for scatter plot
         "propagation": get_propagation_data(),  # State propagation timelines
         "metrics_timeseries": get_metrics_timeseries(),
+        "version_rollout": get_version_rollout(),
     }
 
 

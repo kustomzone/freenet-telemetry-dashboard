@@ -49,6 +49,7 @@ export const state = {
     // Operations
     opStats: null,
     metricsTimeseries: null,
+    versionRollout: null,
 
     // Right panel tab
     rightPanelTab: 'contracts',  // 'contracts' | 'performance'

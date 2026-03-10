@@ -30,6 +30,7 @@ import {
 import { initTransferChart, addTransferEvents, addTransferEvent, renderTransferChart } from './transfers.js';
 import { updateContractTree, getTreeStats, resetContractTree, triggerTreeMessageAnim, buildTree } from './contract-tree.js';
 import { initMetricsChart, updateMetricsChart, destroyMetricsChart } from './metrics.js';
+import { initVersionsChart, updateVersionsChart, destroyVersionsChart } from './versions.js';
 
 // ============================================================================
 // Main Application Functions
@@ -214,23 +215,34 @@ function switchRightTab(tab) {
     state.rightPanelTab = tab;
     const contractsContent = document.getElementById('contracts-panel-content');
     const performanceContent = document.getElementById('performance-panel-content');
+    const versionsContent = document.getElementById('versions-panel-content');
     const tabContracts = document.getElementById('tab-contracts');
     const tabPerformance = document.getElementById('tab-performance');
+    const tabVersions = document.getElementById('tab-versions');
+
+    // Hide all
+    contractsContent.style.display = 'none';
+    performanceContent.style.display = 'none';
+    versionsContent.style.display = 'none';
+    tabContracts.classList.remove('active');
+    tabPerformance.classList.remove('active');
+    tabVersions.classList.remove('active');
+    destroyMetricsChart();
+    destroyVersionsChart();
 
     if (tab === 'performance') {
-        contractsContent.style.display = 'none';
         performanceContent.style.display = 'flex';
-        tabContracts.classList.remove('active');
         tabPerformance.classList.add('active');
-        // Init chart when tab is shown
         const container = document.getElementById('metrics-chart-container');
         initMetricsChart(container);
+    } else if (tab === 'versions') {
+        versionsContent.style.display = 'flex';
+        tabVersions.classList.add('active');
+        const container = document.getElementById('versions-chart-container');
+        initVersionsChart(container);
     } else {
         contractsContent.style.display = '';
-        performanceContent.style.display = 'none';
         tabContracts.classList.add('active');
-        tabPerformance.classList.remove('active');
-        destroyMetricsChart();
     }
     updateURL();
 }
@@ -291,6 +303,9 @@ connect({
         // Update chart if performance tab is active
         if (state.rightPanelTab === 'performance') {
             updateMetricsChart();
+        }
+        if (state.rightPanelTab === 'versions') {
+            updateVersionsChart();
         }
     }
 });

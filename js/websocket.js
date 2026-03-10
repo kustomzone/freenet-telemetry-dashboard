@@ -176,6 +176,14 @@ function handleMessage(data, callbacks) {
             if (callbacks.onMetricsData) callbacks.onMetricsData();
         }
 
+        // Store version rollout data
+        if (data.version_rollout) {
+            state.versionRollout = data.version_rollout;
+            console.log('Version rollout:', data.version_rollout.series?.length, 'buckets,',
+                data.version_rollout.versions?.length, 'versions');
+            if (callbacks.onMetricsData) callbacks.onMetricsData();
+        }
+
         // Load initial transfer events for scatter plot
         if (data.transfers) {
             addTransferEvents(data.transfers);
