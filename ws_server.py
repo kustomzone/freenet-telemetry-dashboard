@@ -608,8 +608,8 @@ def get_version_rollout():
     if not peer_lifecycle and not _version_history:
         return {"series": [], "versions": []}
 
-    ROLLOUT_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours
-    PEER_TTL_NS = 12 * 60 * 60 * 1_000_000_000       # 12 hours assumed max uptime without re-report
+    ROLLOUT_BUCKET_NS = 1 * 60 * 60 * 1_000_000_000  # 1 hour
+    PEER_TTL_NS = 4 * 60 * 60 * 1_000_000_000        # 4 hours - keeps counts closer to actual concurrent peers
 
     # Build list of (version, startup_ns, shutdown_ns_or_None)
     peers = []
