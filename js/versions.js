@@ -8,20 +8,6 @@ import { state } from './state.js';
 let chart = null;
 let chartCanvas = null;
 
-// Distinct colors for version lines (top versions get most distinct colors)
-const VERSION_COLORS = [
-    '#34d399', // green
-    '#fbbf24', // amber
-    '#a78bfa', // purple
-    '#f472b6', // pink
-    '#7ecfef', // cyan
-    '#fb923c', // orange
-    '#60a5fa', // blue
-    '#f87171', // red
-    '#a3e635', // lime
-    '#e879f9', // fuchsia
-];
-
 const CHART_COLORS = {
     grid: 'rgba(48, 54, 61, 0.3)',
     text: '#8b949e',
@@ -29,50 +15,94 @@ const CHART_COLORS = {
     other: '#484f58',
 };
 
+/**
+ * Generate a color for a version based on its position in the sorted list.
+ * Newest version = bright cyan/green, oldest = dim warm red/orange.
+ * Uses HSL interpolation: hue 160 (cyan-green) → 0 (red), saturation 80→50%, lightness 65→40%.
+ */
+function versionColor(index, total) {
+    const t = total <= 1 ? 0 : index / (total - 1); // 0 = newest, 1 = oldest
+    const h = Math.round(160 * (1 - t));             // 160 (green) → 0 (red)
+    const s = Math.round(80 - 30 * t);               // 80% → 50%
+    const l = Math.round(65 - 25 * t);               // 65% → 40%
+    return `hsl(${h}, ${s}%, ${l}%)`;
+}
+
 // Max versions to show as individual lines (rest grouped as "other")
 const MAX_VERSIONS = 8;
 
 /**
- * Filter versions: keep top N by peak peer count, group rest as "other".
+ * Parse a version string into comparable numeric parts.
+ */
+function semverParts(v) {
+    return v.replace(/^v/, '').split(/[-.]/).map(x => {
+        const n = parseInt(x, 10);
+        return isNaN(n) ? 0 : n;
+    });
+}
+
+/**
+ * Compare two version strings (descending: newest first).
+ */
+function semverCmpDesc(a, b) {
+    const pa = semverParts(a), pb = semverParts(b);
+    for (let i = 0; i < Math.max(pa.length, pb.length); i++) {
+        const diff = (pb[i] || 0) - (pa[i] || 0);
+        if (diff !== 0) return diff;
+    }
+    return 0;
+}
+
+/**
+ * Filter versions: keep top N by peak peer count, sort by version (newest first),
+ * group the rest as "other".
  */
 function filterVersions(series, versions) {
-    if (versions.length <= MAX_VERSIONS) {
-        return { versions, hasOther: false };
+    // Sort all versions newest-first
+    const sorted = [...versions].sort(semverCmpDesc);
+
+    if (sorted.length <= MAX_VERSIONS) {
+        return { versions: sorted, grouped: new Set(), hasOther: false };
     }
 
     // Find peak count for each version across all buckets
     const peaks = {};
-    for (const v of versions) {
+    for (const v of sorted) {
         peaks[v] = 0;
         for (const bucket of series) {
             peaks[v] = Math.max(peaks[v], bucket[v] || 0);
         }
     }
 
-    // Sort by peak count descending, keep top N
-    const sorted = [...versions].sort((a, b) => peaks[b] - peaks[a]);
-    const kept = sorted.slice(0, MAX_VERSIONS);
-    const grouped = new Set(sorted.slice(MAX_VERSIONS));
+    // Pick top N by peak count, then re-sort those by version
+    const byPeak = [...sorted].sort((a, b) => peaks[b] - peaks[a]);
+    const keptSet = new Set(byPeak.slice(0, MAX_VERSIONS));
+    const kept = sorted.filter(v => keptSet.has(v));
+    const grouped = new Set(sorted.filter(v => !keptSet.has(v)));
 
     return { versions: kept, grouped, hasOther: grouped.size > 0 };
 }
 
 function buildDatasets(series, versions) {
     const { versions: kept, grouped, hasOther } = filterVersions(series, versions);
+    const totalForGradient = kept.length + (hasOther ? 1 : 0);
 
-    const datasets = kept.map((version, i) => ({
-        label: version,
-        data: series.map(p => p[version] || 0),
-        borderColor: VERSION_COLORS[i % VERSION_COLORS.length],
-        backgroundColor: VERSION_COLORS[i % VERSION_COLORS.length] + '18',
-        borderWidth: 2,
-        pointRadius: 0,
-        pointHoverRadius: 4,
-        pointHitRadius: 12,
-        tension: 0.35,
-        fill: false,
-        spanGaps: true,
-    }));
+    const datasets = kept.map((version, i) => {
+        const color = versionColor(i, totalForGradient);
+        return {
+            label: version,
+            data: series.map(p => p[version] || 0),
+            borderColor: color,
+            backgroundColor: color.replace(')', ', 0.1)').replace('hsl(', 'hsla('),
+            borderWidth: 2,
+            pointRadius: 0,
+            pointHoverRadius: 4,
+            pointHitRadius: 12,
+            tension: 0.35,
+            fill: false,
+            spanGaps: true,
+        };
+    });
 
     if (hasOther) {
         datasets.push({
