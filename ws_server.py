@@ -597,18 +597,27 @@ def get_metrics_timeseries():
 def get_version_rollout():
     """Build version rollout timeseries from peer lifecycle data.
 
-    Returns time-bucketed counts of active peers per version,
-    suitable for a line chart showing version adoption over time.
+    Merges pre-extracted historical data (from rotated logs) with
+    live peer_lifecycle data for a complete version rollout picture.
     """
     import time as _time
 
-    if not peer_lifecycle:
+    if not peer_lifecycle and not _version_history:
         return {"series": [], "versions": []}
 
     ROLLOUT_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000  # 4 hours (same as metrics)
 
     # Collect all startup/shutdown events with timestamps
     events = []  # (timestamp_ns, version, +1/-1)
+
+    # Historical data: [version, startup_ns, shutdown_ns?]
+    for entry in _version_history:
+        v = entry[0]
+        events.append((entry[1], v, 1))
+        if len(entry) > 2 and entry[2]:
+            events.append((entry[2], v, -1))
+
+    # Live data from current log
     for pid, data in peer_lifecycle.items():
         v = data.get("version", "unknown")
         st = data.get("startup_time")
@@ -663,6 +672,29 @@ def get_version_rollout():
         "versions": sorted_versions,
     }
 
+
+# Pre-extracted version history from rotated logs (loaded on startup)
+# List of [version, startup_ns, shutdown_ns?] tuples
+_version_history = []
+
+def _load_version_history():
+    """Load pre-extracted version history from version_history.json."""
+    global _version_history
+    history_file = Path(__file__).parent / "version_history.json"
+    if not history_file.exists():
+        print("No version_history.json found (run extract_version_history.py to generate)")
+        return
+    try:
+        import json as _json
+        with open(history_file) as f:
+            data = _json.load(f)
+        _version_history = data.get("peers", [])
+        extracted = data.get("extracted_at", 0)
+        from datetime import datetime, timezone
+        ext_str = datetime.fromtimestamp(extracted, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if extracted else "unknown"
+        print(f"Loaded version history: {len(_version_history)} peers (extracted {ext_str})")
+    except Exception as e:
+        print(f"Failed to load version_history.json: {e}")
 
 # Peer lifecycle tracking
 # peer_id -> {version, arch, os, os_version, is_gateway, startup_time, shutdown_time, graceful}
@@ -2327,6 +2359,9 @@ async def main():
     # Load peer names
     load_peer_names()
     print(f"Loaded {len(peer_names)} peer names")
+
+    # Load pre-extracted version history from rotated logs
+    _load_version_history()
 
     # Load existing state
     await load_initial_state()
