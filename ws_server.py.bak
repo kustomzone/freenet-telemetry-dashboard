@@ -106,113 +106,83 @@ def save_peer_names():
         print(f"Error saving peer names: {e}")
 
 
-async def sanitize_name(name: str) -> tuple[str | None, str | None]:
+async def sanitize_name(name: str) -> tuple[str, bool]:
     """
-    Use OpenAI to check a peer name is appropriate.
-    Returns (sanitized_name, rejection_reason).
-    - (name, None) if accepted
-    - (None, reason) if rejected
+    Use OpenAI to sanitize a peer name, making it safe-for-work.
+    Returns (sanitized_name, was_modified).
     """
     if not name or len(name) > 30:
-        return name[:30] if name else None, "Name too long" if name else "Empty name"
+        return name[:30] if name else "", True
 
     # Basic sanitization
     name = name.strip()
     if not name:
-        return None, "Empty name"
+        return "", True
 
     if not OPENAI_AVAILABLE or not OPENAI_API_KEY:
         # Without OpenAI, just do basic filtering
+        # Only allow alphanumeric, spaces, and common punctuation including /
         sanitized = re.sub(r'[^\w\s\-_.!/]', '', name)[:20]
-        return sanitized, None
+        return sanitized, sanitized != name
 
     try:
         print(f"[sanitize_name] Checking name: {name!r}")
         client = OpenAI(api_key=OPENAI_API_KEY)
+        # First, check if the name is NSFW
         response = await asyncio.to_thread(
             client.chat.completions.create,
             model="gpt-4o-mini",
             messages=[{
                 "role": "system",
-                "content": """You are a peer name moderator for a network dashboard.
+                "content": """You are an NSFW detector. Respond with ONLY "safe" or "nsfw".
 
-If the name is acceptable, respond with ONLY: safe
-If not, respond with ONLY: reject: <reason>
+A name is NSFW only if it contains:
+- Explicit sexual terms (not innuendo, actual explicit words)
+- Racial slurs or hate speech
+- Direct threats of violence
 
-Where <reason> is one of:
-- political (slogans, advocacy, culture-war statements, references to political figures/movements/causes)
-- offensive (slurs, hate speech, explicit sexual terms, threats of violence)
-- religious (religious or ideological proclamations)
-- impersonation (pretending to be a developer, admin, official account, or real person)
-- spam (advertising, URLs, product/crypto promotion)
+These are all SAFE (not NSFW):
+- Normal names, words, phrases
+- Technical terms, paths like "user/admin"
+- Mild words: ass, damn, hell, crap, suck
+- Edgy but not explicit: BadAss, hell_yeah, Destroyer
 
-Names should be nicknames or handles, not statements or claims of authority. The dashboard is a technical tool, not a billboard.
-
-SAFE examples: SpaceCowboy, Node42, BadAss, PizzaLord, hell_yeah, Destroyer, user/admin, CryptoKitty
-REJECT examples: MAGA2024 (political), TransRights (political), FreePalestine (political), JesusIsLord (religious), Admin (impersonation), FreenetOfficial (impersonation), Ian Clarke (impersonation), BuyBitcoin (spam), visit-my.site (spam)"""
+Only flag as "nsfw" if it contains actual slurs, explicit sexual words, or hate speech."""
             }, {
                 "role": "user",
-                "content": f"Username: {name}"
+                "content": f"Is this username NSFW? Username: {name}"
             }],
-            max_tokens=20,
+            max_tokens=10,
             temperature=0.0
         )
 
         llm_response = response.choices[0].message.content.strip().lower()
         print(f"[sanitize_name] LLM response: {llm_response!r}")
+        is_nsfw = "nsfw" in llm_response
 
-        if llm_response.startswith("reject"):
-            # Parse reason from "reject: political" etc.
-            reason = llm_response.split(":", 1)[1].strip() if ":" in llm_response else "inappropriate"
-            print(f"[sanitize_name] Rejected: {name!r} reason={reason}")
-            return None, reason
+        if not is_nsfw:
+            # Safe - return exactly as provided
+            print(f"[sanitize_name] Safe, returning unchanged: {name[:20]!r}")
+            return name[:20], False
         else:
-            print(f"[sanitize_name] Safe, returning: {name[:20]!r}")
-            return name[:20], None
+            # NSFW - reject it
+            print(f"[sanitize_name] NSFW detected, rejecting")
+            return "[inappropriate]", True
     except Exception as e:
         print(f"[sanitize_name] OpenAI error: {e}")
-        # Fallback to basic filtering
+        # Fallback to basic filtering - allow common username chars including /
         sanitized = re.sub(r'[^\w\s\-_.!/]', '', name)[:20]
-        return sanitized, None
+        return sanitized, True
 
 
 # Event history buffer (last 2 hours, hard-capped)
 MAX_HISTORY_AGE_NS = 2 * 60 * 60 * 1_000_000_000  # 2 hours in nanoseconds
-MAX_HISTORY_EVENTS = 50000  # Limit events kept in memory
-MAX_INITIAL_EVENTS = 20000  # Events sent to clients on connect (subset of history)
+MAX_HISTORY_EVENTS = 10000  # Limit events kept in memory
+MAX_INITIAL_EVENTS = 2000   # Events sent to clients on connect (subset of history)
 # Hard cap the deque to prevent unbounded growth. Events are appended in
 # approximately chronological order so a maxlen deque naturally keeps the
 # most recent events.
 event_history = deque(maxlen=MAX_HISTORY_EVENTS)  # bounded deque of event dicts
-
-# Event types worth keeping in history for time-travel / contract tracking.
-# get_request excluded — too noisy at ~3/sec.
-# connect_connected/disconnect excluded — too noisy (~83% of all events),
-# they flood the buffer and push out contract operations within minutes.
-# Connection state is tracked via live peer topology, not history replay.
-HISTORY_EVENT_TYPES = {
-    # Contract operations
-    "put_request", "put_success",
-    "get_request", "get_success", "get_not_found", "get_failure",
-    "update_request", "update_success", "update_failure",
-    "subscribe_request", "subscribe_success", "subscribe_not_found",
-    # Update propagation
-    "update_broadcast_received", "update_broadcast_applied",
-    "update_broadcast_emitted", "broadcast_emitted",
-    "update_broadcast_delivery_summary",
-    # Peer lifecycle
-    "peer_startup", "peer_shutdown",
-    # Subscription tree
-    "seeding_started", "seeding_stopped",
-    # Subscription completions (needed for timeline SUB lane)
-    "subscribed",
-}
-
-# Broader set sent in the real-time stream — includes noisy types that
-# are useful to see live but would flood the history buffer.
-REALTIME_EVENT_TYPES = HISTORY_EVENT_TYPES | {
-    "connect_connected", "connect_rejected", "disconnect",
-}
 
 # Connected WebSocket clients - now managed via ClientHandler for backpressure
 clients = set()  # Set of ClientHandler instances
@@ -331,7 +301,7 @@ class ClientHandler:
 
 # Network state (current/live)
 peers = {}  # ip -> {id, location, last_seen, connections: set()}
-connections = {}  # frozenset({ip1, ip2}) -> timestamp_ns
+connections = set()  # frozenset({ip1, ip2})
 
 # Track IP <-> peer_id mappings for liveness tracking
 ip_to_peer_id = {}  # ip -> peer_id (from body fields like target, this_peer)
@@ -357,10 +327,6 @@ seeding_state = {}  # contract_key -> {peer_id -> state}
 # Contract state hashes per (contract, peer) - tracks state propagation
 # contract_key -> {peer_id -> {hash: str, timestamp: int, event_type: str}}
 contract_states = {}
-
-# Contract state sizes - latest known size per contract (from state_size telemetry field)
-# contract_key -> {size: int, timestamp: int}
-contract_state_sizes = {}
 
 # Contract propagation tracking - tracks how quickly new states spread across peers
 # contract_key -> {current_hash, first_seen, peers: {peer_id -> timestamp}, previous: {...}}
@@ -465,241 +431,6 @@ op_stats = {
     "subscribe": {"requests": 0, "successes": 0},
 }
 
-# ── Time-series metrics (4-hour buckets, kept for 8 days) ──
-METRICS_BUCKET_NS = 4 * 60 * 60 * 1_000_000_000    # 4 hours
-METRICS_MAX_AGE_NS = 8 * 24 * 60 * 60 * 1_000_000_000  # 8 days
-METRICS_MIN_SAMPLES = 5  # Minimum ops in a bucket to compute a meaningful rate
-# Each bucket: {ts, put_req, put_ok, get_req, get_ok, get_nf, upd_req, upd_ok, sub_ok, peers, latencies_put, latencies_get, latencies_upd}
-metrics_buckets = {}       # bucket_key -> bucket dict (dict for O(1) lookup by timestamp)
-_current_bucket = None     # the bucket we're currently filling
-
-# Version/release markers: [(timestamp_ns, version_string), ...]
-version_markers = []
-_seen_versions = set()
-
-
-def _bucket_key(timestamp_ns):
-    """Round timestamp down to bucket boundary."""
-    return (timestamp_ns // METRICS_BUCKET_NS) * METRICS_BUCKET_NS
-
-
-def _get_or_create_bucket(timestamp_ns):
-    """Get the current bucket for this timestamp, creating if needed."""
-    global _current_bucket
-    key = _bucket_key(timestamp_ns)
-
-    if _current_bucket and _current_bucket["ts"] == key:
-        return _current_bucket
-
-    # Prune old buckets
-    cutoff = timestamp_ns - METRICS_MAX_AGE_NS
-    stale = [k for k in metrics_buckets if k < cutoff]
-    for k in stale:
-        del metrics_buckets[k]
-
-    # Look up existing bucket by key
-    if key in metrics_buckets:
-        _current_bucket = metrics_buckets[key]
-        return _current_bucket
-
-    # Create new bucket
-    _current_bucket = {
-        "ts": key,
-        "put_req": 0, "put_ok": 0,
-        "get_req": 0, "get_ok": 0, "get_nf": 0,
-        "upd_req": 0, "upd_ok": 0,
-        "sub_ok": 0,
-        "reporting_peers": set(),
-        "lat_put": [], "lat_get": [], "lat_upd": [],
-    }
-    metrics_buckets[key] = _current_bucket
-    return _current_bucket
-
-
-def record_metric(event_type, timestamp_ns, latency_ms=None, peer_id=None):
-    """Record an operation into the current time bucket."""
-    b = _get_or_create_bucket(timestamp_ns)
-    if peer_id:
-        b["reporting_peers"].add(peer_id)
-    if event_type == "put_request":
-        b["put_req"] += 1
-    elif event_type == "put_success":
-        b["put_ok"] += 1
-        if latency_ms is not None:
-            b["lat_put"].append(latency_ms)
-    elif event_type == "get_request":
-        b["get_req"] += 1
-    elif event_type == "get_success":
-        b["get_ok"] += 1
-        if latency_ms is not None:
-            b["lat_get"].append(latency_ms)
-    elif event_type == "get_not_found":
-        b["get_nf"] += 1
-    elif event_type == "update_request":
-        b["upd_req"] += 1
-    elif event_type == "update_success":
-        b["upd_ok"] += 1
-        if latency_ms is not None:
-            b["lat_upd"].append(latency_ms)
-    elif event_type == "subscribed":
-        b["sub_ok"] += 1
-
-
-def record_version(version_str, timestamp_ns):
-    """Track when a new version first appears."""
-    if version_str and version_str != "unknown" and version_str not in _seen_versions:
-        _seen_versions.add(version_str)
-        version_markers.append((timestamp_ns, version_str))
-
-
-def get_metrics_timeseries():
-    """Build the time series payload for clients."""
-
-    def p50(lats):
-        if not lats:
-            return None
-        s = sorted(lats)
-        return s[len(s) // 2]
-
-    def rate_or_none(ok, total):
-        """Only compute rate if we have enough samples to be meaningful."""
-        if total < METRICS_MIN_SAMPLES:
-            return None
-        return round(ok / total * 100, 1)
-
-    series = []
-    for key in sorted(metrics_buckets):
-        b = metrics_buckets[key]
-        put_total = b["put_req"] or b["put_ok"]
-        get_total = b["get_ok"] + b["get_nf"]
-        upd_total = b["upd_req"] or b["upd_ok"]
-
-        series.append({
-            "t": b["ts"],
-            "put_rate": rate_or_none(b["put_ok"], put_total),
-            "get_rate": rate_or_none(b["get_ok"], get_total),
-            "upd_rate": rate_or_none(b["upd_ok"], upd_total),
-            "put_n": put_total,
-            "get_n": get_total,
-            "upd_n": upd_total,
-            "sub_n": b["sub_ok"],
-            "lat_put": p50(b["lat_put"]),
-            "lat_get": p50(b["lat_get"]),
-            "lat_upd": p50(b["lat_upd"]),
-        })
-
-    return {
-        "series": series,
-        "versions": [],
-    }
-
-
-def get_version_rollout():
-    """Build version rollout timeseries from peer lifecycle data.
-
-    Merges pre-extracted historical data (from rotated logs) with
-    live peer_lifecycle data. At each time bucket, counts peers that
-    are considered active: started before the bucket and either not yet
-    shut down or shut down after the bucket. Peers without a shutdown
-    event expire after PEER_TTL_NS.
-    """
-    import time as _time
-
-    if not peer_lifecycle and not _version_history:
-        return {"series": [], "versions": []}
-
-    ROLLOUT_BUCKET_NS = 1 * 60 * 60 * 1_000_000_000  # 1 hour
-    PEER_TTL_NS = 4 * 60 * 60 * 1_000_000_000        # 4 hours - keeps counts closer to actual concurrent peers
-
-    # Build list of (version, startup_ns, shutdown_ns_or_None)
-    peers = []
-
-    for entry in _version_history:
-        v = entry[0]
-        st = entry[1]
-        sd = entry[2] if len(entry) > 2 else None
-        peers.append((v, st, sd))
-
-    for pid, data in peer_lifecycle.items():
-        v = data.get("version", "unknown")
-        st = data.get("startup_time")
-        if st:
-            sd = data.get("shutdown_time")
-            peers.append((v, st, sd))
-
-    if not peers:
-        return {"series": [], "versions": []}
-
-    # Determine time range: last 48 hours
-    now_ns = int(_time.time() * 1_000_000_000)
-    WINDOW_NS = 48 * 60 * 60 * 1_000_000_000
-    min_t = now_ns - WINDOW_NS
-    max_t = now_ns
-
-    # Sort peers by startup time for efficient scanning
-    peers.sort(key=lambda p: p[1])
-
-    # Build time buckets
-    all_versions = set()
-    series = []
-    t = (min_t // ROLLOUT_BUCKET_NS) * ROLLOUT_BUCKET_NS
-
-    while t <= max_t + ROLLOUT_BUCKET_NS:
-        counts = {}  # version -> count
-        for v, st, sd in peers:
-            if st > t:
-                break  # sorted, no more peers started before this bucket
-            # Peer is active at time t if:
-            # - started before t, AND
-            # - either shut down after t, or no shutdown and within TTL
-            if sd is not None:
-                if sd > t:
-                    counts[v] = counts.get(v, 0) + 1
-            else:
-                # No shutdown: assume active for PEER_TTL_NS after startup
-                if st + PEER_TTL_NS > t:
-                    counts[v] = counts.get(v, 0) + 1
-
-        if counts:
-            bucket_data = {"t": t}
-            for v, c in counts.items():
-                bucket_data[v] = c
-                all_versions.add(v)
-            series.append(bucket_data)
-
-        t += ROLLOUT_BUCKET_NS
-
-    sorted_versions = sorted(all_versions, key=lambda v: [int(x) if x.isdigit() else 0 for x in v.replace("-", ".").split(".")], reverse=True)
-
-    return {
-        "series": series,
-        "versions": sorted_versions,
-    }
-
-
-# Pre-extracted version history from rotated logs (loaded on startup)
-# List of [version, startup_ns, shutdown_ns?] tuples
-_version_history = []
-
-def _load_version_history():
-    """Load pre-extracted version history from version_history.json."""
-    global _version_history
-    history_file = Path(__file__).parent / "version_history.json"
-    if not history_file.exists():
-        print("No version_history.json found (run extract_version_history.py to generate)")
-        return
-    try:
-        import json as _json
-        with open(history_file) as f:
-            data = _json.load(f)
-        _version_history = data.get("peers", [])
-        extracted = data.get("extracted_at", 0)
-        from datetime import datetime, timezone
-        ext_str = datetime.fromtimestamp(extracted, tz=timezone.utc).strftime("%Y-%m-%d %H:%M") if extracted else "unknown"
-        print(f"Loaded version history: {len(_version_history)} peers (extracted {ext_str})")
-    except Exception as e:
-        print(f"Failed to load version_history.json: {e}")
-
 # Peer lifecycle tracking
 # peer_id -> {version, arch, os, os_version, is_gateway, startup_time, shutdown_time, graceful}
 peer_lifecycle = {}
@@ -710,8 +441,8 @@ pending_ops = {}
 
 # Transaction tracking - store full event sequences for timeline lanes
 # tx_id -> {"op": type, "contract": key, "events": [...], "start_ns": ts, "end_ns": ts, "status": "pending"|"success"|"failed"}
-MAX_TRANSACTIONS = 10000  # Keep last N transactions
-MAX_INITIAL_TRANSACTIONS = 2000  # Transactions sent to clients on connect
+MAX_TRANSACTIONS = 2500  # Keep last N transactions (~2 hours at ~18 tx/min)
+MAX_INITIAL_TRANSACTIONS = 500  # Transactions sent to clients on connect
 transactions = {}  # tx_id -> transaction data
 transaction_order = []  # List of tx_ids in order for pruning
 
@@ -878,7 +609,7 @@ def cleanup_stale_peers():
     removed_connections = []
     stale_conns = {conn for conn in connections if conn & stale_ips}
     for conn in stale_conns:
-        connections.pop(conn, None)
+        connections.discard(conn)
         ips = list(conn)
         if len(ips) == 2:
             removed_connections.append((anonymize_ip(ips[0]), anonymize_ip(ips[1])))
@@ -895,18 +626,8 @@ def cleanup_stale_peers():
             del seeding_state[contract_key]
 
     # 10. Remove stale peer_ids from contract_states
-    #     Also remove entries whose own timestamp is older than the cutoff,
-    #     since some peer_ids may never have been mapped to an IP
-    #     (e.g. peers only seen via get_success or broadcast_applied).
     for contract_key in list(contract_states.keys()):
         for pid in stale_peer_ids:
-            contract_states[contract_key].pop(pid, None)
-        # Timestamp-based cleanup for unmapped peers
-        stale_entries = [
-            pid for pid, entry in contract_states[contract_key].items()
-            if entry.get("timestamp", 0) < cutoff
-        ]
-        for pid in stale_entries:
             contract_states[contract_key].pop(pid, None)
         if not contract_states[contract_key]:
             del contract_states[contract_key]
@@ -1056,11 +777,7 @@ def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None, 
         parts = event_type.split("_")
         op_type = parts[0] if parts else "other"
 
-    TRACKED_TX_OPS = {"put", "get", "update", "broadcast", "connect", "subscribe"}
-    if op_type not in TRACKED_TX_OPS and tx_id not in transactions:
-        return  # Skip noisy transaction types
-
-    # Create or update transaction
+    # Create or update transaction - always create if we have a valid tx_id
     if tx_id not in transactions:
         transactions[tx_id] = {
             "op": op_type or "unknown",
@@ -1135,9 +852,6 @@ def process_record(record, store_history=True):
     state_hash_before = body.get("state_hash_before")
     state_hash_after = body.get("state_hash_after")
 
-    # Extract state size (from PR #3406 - added to put_success, update_success, broadcast_applied)
-    state_size = body.get("state_size")
-
     # Get contract key for state tracking
     # Telemetry may use "contract_key", "key", or "instance_id" depending on event type
     contract_key = body.get("contract_key") or body.get("key") or body.get("instance_id")
@@ -1180,77 +894,56 @@ def process_record(record, store_history=True):
             # broadcast_applied is the definitive post-merge state - takes precedence
             update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
 
-    # Track contract state sizes (from put_success, update_success, broadcast_applied)
-    if contract_key and state_size is not None:
-        try:
-            size_val = int(state_size)
-            contract_state_sizes[contract_key] = {"size": size_val, "timestamp": timestamp}
-        except (ValueError, TypeError):
-            pass
-
     if event_type == "put_request":
         op_stats["put"]["requests"] += 1
-        record_metric("put_request", timestamp, peer_id=event_peer_id)
         if tx_id:
             pending_ops[tx_id] = {"op": "put", "start_ns": timestamp}
     elif event_type == "put_success":
         op_stats["put"]["successes"] += 1
-        _lat = None
         if tx_id and tx_id in pending_ops:
             latency_ms = (timestamp - pending_ops[tx_id]["start_ns"]) / 1_000_000
             if 0 < latency_ms < 300_000:  # Sanity check: < 5 minutes
                 op_stats["put"]["latencies"].append(latency_ms)
-                _lat = latency_ms
+                # Keep only last 1000 latencies
                 if len(op_stats["put"]["latencies"]) > 1000:
                     op_stats["put"]["latencies"] = op_stats["put"]["latencies"][-1000:]
             del pending_ops[tx_id]
-        record_metric("put_success", timestamp, _lat, peer_id=event_peer_id)
     elif event_type == "get_request":
         op_stats["get"]["requests"] += 1
-        record_metric("get_request", timestamp, peer_id=event_peer_id)
         if tx_id:
             pending_ops[tx_id] = {"op": "get", "start_ns": timestamp}
     elif event_type == "get_success":
         op_stats["get"]["successes"] += 1
-        _lat = None
         if tx_id and tx_id in pending_ops:
             latency_ms = (timestamp - pending_ops[tx_id]["start_ns"]) / 1_000_000
             if 0 < latency_ms < 300_000:
                 op_stats["get"]["latencies"].append(latency_ms)
-                _lat = latency_ms
                 if len(op_stats["get"]["latencies"]) > 1000:
                     op_stats["get"]["latencies"] = op_stats["get"]["latencies"][-1000:]
             del pending_ops[tx_id]
-        record_metric("get_success", timestamp, _lat, peer_id=event_peer_id)
     elif event_type == "get_not_found":
         op_stats["get"]["not_found"] += 1
-        record_metric("get_not_found", timestamp, peer_id=event_peer_id)
         if tx_id and tx_id in pending_ops:
             del pending_ops[tx_id]
     elif event_type == "update_request":
         op_stats["update"]["requests"] += 1
-        record_metric("update_request", timestamp, peer_id=event_peer_id)
         if tx_id:
             pending_ops[tx_id] = {"op": "update", "start_ns": timestamp}
     elif event_type == "update_success":
         op_stats["update"]["successes"] += 1
-        _lat = None
         if tx_id and tx_id in pending_ops:
             latency_ms = (timestamp - pending_ops[tx_id]["start_ns"]) / 1_000_000
             if 0 < latency_ms < 300_000:
                 op_stats["update"]["latencies"].append(latency_ms)
-                _lat = latency_ms
                 if len(op_stats["update"]["latencies"]) > 1000:
                     op_stats["update"]["latencies"] = op_stats["update"]["latencies"][-1000:]
             del pending_ops[tx_id]
-        record_metric("update_success", timestamp, _lat, peer_id=event_peer_id)
     elif event_type in ("update_broadcast_emitted", "broadcast_emitted"):
         op_stats["update"]["broadcasts"] += 1
     elif event_type == "subscribe_request":
         op_stats["subscribe"]["requests"] += 1
     elif event_type == "subscribed":
         op_stats["subscribe"]["successes"] += 1
-        record_metric("subscribed", timestamp, peer_id=event_peer_id)
 
     # Handle transfer_completed events for congestion control visualization
     elif event_type == "transfer_completed":
@@ -1259,7 +952,6 @@ def process_record(record, store_history=True):
         if peer_ip and is_public_ip(peer_ip):
             transfer_event = {
                 "type": "transfer",
-                "event_type": "transfer_completed",
                 "timestamp": timestamp,
                 "peer_id": anonymize_ip(peer_ip),
                 "direction": body.get("direction", "Send"),
@@ -1389,9 +1081,8 @@ def process_record(record, store_history=True):
         # and filter later when building topology/stats
         peer_id = attrs.get("peer_id", "")
         if peer_id:
-            version_str = body.get("version", "unknown")
             peer_lifecycle[peer_id] = {
-                "version": version_str,
+                "version": body.get("version", "unknown"),
                 "arch": body.get("arch", "unknown"),
                 "os": body.get("os", "unknown"),
                 "os_version": body.get("os_version"),
@@ -1400,7 +1091,6 @@ def process_record(record, store_history=True):
                 "shutdown_time": None,
                 "graceful": None,
             }
-            record_version(version_str, timestamp)
     elif event_type == "peer_shutdown":
         # Track peer shutdown
         peer_id = attrs.get("peer_id", "")
@@ -1510,7 +1200,7 @@ def process_record(record, store_history=True):
         if is_public_ip(this_ip) and is_public_ip(other_ip):
             conn = frozenset({this_ip, other_ip})
             if conn not in connections:
-                connections[conn] = timestamp
+                connections.add(conn)
                 if this_ip in peers:
                     peers[this_ip]["connections"].add(other_ip)
                 if other_ip in peers:
@@ -1523,22 +1213,16 @@ def process_record(record, store_history=True):
         from_peer_addr = body.get("from_peer_addr", "")
         if from_peer_addr and ":" in from_peer_addr:
             disconnected_ip = from_peer_addr.split(":")[0]
-            # this_ip is the peer reporting the disconnect.
-            # Disconnect events don't have a "this_peer" field, so this_ip is
-            # usually None.  Fall back to the attrs_peer_id -> IP mapping that
-            # was populated from earlier connect events.
-            reporter_ip = this_ip
-            if not reporter_ip and attrs_peer_id and attrs_peer_id in attrs_peer_id_to_ip:
-                reporter_ip = attrs_peer_id_to_ip[attrs_peer_id]
-            if reporter_ip and disconnected_ip and is_public_ip(reporter_ip) and is_public_ip(disconnected_ip):
-                conn = frozenset({reporter_ip, disconnected_ip})
+            # this_ip is the peer reporting the disconnect
+            if this_ip and disconnected_ip and is_public_ip(this_ip) and is_public_ip(disconnected_ip):
+                conn = frozenset({this_ip, disconnected_ip})
                 if conn in connections:
-                    connections.pop(conn, None)
-                    if reporter_ip in peers:
-                        peers[reporter_ip]["connections"].discard(disconnected_ip)
+                    connections.discard(conn)
+                    if this_ip in peers:
+                        peers[this_ip]["connections"].discard(disconnected_ip)
                     if disconnected_ip in peers:
-                        peers[disconnected_ip]["connections"].discard(reporter_ip)
-                    connection_removed = (anonymize_ip(reporter_ip), anonymize_ip(disconnected_ip))
+                        peers[disconnected_ip]["connections"].discard(this_ip)
+                    connection_removed = (anonymize_ip(this_ip), anonymize_ip(disconnected_ip))
 
     # Track subscription tree data FIRST (before potentially returning None)
     # Use same pattern as line 492 - telemetry may use any of these field names
@@ -1552,11 +1236,10 @@ def process_record(record, store_history=True):
 
         sub_data = subscriptions[contract_key]
 
-        # Track subscriber events — include requests (not just successes) since
-        # subscribe_request is 10x more common and many contracts only emit requests
+        # Track subscribed events (telemetry uses "subscribe_success" not "subscribed")
         # Use event_peer_ip which is extracted from requester/target/this_peer fields (line 495-507)
-        if event_type in ("subscribed", "subscribe_success", "subscribe_request",
-                          "get_success", "get_request"):
+        if event_type in ("subscribed", "subscribe_success"):
+            # Try this_ip first (from this_peer field), then event_peer_ip (from requester/target)
             subscriber_ip = this_ip or event_peer_ip
             if subscriber_ip and is_public_ip(subscriber_ip):
                 sub_data["subscribers"].add(anonymize_ip(subscriber_ip))
@@ -1644,9 +1327,8 @@ def process_record(record, store_history=True):
         # Track this event as part of the transaction (pass body_type for specific connect events)
         track_transaction(tx_id, event_type, timestamp, event["peer_id"], contract_key, body_type)
 
-    # Store in history buffer (only "interesting" events to keep buffer useful
-    # over hours rather than seconds — see HISTORY_EVENT_TYPES)
-    if store_history and event_type in HISTORY_EVENT_TYPES:
+    # Store in history buffer
+    if store_history:
         event_history.append(event)
         # Periodically prune old events
         if len(event_history) % 100 == 0:
@@ -1764,10 +1446,6 @@ def get_subscription_trees(active_peer_ids=None):
                 "any_seeding": any_seeding,
                 "peer_count": max(len(peers_with_data), len(active_cs_peers)),
             }
-            # Include state size if known
-            size_info = contract_state_sizes.get(contract_key)
-            if size_info:
-                result[contract_key]["state_size"] = size_info["size"]
     return result
 
 
@@ -1864,7 +1542,7 @@ def get_network_state():
 
     # Filter contract_states to only include currently active peers (from topology)
     # and cap total contracts to keep payload manageable
-    MAX_INITIAL_CONTRACTS = 500
+    MAX_INITIAL_CONTRACTS = 50
     filtered_contract_states = {}
     for contract_key, peer_states in contract_states.items():
         filtered_peers = {
@@ -1889,7 +1567,7 @@ def get_network_state():
     if len(all_subscriptions) > MAX_INITIAL_CONTRACTS:
         sorted_subs = sorted(
             all_subscriptions.items(),
-            key=lambda item: max(item[1].get("peer_count", 0), len(item[1].get("subscribers", []))),
+            key=lambda item: item[1].get("peer_count", 0),
             reverse=True
         )
         all_subscriptions = dict(sorted_subs[:MAX_INITIAL_CONTRACTS])
@@ -1929,8 +1607,6 @@ def get_network_state():
         "peer_names": active_peer_names,  # ip_hash -> name (active peers only)
         "transfers": transfer_events[-200:],  # Last 200 transfer events for scatter plot
         "propagation": get_propagation_data(),  # State propagation timelines
-        "metrics_timeseries": get_metrics_timeseries(),
-        "version_rollout": get_version_rollout(),
     }
 
 
@@ -1974,9 +1650,8 @@ def get_history():
     # Sort peer presence by first_seen for historical reconstruction
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
-    # Only send contract-relevant transactions in initial history.
-    HISTORY_TX_OPS = {"put", "get", "update", "broadcast", "connect", "subscribe"}
-    tx_list = [tx for tx in get_transactions_list() if tx["op"] in HISTORY_TX_OPS]
+    # Only send last MAX_INITIAL_TRANSACTIONS
+    tx_list = get_transactions_list()
     if len(tx_list) > MAX_INITIAL_TRANSACTIONS:
         tx_list = tx_list[-MAX_INITIAL_TRANSACTIONS:]
 
@@ -2037,7 +1712,6 @@ async def flush_event_buffer():
 
 
 CLEANUP_INTERVAL_SECONDS = 60  # Run cleanup every 60 seconds
-CONNECTION_TTL_NS = 15 * 60 * 10**9  # 15 minutes in nanoseconds
 
 
 async def periodic_cleanup():
@@ -2054,22 +1728,6 @@ async def periodic_cleanup():
 
             # Clean old propagation tracking
             cleanup_stale_propagation()
-
-            # Prune connections older than TTL
-            now_ns = time.time_ns()
-            expired_conns = [conn for conn, ts in connections.items()
-                             if now_ns - ts > CONNECTION_TTL_NS]
-            for conn in expired_conns:
-                connections.pop(conn, None)
-                ips = list(conn)
-                if len(ips) == 2:
-                    for ip in ips:
-                        other = ips[1] if ip == ips[0] else ips[0]
-                        if ip in peers:
-                            peers[ip]['connections'].discard(other)
-                    pass  # Don't broadcast TTL-pruned connections (too many on first cleanup)
-            if expired_conns:
-                print(f"[cleanup] Pruned {len(expired_conns)} expired connections (TTL={CONNECTION_TTL_NS // 10**9}s)")
 
             # Broadcast removals to connected clients so they update in real-time
             if clients and (removed_peers or removed_connections):
@@ -2137,13 +1795,12 @@ async def tail_log():
                         for scope_log in resource_log.get("scopeLogs", []):
                             for record in scope_log.get("logRecords", []):
                                 event = process_record(record, store_history=True)
-                                if event and event["event_type"] in REALTIME_EVENT_TYPES:
+                                if event:
                                     await buffer_event(event)  # Buffer for batched sending
                 except orjson.JSONDecodeError:
                     continue
                 except Exception as e:
-                    import traceback
-                    print(f"Error processing line: {e}\n{traceback.format_exc()}")
+                    print(f"Error processing line: {e}")
 
 
 GATEWAY_IP = "5.9.111.215"
@@ -2261,8 +1918,8 @@ async def handle_client(websocket):
                             }))
                             continue
 
-                        # Check the name using OpenAI moderation
-                        sanitized, rejection_reason = await sanitize_name(name)
+                        # Sanitize the name using OpenAI
+                        sanitized, was_modified = await sanitize_name(name)
                         if sanitized:
                             peer_names[client_ip_hash] = sanitized
                             save_peer_names()
@@ -2272,27 +1929,22 @@ async def handle_client(websocket):
                                 "type": "peer_name_update",
                                 "ip_hash": client_ip_hash,
                                 "name": sanitized,
+                                "was_modified": was_modified
                             })
                             for c in list(clients):
                                 c.enqueue(update_msg)
+                            # Also send confirmation to this client
                             await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": True,
                                 "name": sanitized,
+                                "was_modified": was_modified
                             }))
                         else:
-                            REJECTION_MESSAGES = {
-                                "political": "Political slogans and advocacy aren't allowed — use a nickname instead",
-                                "offensive": "That name contains offensive content",
-                                "religious": "Religious proclamations aren't allowed — use a nickname instead",
-                                "impersonation": "That name could be mistaken for an official account or real person",
-                                "spam": "Advertising and promotion aren't allowed",
-                            }
-                            error_msg = REJECTION_MESSAGES.get(rejection_reason, f"Name not allowed: {rejection_reason}")
                             await handler.send_direct(json_encode({
                                 "type": "name_set_result",
                                 "success": False,
-                                "error": error_msg,
+                                "error": "Invalid name"
                             }))
                     elif not client_ip_hash:
                         await handler.send_direct(json_encode({
@@ -2317,10 +1969,8 @@ async def load_initial_state():
     if not TELEMETRY_LOG.exists():
         return
 
-    print("Loading initial state from telemetry log...", flush=True)
+    print("Loading initial state from telemetry log...")
     count = 0
-    history_stored = 0
-    history_eligible = 0
     now_ns = int(time.time() * 1_000_000_000)
     history_cutoff = now_ns - MAX_HISTORY_AGE_NS
 
@@ -2337,25 +1987,20 @@ async def load_initial_state():
                             timestamp_raw = record.get("timeUnixNano", "0")
                             timestamp = int(timestamp_raw) if isinstance(timestamp_raw, str) else timestamp_raw
                             store_in_history = timestamp >= history_cutoff
-                            if store_in_history:
-                                history_eligible += 1
 
-                            pre_len = len(event_history)
                             process_record(record, store_history=store_in_history)
-                            if len(event_history) > pre_len:
-                                history_stored += 1
                             count += 1
             except:
                 continue
 
-    print(f"Loaded {count} records. Found {len(peers)} peers, {len(connections)} connections.", flush=True)
-    print(f"History: {history_eligible} eligible, {history_stored} stored, {len(event_history)} in buffer", flush=True)
-    print(f"Transfer events: {len(transfer_events)} transfers for scatter plot", flush=True)
-    print(f"Contract states: {len(contract_states)} contracts", flush=True)
+    print(f"Loaded {count} records. Found {len(peers)} peers, {len(connections)} connections.")
+    print(f"Event history: {len(event_history)} events in buffer")
+    print(f"Transfer events: {len(transfer_events)} transfers for scatter plot")
+    print(f"Contract states: {len(contract_states)} contracts")
     for ck, ps in list(contract_states.items())[:3]:
-        print(f"  {ck[:20]}... has {len(ps)} peers", flush=True)
+        print(f"  {ck[:20]}... has {len(ps)} peers")
         for pid, state in list(ps.items())[:2]:
-            print(f"    peer_id={pid}: hash={state.get('hash', 'none')[:12]}", flush=True)
+            print(f"    peer_id={pid}: hash={state.get('hash', 'none')[:12]}")
 
 
 async def main():
@@ -2363,9 +2008,6 @@ async def main():
     # Load peer names
     load_peer_names()
     print(f"Loaded {len(peer_names)} peer names")
-
-    # Load pre-extracted version history from rotated logs
-    _load_version_history()
 
     # Load existing state
     await load_initial_state()
