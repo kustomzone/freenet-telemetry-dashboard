@@ -212,15 +212,10 @@ HISTORY_EVENT_TYPES = {
     "subscribed",
 }
 
-# High-volume event types that are sampled (1 in N) for history/DB storage.
-# These are useful for flow computation but individually they're noise.
-_SAMPLED_EVENT_TYPES = {
-    "update_broadcast_received": 10,   # 1 in 10
-    "update_broadcast_applied": 10,
-    "connect_connected": 20,           # 1 in 20 (very high volume)
-    "connect_rejected": 20,
-}
-_sample_counters = {}  # event_type -> count
+# No sampling at storage time — store everything, sample at query time.
+# This allows full fidelity when filtering by contract or peer.
+_SAMPLED_EVENT_TYPES = {}
+_sample_counters = {}
 
 # Broader set sent in the real-time stream — includes noisy types that
 # are useful to see live but would flood the history buffer.

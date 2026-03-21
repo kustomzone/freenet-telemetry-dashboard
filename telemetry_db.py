@@ -346,10 +346,13 @@ class TelemetryDB:
             })
         return result
 
-    def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=300):
+    def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=None):
         """Get pre-computed flows for a time range, sampled evenly across time.
-        Divides the range into time buckets and takes flows from each bucket
-        to ensure good visual coverage across the full replay."""
+        When filtered by contract or peer, returns all flows (full fidelity).
+        When unfiltered, samples across time buckets to limit volume."""
+        # Full fidelity when filtered, sampled when showing everything
+        if limit is None:
+            limit = 2000 if (contract_key or peer_id) else 300
         where = "timestamp_ns BETWEEN ? AND ?"
         params = [start_ns, end_ns]
         table = "flows"
