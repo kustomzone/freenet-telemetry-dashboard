@@ -174,15 +174,22 @@ export function renderExponentialTimeline() {
  * Draw relative time tick labels on the canvas.
  */
 function drawTicks(ctx, tNow, totalDurationNs, width, height) {
-    const ticks = [
-        { label: 'now', ageNs: 0 },
-        { label: '1m',  ageNs: 1 * 60e9 },
-        { label: '5m',  ageNs: 5 * 60e9 },
-        { label: '15m', ageNs: 15 * 60e9 },
-        { label: '30m', ageNs: 30 * 60e9 },
-        { label: '1h',  ageNs: 60 * 60e9 },
-        { label: '2h',  ageNs: 2 * 60 * 60e9 },
-    ];
+    // Generate ticks dynamically based on the time range
+    const totalHours = totalDurationNs / (3600 * 1e9);
+    const ticks = [{ label: 'now', ageNs: 0 }];
+
+    if (totalHours <= 2) {
+        // Short range: fine-grained ticks
+        for (const m of [1, 5, 15, 30, 60, 90, 120]) {
+            ticks.push({ label: m < 60 ? `${m}m` : `${m/60}h`, ageNs: m * 60e9 });
+        }
+    } else {
+        // Long range: hourly ticks
+        const step = totalHours <= 12 ? 1 : totalHours <= 48 ? 3 : 6;
+        for (let h = step; h <= totalHours; h += step) {
+            ticks.push({ label: `${h}h`, ageNs: h * 3600e9 });
+        }
+    }
 
     // Position tick labels as DOM elements below the canvas (not on it)
     const tickContainer = document.getElementById('timeline-ticks');
