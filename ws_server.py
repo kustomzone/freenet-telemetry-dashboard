@@ -2423,13 +2423,15 @@ async def load_initial_state():
     history_stored = 0
     history_eligible = 0
     now_ns = int(time.time() * 1_000_000_000)
-    history_cutoff = now_ns - MAX_HISTORY_AGE_NS
+    # In-memory deque only keeps last 2 hours; DB keeps 7 days.
+    # When resuming from offset, always store to DB (new data since last run).
+    memory_cutoff = now_ns - MAX_HISTORY_AGE_NS
+    has_db = resume_offset > 0
 
     with open(TELEMETRY_LOG, 'r') as f:
         if resume_offset > 0:
             f.seek(resume_offset)
-            # Skip to next complete line (we may have seeked into the middle of one)
-            f.readline()
+            f.readline()  # skip partial line
 
         for line in f:
             if not line.strip():
@@ -2441,7 +2443,9 @@ async def load_initial_state():
                         for record in scope_log.get("logRecords", []):
                             timestamp_raw = record.get("timeUnixNano", "0")
                             timestamp = int(timestamp_raw) if isinstance(timestamp_raw, str) else timestamp_raw
-                            store_in_history = timestamp >= history_cutoff
+                            # Always store to DB when resuming (we're only reading new data).
+                            # Only store to in-memory deque if within last 2 hours.
+                            store_in_history = has_db or timestamp >= memory_cutoff
                             if store_in_history:
                                 history_eligible += 1
 
