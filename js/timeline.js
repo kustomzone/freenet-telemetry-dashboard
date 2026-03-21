@@ -332,14 +332,9 @@ let suppressNextClick = false; // eat the click event that follows a successful 
  */
 export function collectFlowsForRange(startNs, endNs) {
     const events = state.allEvents;
-    if (events.length === 0) { console.log('[flows] no events'); return []; }
+    if (events.length === 0) return [];
 
-    // Debug: check event timestamp range
-    console.log(`[flows] searching ${startNs} - ${endNs}`);
-    console.log(`[flows] events[0].ts=${events[0].timestamp}, events[last].ts=${events[events.length-1].timestamp}`);
-    console.log(`[flows] total events: ${events.length}, total txns: ${state.allTransactions.length}`);
-
-    // Binary search for start
+    // Binary search for start of range
     let lo = 0, hi = events.length;
     while (lo < hi) {
         const mid = (lo + hi) >>> 1;
@@ -347,86 +342,44 @@ export function collectFlowsForRange(startNs, endNs) {
         else hi = mid;
     }
 
-    console.log(`[flows] binary search lo=${lo}`);
-
-    // Collect events in the range, respecting filters
-    const windowEvents = [];
-    let skippedByFilter = 0;
+    // Group events by tx_id directly (don't rely on transactionMap which
+    // may not cover the same time range as allEvents)
+    const txGroups = new Map(); // tx_id → [{peer_id, timestamp, event_type}]
     for (let i = lo; i < events.length; i++) {
         const e = events[i];
         if (e.timestamp > endNs) break;
-        if (!eventMatchesFilters(e)) { skippedByFilter++; continue; }
-        windowEvents.push(e);
+        if (!eventMatchesFilters(e)) continue;
+        if (!e.tx_id || !e.peer_id) continue;
+
+        if (!txGroups.has(e.tx_id)) txGroups.set(e.tx_id, []);
+        txGroups.get(e.tx_id).push({
+            peer_id: e.peer_id,
+            timestamp: e.timestamp,
+            event_type: e.event_type
+        });
     }
 
-    console.log(`[flows] windowEvents: ${windowEvents.length}, skippedByFilter: ${skippedByFilter}`);
-    if (windowEvents.length > 0) {
-        const withTx = windowEvents.filter(e => e.tx_id).length;
-        console.log(`[flows] with tx_id: ${withTx}, sample:`, windowEvents[0]);
-    }
-
-    // Build message flows from transactions
+    // Build flows from multi-peer transactions
     const flows = [];
-    const seenTx = new Set();
-    const rangeMs = (endNs - startNs) / 1_000_000;
+    for (const [, txEvents] of txGroups) {
+        if (txEvents.length < 2) continue;
 
-    let dbgNoTx = 0, dbgNotFound = 0, dbgTooFew = 0, dbgSinglePeer = 0, dbgMultiPeer = 0;
+        // Check for multiple peers
+        const peers = new Set(txEvents.map(e => e.peer_id));
+        if (peers.size < 2) continue;
 
-    for (const evt of windowEvents) {
-        // Direct from_peer/to_peer (rare but ideal)
-        if (evt.from_peer && evt.to_peer && evt.from_peer !== evt.to_peer) {
-            flows.push({
-                fromPeer: evt.from_peer, toPeer: evt.to_peer,
-                eventType: evt.event_type,
-                offsetMs: (evt.timestamp - startNs) / 1_000_000
-            });
-            continue;
-        }
-
-        // Infer from transaction: consecutive events on different peers
-        if (evt.tx_id && !seenTx.has(evt.tx_id)) {
-            seenTx.add(evt.tx_id);
-            const txIdx = state.transactionMap.get(evt.tx_id);
-            if (txIdx === undefined) { dbgNotFound++; continue; }
-            const tx = state.allTransactions[txIdx];
-            if (!tx || !tx.events || tx.events.length < 2) { dbgTooFew++; continue; }
-
-            const sorted = [...tx.events].sort((a, b) => a.timestamp - b.timestamp);
-            const uniquePeers = new Set(sorted.map(e => e.peer_id).filter(Boolean));
-            if (uniquePeers.size < 2) { dbgSinglePeer++; continue; }
-            dbgMultiPeer++;
-
-            for (let j = 1; j < sorted.length; j++) {
-                if (sorted[j].peer_id && sorted[j - 1].peer_id &&
-                    sorted[j].peer_id !== sorted[j - 1].peer_id) {
-                    // Use the midpoint timestamp for timing
-                    const midTs = (sorted[j - 1].timestamp + sorted[j].timestamp) / 2;
-                    flows.push({
-                        fromPeer: sorted[j - 1].peer_id,
-                        toPeer: sorted[j].peer_id,
-                        eventType: sorted[j].event_type || tx.op,
-                        offsetMs: Math.max(0, (midTs - startNs) / 1_000_000)
-                    });
-                }
+        // Sort by timestamp, extract consecutive peer-to-peer hops
+        txEvents.sort((a, b) => a.timestamp - b.timestamp);
+        for (let j = 1; j < txEvents.length; j++) {
+            if (txEvents[j].peer_id !== txEvents[j - 1].peer_id) {
+                const midTs = (txEvents[j - 1].timestamp + txEvents[j].timestamp) / 2;
+                flows.push({
+                    fromPeer: txEvents[j - 1].peer_id,
+                    toPeer: txEvents[j].peer_id,
+                    eventType: txEvents[j].event_type,
+                    offsetMs: Math.max(0, (midTs - startNs) / 1_000_000)
+                });
             }
-        } else if (!evt.tx_id) {
-            dbgNoTx++;
-        }
-    }
-
-    console.log(`[flows] txns: ${seenTx.size} unique, notFound=${dbgNotFound}, tooFew=${dbgTooFew}, singlePeer=${dbgSinglePeer}, multiPeer=${dbgMultiPeer}, noTxId=${dbgNoTx}`);
-
-    // Debug: sample a tx_id from events and check the map
-    if (dbgNotFound > 0) {
-        const sampleEvt = windowEvents.find(e => e.tx_id);
-        if (sampleEvt) {
-            console.log(`[flows] sample evt tx_id: "${sampleEvt.tx_id}" (type: ${typeof sampleEvt.tx_id})`);
-            const mapKeys = [...state.transactionMap.keys()].slice(0, 3);
-            console.log(`[flows] transactionMap sample keys:`, mapKeys);
-            console.log(`[flows] map.has(sample): ${state.transactionMap.has(sampleEvt.tx_id)}`);
-            // Try exact string match
-            const sampleKey = mapKeys[0];
-            if (sampleKey) console.log(`[flows] key type: ${typeof sampleKey}, key[0]: "${sampleKey}"`);
         }
     }
 
