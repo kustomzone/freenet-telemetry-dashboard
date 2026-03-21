@@ -207,7 +207,8 @@ const PARTICLE_DURATION = 800;  // ms per particle travel
 
 // Replay loop state
 let replayFlows = [];           // [{fromPos, toPos, cp, color, offsetMs}] pre-resolved
-let replayLoopDuration = 0;     // base loop duration in ms (before speed multiplier)
+let replayLoopDuration = 0;     // full loop duration in ms including padding (before speed multiplier)
+let replayActiveDuration = 0;   // active portion in ms (just the compressed event range, no padding)
 let replayRealDurationMs = 0;   // actual time range in ms (for computing real-time speed)
 let replayLoopStart = 0;        // performance.now() when current loop cycle began
 let replayFrame = null;         // rAF handle
@@ -289,6 +290,7 @@ export function startReplay(flows, peers) {
     replayRealDurationMs = maxOffset;
     // Compress to 3-8s replay window
     const compressedDuration = Math.min(8000, Math.max(3000, maxOffset * 0.5));
+    replayActiveDuration = compressedDuration;
     replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500; // +500ms pause between loops
 
     // Normalize offsets to compressed duration
@@ -405,8 +407,10 @@ function startReplayLoop() {
 
         const cycleTime = now - replayLoopStart;
 
-        // Update progress for timeline playhead
-        state.replayProgress = Math.min(1, cycleTime / effectiveDuration);
+        // Update progress for timeline playhead — map only across the active
+        // event portion, not the padding at the end
+        const effectiveActive = replayActiveDuration / replaySpeed;
+        state.replayProgress = Math.min(1, cycleTime / effectiveActive);
 
         // Spawn particles whose offset has been reached in this cycle
         const spawnWindow = 50 / replaySpeed;
@@ -1308,6 +1312,7 @@ const EVENT_LINE_COLORS = {
     get:       '#34d399',
     update:    '#a78bfa',
     subscribe: '#f472b6',
+    transfer:  '#fb923c',  // warm orange
     other:     '#9ca3af'
 };
 

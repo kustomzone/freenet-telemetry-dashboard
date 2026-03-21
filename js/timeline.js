@@ -5,6 +5,7 @@
 
 import { state } from './state.js';
 import { formatTime, formatDate, getEventClass, getEventLabel } from './utils.js';
+import { getTransferEvents } from './transfers.js';
 
 // Time window constants (kept for compatibility with other modules)
 export const MIN_TIME_WINDOW_NS = 1 * 60 * 1_000_000_000;
@@ -382,6 +383,28 @@ export function collectFlowsForRange(startNs, endNs) {
                     offsetMs: Math.max(0, (midTs - startNs) / 1_000_000)
                 });
             }
+        }
+    }
+
+    // Add transfer flows (gateway ↔ remote peer)
+    const gatewayId = state.gatewayPeerId;
+    if (gatewayId) {
+        const transfers = getTransferEvents();
+        for (const t of transfers) {
+            if (t.timestamp < startNs || t.timestamp > endNs) continue;
+            if (!t.peer_id) continue;
+            // Respect contract filter — transfers don't have contracts, skip if filtering
+            if (state.selectedContract) continue;
+            // Respect peer filter
+            if (state.selectedPeerId && t.peer_id !== state.selectedPeerId && gatewayId !== state.selectedPeerId) continue;
+
+            const fromPeer = t.direction === 'Send' ? gatewayId : t.peer_id;
+            const toPeer = t.direction === 'Send' ? t.peer_id : gatewayId;
+            flows.push({
+                fromPeer, toPeer,
+                eventType: 'transfer',
+                offsetMs: Math.max(0, (t.timestamp - startNs) / 1_000_000)
+            });
         }
     }
 

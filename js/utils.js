@@ -11,6 +11,7 @@ export function getEventClass(eventType) {
     if (eventType.includes('get')) return 'get';
     if (eventType.includes('update') || eventType.includes('broadcast')) return 'update';
     if (eventType.includes('subscrib')) return 'subscribe';
+    if (eventType.includes('transfer')) return 'transfer';
     return 'other';
 }
 
