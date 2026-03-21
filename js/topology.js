@@ -468,7 +468,6 @@ function updateTimelinePlayhead() {
     }
 
     // Compute playhead time as ms-since-epoch using ms offsets
-    // (avoids nanosecond precision loss in JS Number)
     const progress = Math.min(1, state.replayProgress);
     const playheadOffsetMs = replayFlowMinOffsetMs + (replayFlowMaxOffsetMs - replayFlowMinOffsetMs) * progress;
     const rangeStartMs = state.replayRange.startNs / 1_000_000;

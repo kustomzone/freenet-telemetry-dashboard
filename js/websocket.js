@@ -216,14 +216,9 @@ function handleMessage(data, callbacks) {
     } else if (data.type === 'history') {
         state.allEvents.length = 0;
         state.allEvents.push(...data.events);
-        // Use the actual events for the display range — no empty padding.
-        // With SQLite persistence we always have real data to show.
-        state.timeRange.end = Date.now() * 1_000_000;
-        if (state.allEvents.length > 0) {
-            state.timeRange.start = state.allEvents[0].timestamp;
-        } else {
-            state.timeRange.start = data.time_range.start || state.timeRange.end;
-        }
+        // Use the server's time range (matches both events and flows from DB)
+        state.timeRange = data.time_range;
+        state.timeRange.end = Date.now() * 1_000_000;  // extend to now for live events
         state.currentTime = state.timeRange.end;
 
         if (data.transactions) {

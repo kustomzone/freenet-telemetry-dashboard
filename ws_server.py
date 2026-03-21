@@ -2005,7 +2005,12 @@ def get_history():
         events_list = db.get_sampled_events(limit=MAX_INITIAL_EVENTS)
         HISTORY_TX_OPS = {"put", "get", "update", "broadcast", "connect", "subscribe"}
         tx_list = db.get_recent_transactions(limit=MAX_INITIAL_TRANSACTIONS, ops=HISTORY_TX_OPS)
-        start_ns, end_ns = db.get_time_range()
+        # Use actual event range (not full DB range which may be wider than sampled events)
+        if events_list:
+            start_ns = events_list[0]["timestamp"]
+            end_ns = events_list[-1]["timestamp"]
+        else:
+            start_ns, end_ns = db.get_time_range()
     else:
         # Fallback to in-memory
         prune_old_events()
