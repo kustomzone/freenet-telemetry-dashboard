@@ -63,6 +63,9 @@ export const state = {
     selectedTransaction: null,
     selectedTxEvents: [],     // Full events for the selected transaction (for topology arrows)
 
+    // Replay: selected time range for looping particle animation
+    replayRange: null,  // {startNs, endNs} or null
+
     // Network state from server
     initialStatePeers: [],
     initialStateConnections: [],

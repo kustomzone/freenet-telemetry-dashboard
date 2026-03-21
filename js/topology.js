@@ -194,14 +194,24 @@ let treeAnimEdges = []; // [{from, to, cp1, cp2}]
 let treeAnimT = 0;
 
 // ============================================================================
-// Ring particle animation system
-// Particles travel along spline paths between peers, triggered by timeline scrubbing
+// Ring particle replay system
+// Loops a set of message flows as animated particles along spline paths
 // ============================================================================
 
+// Active particles currently animating
 const ringParticles = [];       // [{fromPos, toPos, cp, color, startTime, duration}]
-const PARTICLE_DURATION = 700;  // ms
-const MAX_RING_PARTICLES = 40;
-let ringParticleFrame = null;
+const PARTICLE_DURATION = 800;  // ms per particle travel
+
+// Replay loop state
+let replayFlows = [];           // [{fromPos, toPos, cp, color, offsetMs}] pre-resolved
+let replayLoopDuration = 0;     // total loop duration in ms
+let replayLoopStart = 0;        // performance.now() when current loop cycle began
+let replayFrame = null;         // rAF handle
+let _scheduleRedraw = null;
+
+export function setParticleRedrawCallback(cb) {
+    _scheduleRedraw = cb;
+}
 
 /**
  * Compute the quadratic bezier control point for a connection between two
@@ -231,43 +241,123 @@ function quadBezierAt(from, cp, to, t) {
     };
 }
 
-export function spawnRingParticle(fromId, toId, eventType, peers) {
-    if (ringParticles.length >= MAX_RING_PARTICLES) return;
+/**
+ * Start looping replay of message flows.
+ * flows: [{fromPeer, toPeer, eventType, offsetMs}] from collectFlowsForRange
+ * peers: current peer Map from updateView
+ */
+export function startReplay(flows, peers) {
+    stopReplay();
+    if (flows.length === 0) return;
 
-    // Resolve peer locations and positions
-    let fromLoc = null, toLoc = null, fromPos = null, toPos = null;
-    peers.forEach((peer, id) => {
-        if (id === fromId || peer.peer_id === fromId) {
-            fromLoc = peer.location;
-            fromPos = locationToXY(peer.location);
+    // Resolve peer positions and build pre-resolved flow list
+    replayFlows = [];
+    for (const flow of flows) {
+        let fromLoc = null, toLoc = null, fromPos = null, toPos = null;
+        peers.forEach((peer, id) => {
+            if (id === flow.fromPeer || peer.peer_id === flow.fromPeer) {
+                fromLoc = peer.location;
+                fromPos = locationToXY(peer.location);
+            }
+            if (id === flow.toPeer || peer.peer_id === flow.toPeer) {
+                toLoc = peer.location;
+                toPos = locationToXY(peer.location);
+            }
+        });
+        if (!fromPos || !toPos || fromLoc === null || toLoc === null) continue;
+        const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
+        if (dx * dx + dy * dy < 100) continue;
+
+        const eventClass = getEventClass(flow.eventType);
+        const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
+        const cp = connectionControlPoint(fromLoc, toLoc);
+
+        replayFlows.push({ fromPos, toPos, cp, color, offsetMs: flow.offsetMs });
+    }
+
+    if (replayFlows.length === 0) return;
+
+    // Compute loop duration: compress real time range into a readable replay speed.
+    // The replay takes 3-8 seconds depending on the number of flows,
+    // plus PARTICLE_DURATION so the last particle finishes before the loop restarts.
+    const maxOffset = Math.max(...replayFlows.map(f => f.offsetMs));
+    // Compress to 3-8s replay window
+    const compressedDuration = Math.min(8000, Math.max(3000, maxOffset * 0.5));
+    replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500; // +500ms pause between loops
+
+    // Normalize offsets to compressed duration
+    if (maxOffset > 0) {
+        for (const f of replayFlows) {
+            f.normalizedOffset = (f.offsetMs / maxOffset) * compressedDuration;
         }
-        if (id === toId || peer.peer_id === toId) {
-            toLoc = peer.location;
-            toPos = locationToXY(peer.location);
-        }
-    });
-    if (!fromPos || !toPos || fromLoc === null || toLoc === null) return;
+    } else {
+        // All at the same time — stagger slightly
+        replayFlows.forEach((f, i) => {
+            f.normalizedOffset = (i / replayFlows.length) * Math.min(2000, compressedDuration);
+        });
+    }
 
-    // Skip very short distances
-    const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
-    if (dx * dx + dy * dy < 100) return;
-
-    const eventClass = getEventClass(eventType);
-    const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
-    const cp = connectionControlPoint(fromLoc, toLoc);
-
-    ringParticles.push({
-        fromPos, toPos, cp, color,
-        startTime: performance.now(),
-        duration: PARTICLE_DURATION
-    });
-
-    startRingParticleLoop();
+    replayLoopStart = performance.now();
+    startReplayLoop();
 }
 
-/** Returns true if there are active particles (used to suppress static hover line). */
-export function hasActiveParticles() {
-    return ringParticles.length > 0;
+export function stopReplay() {
+    if (replayFrame) {
+        cancelAnimationFrame(replayFrame);
+        replayFrame = null;
+    }
+    replayFlows = [];
+    ringParticles.length = 0;
+}
+
+export function isReplaying() {
+    return replayFlows.length > 0;
+}
+
+function startReplayLoop() {
+    if (replayFrame) return;
+
+    function step() {
+        replayFrame = requestAnimationFrame(step);
+
+        if (replayFlows.length === 0) {
+            cancelAnimationFrame(replayFrame);
+            replayFrame = null;
+            return;
+        }
+
+        const now = performance.now();
+        const elapsed = now - replayLoopStart;
+
+        // Loop: restart when the cycle completes
+        if (elapsed >= replayLoopDuration) {
+            replayLoopStart = now;
+            ringParticles.length = 0;
+        }
+
+        const cycleTime = now - replayLoopStart;
+
+        // Spawn particles whose offset has been reached in this cycle
+        for (const flow of replayFlows) {
+            if (cycleTime >= flow.normalizedOffset && cycleTime < flow.normalizedOffset + 50) {
+                // Check if we already spawned this flow in this cycle
+                // (50ms window means we might hit it across 3 frames at 60fps)
+                if (!flow._lastSpawn || (now - flow._lastSpawn) > replayLoopDuration * 0.9) {
+                    flow._lastSpawn = now;
+                    ringParticles.push({
+                        fromPos: flow.fromPos, toPos: flow.toPos,
+                        cp: flow.cp, color: flow.color,
+                        startTime: now, duration: PARTICLE_DURATION
+                    });
+                }
+            }
+        }
+
+        // Request redraw
+        if (_scheduleRedraw) _scheduleRedraw();
+    }
+
+    replayFrame = requestAnimationFrame(step);
 }
 
 function drawRingParticles(ctx) {
@@ -284,17 +374,15 @@ function drawRingParticles(ctx) {
         }
 
         const t = elapsed / p.duration;
-        // Ease-out for smooth deceleration along the spline
-        const eased = 1 - (1 - t) * (1 - t);
+        const eased = 1 - (1 - t) * (1 - t); // ease-out
         const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
         const alpha = 1 - t * 0.5;
 
-        // Trail: draw a fading line from start to current position
+        // Trail along the spline
         ctx.beginPath();
         ctx.strokeStyle = p.color;
         ctx.lineWidth = 2;
         ctx.globalAlpha = alpha * 0.3;
-        // Draw the spline segment from start up to current t
         const TRAIL_STEPS = 8;
         ctx.moveTo(p.fromPos.x, p.fromPos.y);
         for (let s = 1; s <= TRAIL_STEPS; s++) {
@@ -327,39 +415,6 @@ function drawRingParticles(ctx) {
     }
     ctx.globalAlpha = 1;
     ctx.restore();
-
-    if (ringParticles.length === 0) {
-        stopRingParticleLoop();
-    }
-}
-
-// Callback to schedule a view update (set from app.js)
-let _scheduleRedraw = null;
-
-export function setParticleRedrawCallback(cb) {
-    _scheduleRedraw = cb;
-}
-
-function startRingParticleLoop() {
-    if (ringParticleFrame) return;
-
-    function step() {
-        if (ringParticles.length === 0) {
-            ringParticleFrame = null;
-            return;
-        }
-        ringParticleFrame = requestAnimationFrame(step);
-        // Request a full redraw which will call drawRingParticles in the render path
-        if (_scheduleRedraw) _scheduleRedraw();
-    }
-    ringParticleFrame = requestAnimationFrame(step);
-}
-
-function stopRingParticleLoop() {
-    if (ringParticleFrame) {
-        cancelAnimationFrame(ringParticleFrame);
-        ringParticleFrame = null;
-    }
 }
 
 

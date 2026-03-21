@@ -6,11 +6,12 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, spawnRingParticle, setParticleRedrawCallback } from './topology.js';
+import { updateRingSVG, startReplay, stopReplay, isReplaying, setParticleRedrawCallback } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
-    addEventMarker, renderExponentialTimeline
+    addEventMarker, renderExponentialTimeline,
+    collectFlowsForRange
 } from './timeline.js';
 import {
     selectEvent, selectPeer, togglePeerFilter, toggleTxFilter,
@@ -208,14 +209,17 @@ function handleEventHover(event) {
 }
 
 /**
- * Handle timeline scrub — spawn ring particles for message flows under the cursor.
- * Flows are [{fromPeer, toPeer, eventType}] inferred from transactions.
+ * Handle replay range selection from timeline drag.
+ * Collects message flows for the range and starts looping replay.
  */
-function handleTimelineScrub(flows) {
-    if (_cachedPeers.size === 0) return;
-    for (const flow of flows) {
-        spawnRingParticle(flow.fromPeer, flow.toPeer, flow.eventType, _cachedPeers);
+function handleReplayRange(range) {
+    if (!range) {
+        stopReplay();
+        return;
     }
+    if (_cachedPeers.size === 0) return;
+    const flows = collectFlowsForRange(range.startNs, range.endNs);
+    startReplay(flows, _cachedPeers);
 }
 
 // ============================================================================
@@ -301,7 +305,7 @@ setupTimeline({
     renderContractsList: renderContractsList,
     selectEvent: handleEventClick,
     onEventHover: handleEventHover,
-    onScrub: handleTimelineScrub
+    onReplayRange: handleReplayRange
 });
 
 // Connect to WebSocket

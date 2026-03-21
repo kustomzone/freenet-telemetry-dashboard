@@ -104,8 +104,10 @@ export function renderExponentialTimeline() {
     state.currentTime = tNow;
     const totalDurationNs = tNow - state.timeRange.start;
 
-    // Cache check
-    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}`;
+    // Cache check — include replay range and drag state so highlight redraws
+    const replayKey = state.replayRange ? `${state.replayRange.startNs}-${state.replayRange.endNs}` : 'none';
+    const dragKey = isDragging ? `${dragStartX}-${dragCurrentX}` : '';
+    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}`;
     if (cacheKey === lastCanvasKey) return;
     lastCanvasKey = cacheKey;
 
@@ -159,6 +161,9 @@ export function renderExponentialTimeline() {
 
     // Draw time ticks
     drawTicks(ctx, tNow, totalDurationNs, width, height);
+
+    // Draw replay range highlight
+    drawReplayHighlight(ctx, width, height, tNow, totalDurationNs);
 
 }
 
@@ -311,26 +316,20 @@ function hideTooltip() {
 }
 
 // ============================================================================
-// Scrub hit-test: collect all events in a pixel-width time window
+// Replay range: drag-to-select a time window for looping particle animation
 // ============================================================================
 
+// Drag state (module-scoped, not in global state since it's transient UI)
+let dragStartX = null;   // canvas X where drag started
+let dragCurrentX = null;  // canvas X of current drag position
+let isDragging = false;
+
 /**
- * Collect message-flow pairs from events near the cursor position.
- * Returns [{fromPeer, toPeer, eventType}] by inferring flows from
- * transaction data: consecutive events on different peers within
- * the same transaction imply a message traveled between them.
+ * Collect message flows for a time range from transaction data.
+ * Returns [{fromPeer, toPeer, eventType, offsetMs}] where offsetMs is
+ * the relative time from range start (for staggered replay).
  */
-function scrubHitTest(canvasX, canvas) {
-    const width = canvas.clientWidth;
-    const tNow = state.currentTime;
-    const totalDurationNs = tNow - state.timeRange.start;
-    if (totalDurationNs <= 0) return [];
-
-    const tLeft = xToTime(canvasX + 3, tNow, totalDurationNs, width);
-    const tRight = xToTime(canvasX - 3, tNow, totalDurationNs, width);
-    const tMin = Math.min(tLeft, tRight);
-    const tMax = Math.max(tLeft, tRight);
-
+export function collectFlowsForRange(startNs, endNs) {
     const events = state.allEvents;
     if (events.length === 0) return [];
 
@@ -338,55 +337,107 @@ function scrubHitTest(canvasX, canvas) {
     let lo = 0, hi = events.length;
     while (lo < hi) {
         const mid = (lo + hi) >>> 1;
-        if (events[mid].timestamp < tMin) lo = mid + 1;
+        if (events[mid].timestamp < startNs) lo = mid + 1;
         else hi = mid;
     }
 
-    // Collect events in the time window, respecting filters
+    // Collect events in the range, respecting filters
     const windowEvents = [];
-    for (let i = lo; i < events.length && windowEvents.length < 20; i++) {
+    for (let i = lo; i < events.length; i++) {
         const e = events[i];
-        if (e.timestamp > tMax) break;
+        if (e.timestamp > endNs) break;
         if (!eventMatchesFilters(e)) continue;
         windowEvents.push(e);
     }
 
-    // Build message flows
+    // Build message flows from transactions
     const flows = [];
     const seenTx = new Set();
+    const rangeMs = (endNs - startNs) / 1_000_000;
 
     for (const evt of windowEvents) {
         // Direct from_peer/to_peer (rare but ideal)
         if (evt.from_peer && evt.to_peer && evt.from_peer !== evt.to_peer) {
-            flows.push({ fromPeer: evt.from_peer, toPeer: evt.to_peer, eventType: evt.event_type });
+            flows.push({
+                fromPeer: evt.from_peer, toPeer: evt.to_peer,
+                eventType: evt.event_type,
+                offsetMs: (evt.timestamp - startNs) / 1_000_000
+            });
             continue;
         }
 
-        // Infer from transaction: find previous event on a different peer
+        // Infer from transaction: consecutive events on different peers
         if (evt.tx_id && !seenTx.has(evt.tx_id)) {
             seenTx.add(evt.tx_id);
             const txIdx = state.transactionMap.get(evt.tx_id);
-            if (txIdx !== undefined) {
-                const tx = state.allTransactions[txIdx];
-                if (tx && tx.events && tx.events.length >= 2) {
-                    // Sort by timestamp, find consecutive peer-to-peer hops
-                    const sorted = [...tx.events].sort((a, b) => a.timestamp - b.timestamp);
-                    for (let j = 1; j < sorted.length && flows.length < 8; j++) {
-                        if (sorted[j].peer_id && sorted[j - 1].peer_id &&
-                            sorted[j].peer_id !== sorted[j - 1].peer_id) {
-                            flows.push({
-                                fromPeer: sorted[j - 1].peer_id,
-                                toPeer: sorted[j].peer_id,
-                                eventType: sorted[j].event_type || tx.op
-                            });
-                        }
-                    }
+            if (txIdx === undefined) continue;
+            const tx = state.allTransactions[txIdx];
+            if (!tx || !tx.events || tx.events.length < 2) continue;
+
+            const sorted = [...tx.events].sort((a, b) => a.timestamp - b.timestamp);
+            for (let j = 1; j < sorted.length; j++) {
+                if (sorted[j].peer_id && sorted[j - 1].peer_id &&
+                    sorted[j].peer_id !== sorted[j - 1].peer_id) {
+                    // Use the midpoint timestamp for timing
+                    const midTs = (sorted[j - 1].timestamp + sorted[j].timestamp) / 2;
+                    flows.push({
+                        fromPeer: sorted[j - 1].peer_id,
+                        toPeer: sorted[j].peer_id,
+                        eventType: sorted[j].event_type || tx.op,
+                        offsetMs: Math.max(0, (midTs - startNs) / 1_000_000)
+                    });
                 }
             }
         }
     }
 
     return flows;
+}
+
+/**
+ * Draw the replay selection highlight on the timeline canvas.
+ * Called from renderExponentialTimeline after event bars are drawn.
+ */
+function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
+    const range = state.replayRange;
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+
+    // Active drag in progress (not yet committed)
+    if (isDragging && dragStartX !== null && dragCurrentX !== null) {
+        const x1 = Math.min(dragStartX, dragCurrentX);
+        const x2 = Math.max(dragStartX, dragCurrentX);
+        ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.15)' : 'rgba(0, 180, 255, 0.12)';
+        ctx.fillRect(x1, 0, x2 - x1, height);
+        ctx.strokeStyle = isLight ? 'rgba(0, 127, 255, 0.5)' : 'rgba(0, 180, 255, 0.4)';
+        ctx.lineWidth = 1;
+        ctx.strokeRect(x1, 0, x2 - x1, height);
+        return;
+    }
+
+    // Committed replay range
+    if (!range) return;
+    const x1 = timeToX(range.startNs, tNow, totalDurationNs, width);
+    const x2 = timeToX(range.endNs, tNow, totalDurationNs, width);
+    const left = Math.min(x1, x2);
+    const right = Math.max(x1, x2);
+
+    // Dim everything outside the range
+    ctx.fillStyle = isLight ? 'rgba(0, 0, 0, 0.08)' : 'rgba(0, 0, 0, 0.3)';
+    ctx.fillRect(0, 0, left, height);
+    ctx.fillRect(right, 0, width - right, height);
+
+    // Highlight border
+    ctx.strokeStyle = isLight ? 'rgba(0, 127, 255, 0.6)' : 'rgba(0, 180, 255, 0.5)';
+    ctx.lineWidth = 1.5;
+    ctx.strokeRect(left, 0, right - left, height);
+
+    // "REPLAY" label
+    const centerX = (left + right) / 2;
+    ctx.font = '9px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.7)' : 'rgba(0, 180, 255, 0.6)';
+    ctx.fillText('▶ REPLAY', centerX, 2);
 }
 
 // ============================================================================
@@ -430,12 +481,22 @@ export function setupTimeline(callbacks) {
     const canvas = document.getElementById('timeline-canvas');
     if (!canvas) return;
 
-    // --- Canvas hover for tooltips + event visualization + particle scrubbing ---
-    let lastScrubX = -1;  // deduplicate scrub calls for same pixel
+    // --- Canvas hover for tooltips + event visualization ---
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
+
+        // If dragging a replay range, update drag position
+        if (isDragging) {
+            dragCurrentX = x;
+            canvas.style.cursor = 'col-resize';
+            hideTooltip();
+            lastCanvasKey = null; // force redraw for highlight
+            renderExponentialTimeline();
+            return;
+        }
+
         const event = hitTest(x, y, canvas);
         if (event) {
             canvas.style.cursor = 'pointer';
@@ -450,16 +511,6 @@ export function setupTimeline(callbacks) {
                 if (callbacks.onEventHover) callbacks.onEventHover(null);
             }
         }
-
-        // Particle scrubbing: collect events in a time window around cursor
-        const pixelX = Math.round(x);
-        if (callbacks.onScrub && pixelX !== lastScrubX) {
-            lastScrubX = pixelX;
-            const scrubEvents = scrubHitTest(x, canvas);
-            if (scrubEvents.length > 0) {
-                callbacks.onScrub(scrubEvents);
-            }
-        }
     });
 
     canvas.addEventListener('mouseleave', () => {
@@ -469,9 +520,70 @@ export function setupTimeline(callbacks) {
             state.hoveredEvent = null;
             if (callbacks.onEventHover) callbacks.onEventHover(null);
         }
+        // Cancel drag if mouse leaves
+        if (isDragging) {
+            isDragging = false;
+            dragStartX = null;
+            dragCurrentX = null;
+            lastCanvasKey = null;
+            renderExponentialTimeline();
+        }
     });
 
-    // --- Canvas click: select event or clear selection ---
+    // --- Drag to select replay range ---
+    canvas.addEventListener('mousedown', (e) => {
+        // Only left button, and only if not clicking an event
+        if (e.button !== 0) return;
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+
+        // If clicking on an event, let the click handler deal with it
+        const event = hitTest(x, y, canvas);
+        if (event) return;
+
+        isDragging = true;
+        dragStartX = x;
+        dragCurrentX = x;
+        e.preventDefault(); // prevent text selection
+    });
+
+    canvas.addEventListener('mouseup', (e) => {
+        if (!isDragging) return;
+        isDragging = false;
+
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const width = canvas.clientWidth;
+        const tNow = state.currentTime;
+        const totalDurationNs = tNow - state.timeRange.start;
+
+        // Convert pixel range to time range
+        const t1 = xToTime(dragStartX, tNow, totalDurationNs, width);
+        const t2 = xToTime(x, tNow, totalDurationNs, width);
+        const startNs = Math.min(t1, t2);
+        const endNs = Math.max(t1, t2);
+
+        dragStartX = null;
+        dragCurrentX = null;
+
+        // Minimum 2px drag to distinguish from click
+        if (Math.abs(t1 - t2) < 1_000_000_000) { // < 1 second
+            // Too small — treat as click to clear
+            state.replayRange = null;
+            if (callbacks.onReplayRange) callbacks.onReplayRange(null);
+            lastCanvasKey = null;
+            renderExponentialTimeline();
+            return;
+        }
+
+        state.replayRange = { startNs, endNs };
+        lastCanvasKey = null;
+        renderExponentialTimeline();
+        if (callbacks.onReplayRange) callbacks.onReplayRange({ startNs, endNs });
+    });
+
+    // --- Canvas click: select event or clear replay ---
     canvas.addEventListener('click', (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -482,11 +594,27 @@ export function setupTimeline(callbacks) {
             if (callbacks.selectEvent) {
                 callbacks.selectEvent(event);
             }
+        } else if (state.replayRange) {
+            // Click on background clears replay range
+            state.replayRange = null;
+            if (callbacks.onReplayRange) callbacks.onReplayRange(null);
+            lastCanvasKey = null;
+            renderExponentialTimeline();
         } else {
-            // Click on background: clear selection
+            // Click on background: clear event selection
             if (callbacks.selectEvent) {
                 callbacks.selectEvent(null);
             }
+        }
+    });
+
+    // Escape clears replay range
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && state.replayRange) {
+            state.replayRange = null;
+            if (callbacks.onReplayRange) callbacks.onReplayRange(null);
+            lastCanvasKey = null;
+            renderExponentialTimeline();
         }
     });
 
