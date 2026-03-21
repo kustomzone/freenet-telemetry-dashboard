@@ -187,6 +187,9 @@ let hoveredPeerTarget = null; // currently hovered hit target (for cursor)
 let connectionAnimOffset = 0;
 let connectionAnimFrame = null;
 
+// Particle overlay canvas (separate from main peer canvas for perf)
+let particleCanvas = null;
+
 // Tree edge animation state
 let treeAnimCanvas = null;
 let treeAnimFrame = null;
@@ -311,6 +314,13 @@ export function stopReplay() {
     ringParticles.length = 0;
     state.replayProgress = -1;
     replayPaused = false;
+    // Clear overlay canvases
+    if (particleCanvas) {
+        const ctx = particleCanvas.getContext('2d');
+        ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
+    }
+    const playhead = document.getElementById('replay-playhead');
+    if (playhead) playhead.style.display = 'none';
 }
 
 let replayPaused = false;
@@ -363,12 +373,8 @@ function startReplayLoop() {
             return;
         }
 
-        // When paused, keep the animation frame running (for future resume)
-        // but don't advance anything
-        if (replayPaused) {
-            if (_scheduleRedraw) _scheduleRedraw(); // still redraw (shows PAUSED state)
-            return;
-        }
+        // When paused, don't advance anything
+        if (replayPaused) return;
 
         const now = performance.now();
         const effectiveDuration = replayLoopDuration / replaySpeed;
@@ -385,7 +391,7 @@ function startReplayLoop() {
         // Update progress for timeline playhead
         state.replayProgress = Math.min(1, cycleTime / effectiveDuration);
 
-        // Scale offsets by speed
+        // Spawn particles whose offset has been reached in this cycle
         const spawnWindow = 50 / replaySpeed;
         for (const flow of replayFlows) {
             const scaledOffset = flow.normalizedOffset / replaySpeed;
@@ -401,11 +407,62 @@ function startReplayLoop() {
             }
         }
 
-        // Request redraw
-        if (_scheduleRedraw) _scheduleRedraw();
+        // Draw particles directly on the overlay canvas (no full redraw needed)
+        if (particleCanvas) {
+            const dpr = window.devicePixelRatio || 1;
+            const displaySize = parseInt(particleCanvas.style.width) || SVG_SIZE;
+            const scale = displaySize / SVG_SIZE;
+            const ctx = particleCanvas.getContext('2d');
+            ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+            ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
+            drawRingParticles(ctx);
+        }
+
+        // Update timeline playhead via lightweight DOM element
+        updateTimelinePlayhead();
     }
 
     replayFrame = requestAnimationFrame(step);
+}
+
+/**
+ * Position the timeline playhead DOM element based on replay progress.
+ * Much cheaper than redrawing the entire timeline canvas.
+ */
+function updateTimelinePlayhead() {
+    let el = document.getElementById('replay-playhead');
+    const canvas = document.getElementById('timeline-canvas');
+    if (!canvas) return;
+
+    if (state.replayProgress < 0 || !state.replayRange) {
+        if (el) el.style.display = 'none';
+        return;
+    }
+
+    if (!el) {
+        el = document.createElement('div');
+        el.id = 'replay-playhead';
+        el.style.cssText = 'position:absolute;top:0;width:1.5px;height:100%;background:rgba(255,255,255,0.7);pointer-events:none;z-index:10;';
+        canvas.parentElement.style.position = 'relative';
+        canvas.parentElement.appendChild(el);
+    }
+
+    // Import timeToX dynamically would create a circular dep, so compute inline
+    // using the same exponential formula
+    const tNow = state.currentTime;
+    const totalDurationNs = tNow - state.timeRange.start;
+    if (totalDurationNs <= 0) return;
+
+    const playheadNs = state.replayRange.startNs +
+        (state.replayRange.endNs - state.replayRange.startNs) * state.replayProgress;
+    const age = tNow - playheadNs;
+    const normalizedAge = Math.min(age / totalDurationNs, 1);
+    const K = 6;
+    const width = canvas.clientWidth;
+    const px = width * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
+
+    el.style.display = '';
+    el.style.left = px + 'px';
 }
 
 function drawRingParticles(ctx) {
@@ -465,6 +522,21 @@ function drawRingParticles(ctx) {
     ctx.restore();
 }
 
+
+function getOrCreateParticleCanvas(container) {
+    if (particleCanvas && particleCanvas.parentNode === container) return particleCanvas;
+    if (particleCanvas) particleCanvas.remove();
+    particleCanvas = document.createElement('canvas');
+    particleCanvas.id = 'particle-canvas';
+    particleCanvas.style.position = 'absolute';
+    particleCanvas.style.top = '0';
+    particleCanvas.style.left = '50%';
+    particleCanvas.style.transform = 'translateX(-50%)';
+    particleCanvas.style.zIndex = '3'; // above tree anim (z=2) and peer canvas (z=1)
+    particleCanvas.style.pointerEvents = 'none';
+    container.appendChild(particleCanvas);
+    return particleCanvas;
+}
 
 function getOrCreateTreeAnimCanvas(container) {
     if (treeAnimCanvas && treeAnimCanvas.parentNode === container) return treeAnimCanvas;
@@ -873,8 +945,14 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
     // Draw peers on canvas and build hit-test array
     drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, treeOverlay);
 
-    // Draw any active ring particles (from timeline scrubbing)
-    drawRingParticles(ctx);
+    // Size the particle overlay canvas (particles drawn independently by replay loop)
+    const pCanvas = getOrCreateParticleCanvas(container);
+    if (pCanvas.width !== targetPx || pCanvas.height !== targetPx) {
+        pCanvas.width = targetPx;
+        pCanvas.height = targetPx;
+        pCanvas.style.width = displaySize + 'px';
+        pCanvas.style.height = displaySize + 'px';
+    }
 
     // Install mouse events once
     installCanvasEvents(canvas, container);

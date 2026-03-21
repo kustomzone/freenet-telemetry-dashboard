@@ -104,12 +104,12 @@ export function renderExponentialTimeline() {
     state.currentTime = tNow;
     const totalDurationNs = tNow - state.timeRange.start;
 
-    // Cache check — include replay state so highlight/playhead redraws
+    // Cache check — replay range and drag state trigger redraws, but NOT progress
+    // (playhead is a DOM element positioned by the replay loop, not drawn on canvas)
     const replayKey = state.replayRange ? `${state.replayRange.startNs}-${state.replayRange.endNs}` : 'none';
     const dragKey = isDragging ? `${dragStartX}-${dragCurrentX}` : '';
-    // During replay, use coarse progress (updates ~20 times per loop) to force redraws
-    const progressKey = state.replayProgress >= 0 ? (state.replayProgress * 100 | 0) : '';
-    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}-${progressKey}`;
+    const pauseKey = state.replayPaused ? 'p' : '';
+    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}-${pauseKey}`;
     if (cacheKey === lastCanvasKey) return;
     lastCanvasKey = cacheKey;
 
@@ -425,19 +425,8 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
     ctx.lineWidth = 1.5;
     ctx.strokeRect(left, 0, right - left, height);
 
-    // Sweeping playhead line — convert progress to timestamp, then through
-    // the logarithmic timeToX scale so it tracks correctly on the timeline
-    const progress = state.replayProgress;
-    if (progress >= 0 && progress <= 1) {
-        const playheadNs = range.startNs + (range.endNs - range.startNs) * progress;
-        const px = timeToX(playheadNs, tNow, totalDurationNs, width);
-        ctx.beginPath();
-        ctx.moveTo(px, 0);
-        ctx.lineTo(px, height);
-        ctx.strokeStyle = isLight ? 'rgba(255, 255, 255, 0.9)' : 'rgba(255, 255, 255, 0.7)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
-    }
+    // Playhead is now a DOM element positioned by the replay loop (topology.js)
+    // — no canvas redraw needed per frame.
 
     // Status label: PAUSED or speed change
     const centerX = (left + right) / 2;

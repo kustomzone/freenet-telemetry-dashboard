@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, startReplay, stopReplay, isReplaying, setParticleRedrawCallback, adjustReplaySpeed, toggleReplayPause } from './topology.js';
+import { updateRingSVG, startReplay, stopReplay, isReplaying, adjustReplaySpeed, toggleReplayPause } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
@@ -319,8 +319,6 @@ function showFindMyPeerButton() {
 // Initialization
 // ============================================================================
 
-// Wire particle animation to trigger view updates
-setParticleRedrawCallback(scheduleUpdateView);
 
 // Setup timeline interactions (canvas hover/click, keyboard shortcuts)
 setupTimeline({
