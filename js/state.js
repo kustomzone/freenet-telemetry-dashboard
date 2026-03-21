@@ -69,6 +69,7 @@ export const state = {
     // Replay: selected time range for looping particle animation
     replayRange: null,  // {startNs, endNs} or null
     replayProgress: -1, // 0..1 cycle progress, -1 if not replaying
+    replayPlayheadMs: -1, // ms-since-epoch of current playhead position, -1 if not replaying
     replaySpeed: 1.0,   // current speed for display
     replayPaused: false, // true when replay is paused
     replaySpeedShownUntil: 0, // performance.now() timestamp to hide speed label

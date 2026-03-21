@@ -329,17 +329,11 @@ export function stopReplay() {
     replayFlowMinOffsetMs = 0;
     replayFlowMaxOffsetMs = 0;
     replayPaused = false;
-    // Clear overlay canvases
+    state.replayPlayheadMs = -1;
+    // Clear particle overlay
     if (particleCanvas) {
         const ctx = particleCanvas.getContext('2d');
         ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
-    }
-    // Clear playhead overlays
-    const playhead = document.getElementById('replay-playhead');
-    if (playhead) playhead.style.display = 'none';
-    if (_playheadCanvas) {
-        const ctx = _playheadCanvas.getContext('2d');
-        ctx.clearRect(0, 0, _playheadCanvas.width, _playheadCanvas.height);
     }
     const timeEl = document.getElementById('replay-time');
     if (timeEl) timeEl.textContent = '';
@@ -463,86 +457,31 @@ function startReplayLoop() {
 }
 
 /**
- * Draw the replay playhead on a thin overlay canvas above the timeline.
- * Uses the same logarithmic timeToX formula as the timeline event bars.
+ * Store the playhead timestamp in state and trigger a timeline redraw.
+ * The actual line is drawn by renderExponentialTimeline using timeToX,
+ * which correctly handles the logarithmic scale.
  */
-let _playheadCanvas = null;
-
 function updateTimelinePlayhead() {
-    const timelineCanvas = document.getElementById('timeline-canvas');
-    if (!timelineCanvas) return;
-
-    // Hide old DOM playhead if it exists
-    const oldEl = document.getElementById('replay-playhead');
-    if (oldEl) oldEl.style.display = 'none';
-
-    if (state.replayProgress < 0 || !state.replayRange) { if (!state.replayRange) console.log('[playhead] no replayRange');
-        if (_playheadCanvas) {
-            const ctx = _playheadCanvas.getContext('2d');
-            ctx.clearRect(0, 0, _playheadCanvas.width, _playheadCanvas.height);
-        }
+    if (state.replayProgress < 0 || !state.replayRange) {
+        state.replayPlayheadMs = -1;
         return;
     }
 
-    // Create/resize overlay canvas
-    const parent = timelineCanvas.parentElement;
-    if (!_playheadCanvas) {
-        _playheadCanvas = document.createElement('canvas');
-        _playheadCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
-        parent.style.position = 'relative';
-        parent.appendChild(_playheadCanvas);
-    }
-    const dpr = window.devicePixelRatio || 1;
-    const w = timelineCanvas.clientWidth;
-    const h = timelineCanvas.clientHeight;
-    if (_playheadCanvas.width !== w * dpr || _playheadCanvas.height !== h * dpr) {
-        _playheadCanvas.width = w * dpr;
-        _playheadCanvas.height = h * dpr;
-    }
-
-    const ctx = _playheadCanvas.getContext('2d');
-    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-
-    // Use the same tNow as renderExponentialTimeline so the playhead
-    // aligns exactly with the event bars (both use same time reference)
-    const tNow = state.currentTime || Date.now() * 1_000_000;
-    const totalDurationNs = tNow - state.timeRange.start;
-    if (totalDurationNs <= 0) return;
-
-    // Compute playhead age (ms from now) using millisecond offsets to avoid
-    // nanosecond precision loss in JS Number (which can't represent ns exactly).
-    // progress maps linearly across [minOffset, maxOffset] from range start.
+    // Compute playhead time as ms-since-epoch using ms offsets
+    // (avoids nanosecond precision loss in JS Number)
     const progress = Math.min(1, state.replayProgress);
     const playheadOffsetMs = replayFlowMinOffsetMs + (replayFlowMaxOffsetMs - replayFlowMinOffsetMs) * progress;
-    // Age = time from now to the playhead's timestamp
-    // rangeStartNs is the start of the replay range; playhead is rangeStart + offsetMs into it
-    // ageMs = (tNow - rangeStartNs)/1e6 - playheadOffsetMs
-    const rangeAgeMs = (tNow - state.replayRange.startNs) / 1_000_000;
-    const ageMs = rangeAgeMs - playheadOffsetMs;
-    if (ageMs <= 0) { console.log('[ph] age<=0', {rangeAgeMs, playheadOffsetMs, ageMs, progress}); return; }
-    const totalDurationMs = totalDurationNs / 1_000_000;
-    const normalizedAge = Math.min(ageMs / totalDurationMs, 1);
-    const K = 6;
-    const px = w * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
+    const rangeStartMs = state.replayRange.startNs / 1_000_000;
+    state.replayPlayheadMs = rangeStartMs + playheadOffsetMs;
 
-    if (Math.random() < 0.01) console.log('[ph]', {ageMs: ageMs.toFixed(0), normalizedAge: normalizedAge.toFixed(4), px: px.toFixed(1), w, progress: progress.toFixed(3)});
-    // Draw the playhead line
-    ctx.beginPath();
-    ctx.moveTo(px, 0);
-    ctx.lineTo(px, h);
-    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
-    ctx.lineWidth = 1.5;
-    ctx.stroke();
-
-    // Update the replay time display
+    // Update time display
     const timeEl = document.getElementById('replay-time');
     if (timeEl) {
-        const playheadMs = tNow / 1_000_000 - ageMs;
-        const d = new Date(playheadMs);
+        const d = new Date(state.replayPlayheadMs);
         timeEl.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 }
+
 
 function drawRingParticles(ctx) {
     if (ringParticles.length === 0) return;

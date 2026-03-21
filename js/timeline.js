@@ -104,12 +104,12 @@ export function renderExponentialTimeline() {
     state.currentTime = tNow;
     const totalDurationNs = tNow - state.timeRange.start;
 
-    // Cache check — replay range and drag state trigger redraws, but NOT progress
-    // (playhead is a DOM element positioned by the replay loop, not drawn on canvas)
+    // Cache check — include playhead position (rounded to reduce redraws to ~20/sec)
     const replayKey = state.replayRange ? `${state.replayRange.startNs}-${state.replayRange.endNs}` : 'none';
     const dragKey = isDragging ? `${dragStartX}-${dragCurrentX}` : '';
     const pauseKey = state.replayPaused ? 'p' : '';
-    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}-${pauseKey}`;
+    const playheadKey = state.replayPlayheadMs > 0 ? (state.replayPlayheadMs / 500 | 0) : '';
+    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}-${pauseKey}-${playheadKey}`;
     if (cacheKey === lastCanvasKey) return;
     lastCanvasKey = cacheKey;
 
@@ -435,8 +435,17 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
     ctx.lineWidth = 1.5;
     ctx.strokeRect(left, 0, right - left, height);
 
-    // Playhead is now a DOM element positioned by the replay loop (topology.js)
-    // — no canvas redraw needed per frame.
+    // Playhead line — uses timeToX for correct logarithmic positioning
+    if (state.replayPlayheadMs > 0) {
+        const playheadNs = state.replayPlayheadMs * 1_000_000;
+        const px = timeToX(playheadNs, tNow, totalDurationNs, width);
+        ctx.beginPath();
+        ctx.moveTo(px, 0);
+        ctx.lineTo(px, height);
+        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.8)';
+        ctx.lineWidth = 1.5;
+        ctx.stroke();
+    }
 
     // PAUSED label in the selection region
     if (state.replayPaused) {
