@@ -520,12 +520,13 @@ function updateTimelinePlayhead() {
     // ageMs = (tNow - rangeStartNs)/1e6 - playheadOffsetMs
     const rangeAgeMs = (tNow - state.replayRange.startNs) / 1_000_000;
     const ageMs = rangeAgeMs - playheadOffsetMs;
-    if (ageMs <= 0) return;
+    if (ageMs <= 0) { console.log('[ph] age<=0', {rangeAgeMs, playheadOffsetMs, ageMs, progress}); return; }
     const totalDurationMs = totalDurationNs / 1_000_000;
     const normalizedAge = Math.min(ageMs / totalDurationMs, 1);
     const K = 6;
     const px = w * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
 
+    if (Math.random() < 0.01) console.log('[ph]', {ageMs: ageMs.toFixed(0), normalizedAge: normalizedAge.toFixed(4), px: px.toFixed(1), w, progress: progress.toFixed(3)});
     // Draw the playhead line
     ctx.beginPath();
     ctx.moveTo(px, 0);
