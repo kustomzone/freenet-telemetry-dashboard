@@ -483,19 +483,11 @@ export function setupTimeline(callbacks) {
 
     // --- Canvas hover for tooltips + event visualization ---
     canvas.addEventListener('mousemove', (e) => {
+        if (isDragging) return; // handled by document-level listener
+
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
-
-        // If dragging a replay range, update drag position
-        if (isDragging) {
-            dragCurrentX = x;
-            canvas.style.cursor = 'col-resize';
-            hideTooltip();
-            lastCanvasKey = null; // force redraw for highlight
-            renderExponentialTimeline();
-            return;
-        }
 
         const event = hitTest(x, y, canvas);
         if (event) {
@@ -515,50 +507,55 @@ export function setupTimeline(callbacks) {
 
     canvas.addEventListener('mouseleave', () => {
         hideTooltip();
-        canvas.style.cursor = 'crosshair';
+        if (!isDragging) {
+            canvas.style.cursor = 'crosshair';
+        }
         if (state.hoveredEvent) {
             state.hoveredEvent = null;
             if (callbacks.onEventHover) callbacks.onEventHover(null);
         }
-        // Cancel drag if mouse leaves
-        if (isDragging) {
-            isDragging = false;
-            dragStartX = null;
-            dragCurrentX = null;
-            lastCanvasKey = null;
-            renderExponentialTimeline();
-        }
     });
 
     // --- Drag to select replay range ---
+    // mousedown on canvas starts the drag
     canvas.addEventListener('mousedown', (e) => {
-        // Only left button, and only if not clicking an event
         if (e.button !== 0) return;
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;
 
-        // If clicking on an event, let the click handler deal with it
         const event = hitTest(x, y, canvas);
         if (event) return;
 
         isDragging = true;
         dragStartX = x;
         dragCurrentX = x;
-        e.preventDefault(); // prevent text selection
+        e.preventDefault();
     });
 
-    canvas.addEventListener('mouseup', (e) => {
+    // mousemove and mouseup on document so dragging works outside the canvas
+    document.addEventListener('mousemove', (e) => {
+        if (!isDragging) return;
+        const rect = canvas.getBoundingClientRect();
+        // Clamp x to canvas bounds
+        const x = Math.max(0, Math.min(canvas.clientWidth, e.clientX - rect.left));
+        dragCurrentX = x;
+        canvas.style.cursor = 'col-resize';
+        lastCanvasKey = null;
+        renderExponentialTimeline();
+    });
+
+    document.addEventListener('mouseup', (e) => {
         if (!isDragging) return;
         isDragging = false;
 
         const rect = canvas.getBoundingClientRect();
-        const x = e.clientX - rect.left;
+        // Clamp to canvas bounds
+        const x = Math.max(0, Math.min(canvas.clientWidth, e.clientX - rect.left));
         const width = canvas.clientWidth;
         const tNow = state.currentTime;
         const totalDurationNs = tNow - state.timeRange.start;
 
-        // Convert pixel range to time range
         const t1 = xToTime(dragStartX, tNow, totalDurationNs, width);
         const t2 = xToTime(x, tNow, totalDurationNs, width);
         const startNs = Math.min(t1, t2);
@@ -566,10 +563,9 @@ export function setupTimeline(callbacks) {
 
         dragStartX = null;
         dragCurrentX = null;
+        canvas.style.cursor = 'crosshair';
 
-        // Minimum 2px drag to distinguish from click
-        if (Math.abs(t1 - t2) < 1_000_000_000) { // < 1 second
-            // Too small — treat as click to clear
+        if (Math.abs(t1 - t2) < 1_000_000_000) {
             state.replayRange = null;
             if (callbacks.onReplayRange) callbacks.onReplayRange(null);
             lastCanvasKey = null;
@@ -578,7 +574,7 @@ export function setupTimeline(callbacks) {
         }
 
         state.replayRange = { startNs, endNs };
-        suppressNextClick = true; // prevent the click event from immediately clearing it
+        suppressNextClick = true;
         lastCanvasKey = null;
         renderExponentialTimeline();
         if (callbacks.onReplayRange) callbacks.onReplayRange({ startNs, endNs });
