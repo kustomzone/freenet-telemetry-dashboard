@@ -65,6 +65,7 @@ export const state = {
 
     // Replay: selected time range for looping particle animation
     replayRange: null,  // {startNs, endNs} or null
+    replayProgress: -1, // 0..1 cycle progress, -1 if not replaying
 
     // Network state from server
     initialStatePeers: [],

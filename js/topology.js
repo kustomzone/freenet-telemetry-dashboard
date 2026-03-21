@@ -308,11 +308,13 @@ export function stopReplay() {
     }
     replayFlows = [];
     ringParticles.length = 0;
+    state.replayProgress = -1;
 }
 
 export function isReplaying() {
     return replayFlows.length > 0;
 }
+
 
 function startReplayLoop() {
     if (replayFrame) return;
@@ -336,6 +338,9 @@ function startReplayLoop() {
         }
 
         const cycleTime = now - replayLoopStart;
+
+        // Update progress for timeline playhead
+        state.replayProgress = Math.min(1, cycleTime / replayLoopDuration);
 
         // Spawn particles whose offset has been reached in this cycle
         for (const flow of replayFlows) {
