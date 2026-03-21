@@ -1986,8 +1986,8 @@ def get_history():
         "transactions": tx_list,
         "peer_presence": sorted_presence,
         "time_range": {
-            "start": events_list[0]["timestamp"] if events_list else 0,
-            "end": events_list[-1]["timestamp"] if events_list else 0,
+            "start": all_events[0]["timestamp"] if all_events else 0,
+            "end": all_events[-1]["timestamp"] if all_events else 0,
         }
     }
 
