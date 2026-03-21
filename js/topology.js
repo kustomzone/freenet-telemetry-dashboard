@@ -294,10 +294,11 @@ export function startReplay(flows, peers) {
     const offsetRange = maxOffset - minOffset;
     replayRealDurationMs = offsetRange || 1;
 
-    // Store flow offsets for playhead mapping (in ms, avoids nanosecond
-    // precision loss in JavaScript Number which can't represent ns exactly)
-    replayFlowMinOffsetMs = minOffset;
-    replayFlowMaxOffsetMs = maxOffset;
+    // Playhead sweeps the full replay range (0 to end), not just the flow span.
+    // This way it covers the entire timeline including gaps where no flows exist.
+    replayFlowMinOffsetMs = 0;
+    const rangeEndMs = state.replayRange ? (state.replayRange.endNs - state.replayRange.startNs) / 1_000_000 : maxOffset;
+    replayFlowMaxOffsetMs = Math.max(maxOffset, rangeEndMs);
     // Compress the actual flow span (not the full range) to 3-8s
     const compressedDuration = Math.min(8000, Math.max(3000, offsetRange * 0.5));
     replayActiveDuration = compressedDuration;

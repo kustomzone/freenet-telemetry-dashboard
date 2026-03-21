@@ -187,23 +187,32 @@ function drawTicks(ctx, tNow, totalDurationNs, width, height) {
     ctx.font = '10px "JetBrains Mono", monospace';
     ctx.textAlign = 'center';
 
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+
     for (const tick of ticks) {
         if (tick.ageNs > totalDurationNs) continue;
         const x = timeToX(tNow - tick.ageNs, tNow, totalDurationNs, width);
         if (x < 15 || x > width - 15) continue;
 
-        // Tick mark (theme-aware: white for dark mode, dark for light mode)
-        const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.15)';
+        // Tick mark from top
+        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(x, 0);
-        ctx.lineTo(x, 6);
+        ctx.lineTo(x, 8);
         ctx.stroke();
 
-        // Label
-        ctx.fillStyle = isLight ? 'rgba(0, 0, 0, 0.45)' : 'rgba(255, 255, 255, 0.35)';
-        ctx.fillText(tick.label, x, height - 2);
+        // Label at top with background pill for readability
+        ctx.font = '9px "JetBrains Mono", monospace';
+        const metrics = ctx.measureText(tick.label);
+        const labelW = metrics.width + 6;
+        const labelH = 12;
+        const lx = x - labelW / 2;
+        ctx.fillStyle = isLight ? 'rgba(255, 255, 255, 0.8)' : 'rgba(13, 17, 23, 0.85)';
+        ctx.fillRect(lx, 0, labelW, labelH);
+        ctx.fillStyle = isLight ? 'rgba(0, 0, 0, 0.6)' : 'rgba(255, 255, 255, 0.6)';
+        ctx.textBaseline = 'top';
+        ctx.fillText(tick.label, x, 1);
     }
 }
 
