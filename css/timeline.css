@@ -106,7 +106,7 @@
             background: var(--bg-secondary);
             border: 1px solid var(--border-color);
             border-radius: 12px;
-            overflow: hidden;
+            overflow: visible;
             cursor: crosshair;
         }
 
@@ -116,6 +116,8 @@
             left: 50px; /* space for labels */
             right: 0;
             bottom: 0;
+            overflow: hidden;
+            border-radius: 0 12px 12px 0;
         }
 
         #timeline-canvas {
