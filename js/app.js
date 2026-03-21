@@ -129,7 +129,7 @@ function _updateViewImpl() {
     }
 
     updateRingSVG(peers, connections, subscriberPeerIds, {
-        selectPeer: (peerId) => selectPeer(peerId, updateView, updateURL)
+        selectPeer: (peerId) => { selectPeer(peerId, updateView, updateURL); refreshReplay(); }
     }, treeData);
 
     // Update stats
@@ -173,6 +173,7 @@ const updateView = scheduleUpdateView;
  */
 function selectContract(contractKey) {
     contractsSelectContract(contractKey, updateView, updateURL);
+    refreshReplay(); // re-collect flows with new contract filter
 }
 
 /**
@@ -180,6 +181,7 @@ function selectContract(contractKey) {
  */
 function clearAllFilters() {
     eventsClearAllFilters(updateView, updateURL);
+    refreshReplay();
 }
 
 /**
@@ -215,10 +217,17 @@ function startFullReplay() {
     if (state.timeRange.start === 0 || state.allEvents.length === 0) return;
     const range = { startNs: state.timeRange.start, endNs: state.timeRange.end };
     state.replayRange = range;
-    if (_cachedPeers.size > 0) {
-        const flows = collectFlowsForRange(range.startNs, range.endNs);
-        startReplay(flows, _cachedPeers);
-    }
+    refreshReplay();
+}
+
+/**
+ * Re-collect flows for the current replay range with current filters.
+ * Call this when contract/peer filters change while replay is active.
+ */
+function refreshReplay() {
+    if (!state.replayRange || _cachedPeers.size === 0) return;
+    const flows = collectFlowsForRange(state.replayRange.startNs, state.replayRange.endNs);
+    startReplay(flows, _cachedPeers);
 }
 
 /**
