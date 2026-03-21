@@ -478,7 +478,7 @@ function updateTimelinePlayhead() {
     const oldEl = document.getElementById('replay-playhead');
     if (oldEl) oldEl.style.display = 'none';
 
-    if (state.replayProgress < 0 || !state.replayRange) {
+    if (state.replayProgress < 0 || !state.replayRange) { if (!state.replayRange) console.log('[playhead] no replayRange');
         if (_playheadCanvas) {
             const ctx = _playheadCanvas.getContext('2d');
             ctx.clearRect(0, 0, _playheadCanvas.width, _playheadCanvas.height);
@@ -518,7 +518,7 @@ function updateTimelinePlayhead() {
 
     // Same logarithmic formula as timeToX in timeline.js
     const age = tNow - playheadNs;
-    if (age <= 0) return;
+    if (age <= 0) { console.log('[playhead] age<=0', {tNow, playheadNs, flowStart, flowEnd, progress: state.replayProgress}); return; }
     const normalizedAge = Math.min(age / totalDurationNs, 1);
     const K = 6;
     const px = w * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
