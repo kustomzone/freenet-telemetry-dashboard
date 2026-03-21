@@ -297,11 +297,16 @@ function handleMessage(data, callbacks) {
     } else if (data.type === 'event_batch') {
         // Server-side batched events (performance optimization)
         const events = data.events || [];
-        const MAX_EVENTS = 10000;
+        const MAX_EVENTS = 25000;
 
         for (const event of events) {
             if (state.allEvents.length >= MAX_EVENTS) {
-                state.allEvents.splice(0, MAX_EVENTS * 0.1);
+                const removeCount = Math.floor(MAX_EVENTS * 0.1);
+                state.allEvents.splice(0, removeCount);
+                // Update timeRange.start so timeline doesn't show empty space
+                if (state.allEvents.length > 0) {
+                    state.timeRange.start = state.allEvents[0].timestamp;
+                }
             }
             state.allEvents.push(event);
 
