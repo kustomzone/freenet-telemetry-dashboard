@@ -108,7 +108,8 @@ export function renderExponentialTimeline() {
     const replayKey = state.replayRange ? `${state.replayRange.startNs}-${state.replayRange.endNs}` : 'none';
     const dragKey = isDragging ? `${dragStartX}-${dragCurrentX}` : '';
     const pauseKey = state.replayPaused ? 'p' : '';
-    const playheadKey = state.replayPlayheadMs > 0 ? (state.replayPlayheadMs / 500 | 0) : '';
+    // During replay, redraw ~30 times/sec for smooth playhead sweep
+    const playheadKey = state.replayPlayheadMs > 0 ? (performance.now() / 33 | 0) : '';
     const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}-${pauseKey}-${playheadKey}`;
     if (cacheKey === lastCanvasKey) return;
     lastCanvasKey = cacheKey;

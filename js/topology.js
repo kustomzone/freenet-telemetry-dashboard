@@ -8,6 +8,7 @@
 
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { hashToColor, contractKeyToLocation, getEventClass } from './utils.js';
+import { renderExponentialTimeline } from './timeline.js';
 
 // Convert ring location (0-1) to SVG coordinates
 export function locationToXY(location) {
@@ -479,6 +480,9 @@ function updateTimelinePlayhead() {
         const d = new Date(state.replayPlayheadMs);
         timeEl.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
+
+    // Trigger timeline redraw to show the playhead line
+    renderExponentialTimeline();
 }
 
 
