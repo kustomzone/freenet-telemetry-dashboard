@@ -438,6 +438,17 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
         ctx.lineWidth = 1.5;
         ctx.stroke();
     }
+
+    // Speed label (shown briefly after scroll wheel adjustment)
+    if (state.replaySpeedShownUntil > performance.now()) {
+        const speedLabel = `${state.replaySpeed.toFixed(1)}×`;
+        const centerX = (left + right) / 2;
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.8)' : 'rgba(0, 180, 255, 0.8)';
+        ctx.fillText(speedLabel, centerX, 2);
+    }
 }
 
 // ============================================================================
@@ -580,7 +591,7 @@ export function setupTimeline(callbacks) {
         if (callbacks.onReplayRange) callbacks.onReplayRange({ startNs, endNs });
     });
 
-    // --- Canvas click: select event or clear replay ---
+    // --- Canvas click: select event, or reset replay to full range ---
     canvas.addEventListener('click', (e) => {
         if (suppressNextClick) {
             suppressNextClick = false;
@@ -595,29 +606,44 @@ export function setupTimeline(callbacks) {
             if (callbacks.selectEvent) {
                 callbacks.selectEvent(event);
             }
-        } else if (state.replayRange) {
-            // Click on background clears replay range
-            state.replayRange = null;
+        } else {
+            // Click on empty space: reset replay to full range
             if (callbacks.onReplayRange) callbacks.onReplayRange(null);
             lastCanvasKey = null;
             renderExponentialTimeline();
-        } else {
-            // Click on background: clear event selection
-            if (callbacks.selectEvent) {
-                callbacks.selectEvent(null);
-            }
         }
     });
 
-    // Escape clears replay range
+    // --- Double-click: stop replay entirely ---
+    canvas.addEventListener('dblclick', (e) => {
+        const rect = canvas.getBoundingClientRect();
+        const x = e.clientX - rect.left;
+        const y = e.clientY - rect.top;
+        if (hitTest(x, y, canvas)) return; // don't interfere with event clicks
+
+        state.replayRange = null;
+        if (callbacks.onStopReplay) callbacks.onStopReplay();
+        lastCanvasKey = null;
+        renderExponentialTimeline();
+    });
+
+    // Escape stops replay
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && state.replayRange) {
             state.replayRange = null;
-            if (callbacks.onReplayRange) callbacks.onReplayRange(null);
+            if (callbacks.onStopReplay) callbacks.onStopReplay();
             lastCanvasKey = null;
             renderExponentialTimeline();
         }
     });
+
+    // Scroll wheel on timeline adjusts replay speed
+    canvas.addEventListener('wheel', (e) => {
+        if (!state.replayRange) return;
+        e.preventDefault();
+        const factor = e.deltaY < 0 ? 1.25 : 0.8; // scroll up = faster
+        if (callbacks.onSpeedChange) callbacks.onSpeedChange(factor);
+    }, { passive: false });
 
     // --- Contract search input ---
     const contractSearch = document.getElementById('contract-search');

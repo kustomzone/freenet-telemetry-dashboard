@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, startReplay, stopReplay, isReplaying, setParticleRedrawCallback } from './topology.js';
+import { updateRingSVG, startReplay, stopReplay, isReplaying, setParticleRedrawCallback, adjustReplaySpeed } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
@@ -209,12 +209,26 @@ function handleEventHover(event) {
 }
 
 /**
+ * Start replay for the full timeline range.
+ */
+function startFullReplay() {
+    if (state.timeRange.start === 0 || state.allEvents.length === 0) return;
+    const range = { startNs: state.timeRange.start, endNs: state.timeRange.end };
+    state.replayRange = range;
+    if (_cachedPeers.size > 0) {
+        const flows = collectFlowsForRange(range.startNs, range.endNs);
+        startReplay(flows, _cachedPeers);
+    }
+}
+
+/**
  * Handle replay range selection from timeline drag.
- * Collects message flows for the range and starts looping replay.
+ * null = reset to full range (not stop).
  */
 function handleReplayRange(range) {
     if (!range) {
-        stopReplay();
+        // Reset to full range instead of stopping
+        startFullReplay();
         return;
     }
     if (_cachedPeers.size === 0) return;
@@ -305,7 +319,13 @@ setupTimeline({
     renderContractsList: renderContractsList,
     selectEvent: handleEventClick,
     onEventHover: handleEventHover,
-    onReplayRange: handleReplayRange
+    onReplayRange: handleReplayRange,
+    onStopReplay: () => { stopReplay(); },
+    onSpeedChange: (factor) => {
+        const newSpeed = adjustReplaySpeed(factor);
+        state.replaySpeed = newSpeed;
+        state.replaySpeedShownUntil = performance.now() + 1500; // show for 1.5s
+    }
 });
 
 // Connect to WebSocket
@@ -323,6 +343,8 @@ connect({
         }
         // Show the Find My Peer button if user is a peer
         showFindMyPeerButton();
+        // Auto-start full-range replay once data is loaded
+        startFullReplay();
     },
     onMetricsData: () => {
         // Update chart if performance tab is active

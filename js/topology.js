@@ -204,9 +204,10 @@ const PARTICLE_DURATION = 800;  // ms per particle travel
 
 // Replay loop state
 let replayFlows = [];           // [{fromPos, toPos, cp, color, offsetMs}] pre-resolved
-let replayLoopDuration = 0;     // total loop duration in ms
+let replayLoopDuration = 0;     // base loop duration in ms (before speed multiplier)
 let replayLoopStart = 0;        // performance.now() when current loop cycle began
 let replayFrame = null;         // rAF handle
+let replaySpeed = 1.0;          // 0.25x to 4x
 let _scheduleRedraw = null;
 
 export function setParticleRedrawCallback(cb) {
@@ -315,6 +316,19 @@ export function isReplaying() {
     return replayFlows.length > 0;
 }
 
+/**
+ * Adjust replay speed. factor is multiplied into current speed.
+ * Returns the new speed for display.
+ */
+export function adjustReplaySpeed(factor) {
+    replaySpeed = Math.max(0.25, Math.min(4, replaySpeed * factor));
+    return replaySpeed;
+}
+
+export function getReplaySpeed() {
+    return replaySpeed;
+}
+
 
 function startReplayLoop() {
     if (replayFrame) return;
@@ -329,10 +343,11 @@ function startReplayLoop() {
         }
 
         const now = performance.now();
+        const effectiveDuration = replayLoopDuration / replaySpeed;
         const elapsed = now - replayLoopStart;
 
         // Loop: restart when the cycle completes
-        if (elapsed >= replayLoopDuration) {
+        if (elapsed >= effectiveDuration) {
             replayLoopStart = now;
             ringParticles.length = 0;
         }
@@ -340,19 +355,19 @@ function startReplayLoop() {
         const cycleTime = now - replayLoopStart;
 
         // Update progress for timeline playhead
-        state.replayProgress = Math.min(1, cycleTime / replayLoopDuration);
+        state.replayProgress = Math.min(1, cycleTime / effectiveDuration);
 
-        // Spawn particles whose offset has been reached in this cycle
+        // Scale offsets by speed
+        const spawnWindow = 50 / replaySpeed;
         for (const flow of replayFlows) {
-            if (cycleTime >= flow.normalizedOffset && cycleTime < flow.normalizedOffset + 50) {
-                // Check if we already spawned this flow in this cycle
-                // (50ms window means we might hit it across 3 frames at 60fps)
-                if (!flow._lastSpawn || (now - flow._lastSpawn) > replayLoopDuration * 0.9) {
+            const scaledOffset = flow.normalizedOffset / replaySpeed;
+            if (cycleTime >= scaledOffset && cycleTime < scaledOffset + spawnWindow) {
+                if (!flow._lastSpawn || (now - flow._lastSpawn) > effectiveDuration * 0.9) {
                     flow._lastSpawn = now;
                     ringParticles.push({
                         fromPos: flow.fromPos, toPos: flow.toPos,
                         cp: flow.cp, color: flow.color,
-                        startTime: now, duration: PARTICLE_DURATION
+                        startTime: now, duration: PARTICLE_DURATION / Math.sqrt(replaySpeed)
                     });
                 }
             }
