@@ -202,10 +202,16 @@
                     <span class="timeline-date" id="playhead-date"></span>
                 </div>
                 <span id="replay-time" class="replay-time"></span>
-                <button id="replay-pause-btn" class="replay-pause-btn" title="Pause/resume replay (Space)">
-                    <span class="replay-pause-label">pause</span>
-                    <span class="replay-pause-hint">space</span>
-                </button>
+                <div class="replay-controls">
+                    <button id="replay-slower-btn" class="replay-ctrl-btn" title="Slower (−50%)">−</button>
+                    <span id="replay-speed-label" class="replay-speed-label">1.0×</span>
+                    <button id="replay-faster-btn" class="replay-ctrl-btn" title="Faster (+50%)">+</button>
+                    <button id="replay-realtime-btn" class="replay-ctrl-btn replay-rt-btn" title="Real-time speed">1:1</button>
+                    <button id="replay-pause-btn" class="replay-ctrl-btn replay-pause" title="Pause/resume (Space)">
+                        <span class="replay-pause-label">pause</span>
+                        <span class="replay-pause-hint">space</span>
+                    </button>
+                </div>
             </div>
             <div class="timeline" id="timeline">
                 <div class="timeline-lane-labels">

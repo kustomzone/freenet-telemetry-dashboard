@@ -208,9 +208,10 @@ const PARTICLE_DURATION = 800;  // ms per particle travel
 // Replay loop state
 let replayFlows = [];           // [{fromPos, toPos, cp, color, offsetMs}] pre-resolved
 let replayLoopDuration = 0;     // base loop duration in ms (before speed multiplier)
+let replayRealDurationMs = 0;   // actual time range in ms (for computing real-time speed)
 let replayLoopStart = 0;        // performance.now() when current loop cycle began
 let replayFrame = null;         // rAF handle
-let replaySpeed = 1.0;          // 0.25x to 4x
+let replaySpeed = 1.0;          // speed multiplier
 let _scheduleRedraw = null;
 
 export function setParticleRedrawCallback(cb) {
@@ -285,6 +286,7 @@ export function startReplay(flows, peers) {
     // The replay takes 3-8 seconds depending on the number of flows,
     // plus PARTICLE_DURATION so the last particle finishes before the loop restarts.
     const maxOffset = Math.max(...replayFlows.map(f => f.offsetMs));
+    replayRealDurationMs = maxOffset;
     // Compress to 3-8s replay window
     const compressedDuration = Math.min(8000, Math.max(3000, maxOffset * 0.5));
     replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500; // +500ms pause between loops
@@ -358,8 +360,21 @@ export function adjustReplaySpeed(factor) {
     return replaySpeed;
 }
 
+export function setReplaySpeed(speed) {
+    replaySpeed = Math.max(0.01, speed);
+    return replaySpeed;
+}
+
 export function getReplaySpeed() {
     return replaySpeed;
+}
+
+/**
+ * Returns the speed value that would make replay run in real-time.
+ */
+export function getRealtimeSpeed() {
+    if (replayRealDurationMs <= 0 || replayLoopDuration <= 0) return 1;
+    return replayLoopDuration / replayRealDurationMs;
 }
 
 

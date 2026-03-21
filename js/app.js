@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, startReplay, stopReplay, isReplaying, adjustReplaySpeed, toggleReplayPause } from './topology.js';
+import { updateRingSVG, startReplay, stopReplay, isReplaying, adjustReplaySpeed, setReplaySpeed, getReplaySpeed, getRealtimeSpeed, toggleReplayPause } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
@@ -338,9 +338,8 @@ setupTimeline({
         }
     },
     onSpeedChange: (factor) => {
-        const newSpeed = adjustReplaySpeed(factor);
-        state.replaySpeed = newSpeed;
-        state.replaySpeedShownUntil = performance.now() + 1500;
+        adjustReplaySpeed(factor);
+        updateSpeedUI();
     }
 });
 
@@ -376,7 +375,30 @@ connect({
 // Initialize transfer chart
 initTransferChart();
 
-// Pause button
+// Replay controls
+function updateSpeedUI() {
+    const speed = getReplaySpeed();
+    state.replaySpeed = speed;
+    const label = document.getElementById('replay-speed-label');
+    if (label) {
+        // Show as multiplier, or "1:1" if at realtime
+        const rt = getRealtimeSpeed();
+        if (Math.abs(speed - rt) / rt < 0.05) {
+            label.textContent = '1:1';
+        } else if (speed >= 1) {
+            label.textContent = speed.toFixed(1) + '×';
+        } else {
+            label.textContent = speed.toFixed(2) + '×';
+        }
+    }
+    // Highlight realtime button when active
+    const rtBtn = document.getElementById('replay-realtime-btn');
+    if (rtBtn) {
+        const rt = getRealtimeSpeed();
+        rtBtn.classList.toggle('active', Math.abs(speed - rt) / rt < 0.05);
+    }
+}
+
 const pauseBtn = document.getElementById('replay-pause-btn');
 if (pauseBtn) {
     pauseBtn.addEventListener('click', () => {
@@ -384,6 +406,30 @@ if (pauseBtn) {
         state.replayPaused = paused;
         pauseBtn.querySelector('.replay-pause-label').textContent = paused ? 'play' : 'pause';
         pauseBtn.classList.toggle('active', paused);
+    });
+}
+
+const slowerBtn = document.getElementById('replay-slower-btn');
+if (slowerBtn) {
+    slowerBtn.addEventListener('click', () => {
+        adjustReplaySpeed(0.5);
+        updateSpeedUI();
+    });
+}
+
+const fasterBtn = document.getElementById('replay-faster-btn');
+if (fasterBtn) {
+    fasterBtn.addEventListener('click', () => {
+        adjustReplaySpeed(2);
+        updateSpeedUI();
+    });
+}
+
+const realtimeBtn = document.getElementById('replay-realtime-btn');
+if (realtimeBtn) {
+    realtimeBtn.addEventListener('click', () => {
+        setReplaySpeed(getRealtimeSpeed());
+        updateSpeedUI();
     });
 }
 

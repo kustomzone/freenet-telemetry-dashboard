@@ -428,17 +428,14 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
     // Playhead is now a DOM element positioned by the replay loop (topology.js)
     // — no canvas redraw needed per frame.
 
-    // Status label: PAUSED or speed change
-    const centerX = (left + right) / 2;
-    ctx.font = 'bold 11px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
-    ctx.textBaseline = 'top';
-    ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.8)' : 'rgba(0, 180, 255, 0.8)';
-
+    // PAUSED label in the selection region
     if (state.replayPaused) {
-        ctx.fillText('⏸ PAUSED', centerX, 2);
-    } else if (state.replaySpeedShownUntil > performance.now()) {
-        ctx.fillText(`${state.replaySpeed.toFixed(1)}×`, centerX, 2);
+        const centerX = (left + right) / 2;
+        ctx.font = 'bold 11px "JetBrains Mono", monospace';
+        ctx.textAlign = 'center';
+        ctx.textBaseline = 'top';
+        ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.8)' : 'rgba(0, 180, 255, 0.8)';
+        ctx.fillText('PAUSED', centerX, 2);
     }
 }
 
