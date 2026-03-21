@@ -5,7 +5,6 @@
 
 import { state } from './state.js';
 import { formatTime, formatDate, getEventClass, getEventLabel } from './utils.js';
-import { getTransferEvents } from './transfers.js';
 
 // Time window constants (kept for compatibility with other modules)
 export const MIN_TIME_WINDOW_NS = 1 * 60 * 1_000_000_000;
@@ -386,32 +385,6 @@ export function collectFlowsForRange(startNs, endNs) {
         }
     }
 
-    // Add transfer flows (gateway ↔ remote peer), sampled to avoid overwhelming
-    const gatewayId = state.gatewayPeerId;
-    if (gatewayId && !state.selectedContract) {
-        const transfers = getTransferEvents();
-        // Collect eligible transfers first
-        const eligible = [];
-        for (const t of transfers) {
-            if (t.timestamp < startNs || t.timestamp > endNs) continue;
-            if (!t.peer_id) continue;
-            if (state.selectedPeerId && t.peer_id !== state.selectedPeerId && gatewayId !== state.selectedPeerId) continue;
-            eligible.push(t);
-        }
-        // Sample: keep at most ~30 transfer flows spread across the range
-        const MAX_TRANSFER_FLOWS = 30;
-        const step = eligible.length > MAX_TRANSFER_FLOWS ? Math.floor(eligible.length / MAX_TRANSFER_FLOWS) : 1;
-        for (let i = 0; i < eligible.length; i += step) {
-            const t = eligible[i];
-            const fromPeer = t.direction === 'Send' ? gatewayId : t.peer_id;
-            const toPeer = t.direction === 'Send' ? t.peer_id : gatewayId;
-            flows.push({
-                fromPeer, toPeer,
-                eventType: 'transfer',
-                offsetMs: Math.max(0, (t.timestamp - startNs) / 1_000_000)
-            });
-        }
-    }
 
     return flows;
 }
