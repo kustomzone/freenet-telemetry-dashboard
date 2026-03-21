@@ -292,24 +292,24 @@ export function startReplay(flows, peers) {
     // plus PARTICLE_DURATION so the last particle finishes before the loop restarts.
     const maxOffset = Math.max(...replayFlows.map(f => f.offsetMs));
     const minOffset = Math.min(...replayFlows.map(f => f.offsetMs));
-    replayRealDurationMs = maxOffset;
+    const offsetRange = maxOffset - minOffset;
+    replayRealDurationMs = offsetRange || 1;
 
     // Store flow time range for playhead mapping.
-    // Progress 0 = first particle (offsetMs=0 = range start),
-    // Progress 1 = last particle (offsetMs=maxOffset).
+    // Progress 0 = first flow's timestamp, Progress 1 = last flow's timestamp.
     if (state.replayRange) {
-        replayFlowStartNs = state.replayRange.startNs;
+        replayFlowStartNs = state.replayRange.startNs + minOffset * 1_000_000;
         replayFlowEndNs = state.replayRange.startNs + maxOffset * 1_000_000;
     }
-    // Compress to 3-8s replay window
-    const compressedDuration = Math.min(8000, Math.max(3000, maxOffset * 0.5));
+    // Compress the actual flow span (not the full range) to 3-8s
+    const compressedDuration = Math.min(8000, Math.max(3000, offsetRange * 0.5));
     replayActiveDuration = compressedDuration;
-    replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500; // +500ms pause between loops
+    replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500;
 
-    // Normalize offsets to compressed duration
-    if (maxOffset > 0) {
+    // Normalize offsets to [0, compressedDuration] based on flow span
+    if (offsetRange > 0) {
         for (const f of replayFlows) {
-            f.normalizedOffset = (f.offsetMs / maxOffset) * compressedDuration;
+            f.normalizedOffset = ((f.offsetMs - minOffset) / offsetRange) * compressedDuration;
         }
     } else {
         // All at the same time — stagger slightly
