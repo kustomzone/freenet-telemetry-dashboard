@@ -210,8 +210,8 @@ let replayFlows = [];           // [{fromPos, toPos, cp, color, offsetMs}] pre-r
 let replayLoopDuration = 0;     // full loop duration in ms including padding (before speed multiplier)
 let replayActiveDuration = 0;   // active portion in ms (just the compressed event range, no padding)
 let replayRealDurationMs = 0;   // actual time range in ms (for computing real-time speed)
-let replayFlowStartNs = 0;     // timestamp of earliest flow (for playhead mapping)
-let replayFlowEndNs = 0;       // timestamp of latest flow (for playhead mapping)
+let replayFlowMinOffsetMs = 0;  // earliest flow offset from range start (ms)
+let replayFlowMaxOffsetMs = 0; // latest flow offset from range start (ms)
 let replayLoopStart = 0;        // performance.now() when current loop cycle began
 let replayFrame = null;         // rAF handle
 let replaySpeed = 1.0;          // speed multiplier
@@ -293,12 +293,10 @@ export function startReplay(flows, peers) {
     const offsetRange = maxOffset - minOffset;
     replayRealDurationMs = offsetRange || 1;
 
-    // Store flow time range for playhead mapping.
-    // Progress 0 = first flow's timestamp, Progress 1 = last flow's timestamp.
-    if (state.replayRange) {
-        replayFlowStartNs = state.replayRange.startNs + minOffset * 1_000_000;
-        replayFlowEndNs = state.replayRange.startNs + maxOffset * 1_000_000;
-    }
+    // Store flow offsets for playhead mapping (in ms, avoids nanosecond
+    // precision loss in JavaScript Number which can't represent ns exactly)
+    replayFlowMinOffsetMs = minOffset;
+    replayFlowMaxOffsetMs = maxOffset;
     // Compress the actual flow span (not the full range) to 3-8s
     const compressedDuration = Math.min(8000, Math.max(3000, offsetRange * 0.5));
     replayActiveDuration = compressedDuration;
@@ -328,8 +326,8 @@ export function stopReplay() {
     replayFlows = [];
     ringParticles.length = 0;
     state.replayProgress = -1;
-    replayFlowStartNs = 0;
-    replayFlowEndNs = 0;
+    replayFlowMinOffsetMs = 0;
+    replayFlowMaxOffsetMs = 0;
     replayPaused = false;
     // Clear overlay canvases
     if (particleCanvas) {
@@ -506,20 +504,25 @@ function updateTimelinePlayhead() {
     ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
     ctx.clearRect(0, 0, w, h);
 
-    // Use the same tNow and formula as renderExponentialTimeline
-    const tNow = Date.now() * 1_000_000;
+    // Use the same tNow as renderExponentialTimeline so the playhead
+    // aligns exactly with the event bars (both use same time reference)
+    const tNow = state.currentTime || Date.now() * 1_000_000;
     const totalDurationNs = tNow - state.timeRange.start;
     if (totalDurationNs <= 0) return;
 
-    // Map progress to actual flow timestamps
-    const flowStart = replayFlowStartNs || state.replayRange.startNs;
-    const flowEnd = replayFlowEndNs || state.replayRange.endNs;
-    const playheadNs = flowStart + (flowEnd - flowStart) * Math.min(1, state.replayProgress);
-
-    // Same logarithmic formula as timeToX in timeline.js
-    const age = tNow - playheadNs;
-    if (age <= 0) { console.log('[playhead] age<=0', {tNow, playheadNs, flowStart, flowEnd, progress: state.replayProgress}); return; }
-    const normalizedAge = Math.min(age / totalDurationNs, 1);
+    // Compute playhead age (ms from now) using millisecond offsets to avoid
+    // nanosecond precision loss in JS Number (which can't represent ns exactly).
+    // progress maps linearly across [minOffset, maxOffset] from range start.
+    const progress = Math.min(1, state.replayProgress);
+    const playheadOffsetMs = replayFlowMinOffsetMs + (replayFlowMaxOffsetMs - replayFlowMinOffsetMs) * progress;
+    // Age = time from now to the playhead's timestamp
+    // rangeStartNs is the start of the replay range; playhead is rangeStart + offsetMs into it
+    // ageMs = (tNow - rangeStartNs)/1e6 - playheadOffsetMs
+    const rangeAgeMs = (tNow - state.replayRange.startNs) / 1_000_000;
+    const ageMs = rangeAgeMs - playheadOffsetMs;
+    if (ageMs <= 0) return;
+    const totalDurationMs = totalDurationNs / 1_000_000;
+    const normalizedAge = Math.min(ageMs / totalDurationMs, 1);
     const K = 6;
     const px = w * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
 
@@ -534,7 +537,8 @@ function updateTimelinePlayhead() {
     // Update the replay time display
     const timeEl = document.getElementById('replay-time');
     if (timeEl) {
-        const d = new Date(playheadNs / 1_000_000);
+        const playheadMs = tNow / 1_000_000 - ageMs;
+        const d = new Date(playheadMs);
         timeEl.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 }
