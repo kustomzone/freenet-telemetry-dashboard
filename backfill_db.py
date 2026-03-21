@@ -2,9 +2,10 @@
 """
 Fast bulk import of telemetry JSONL into SQLite.
 
-Skips the full process_record pipeline — only extracts fields needed for
-events, transactions, tx_events, and flows tables. Runs in ~30 seconds
-for a 4.6GB file using batch inserts and minimal parsing.
+WARNING: This script DELETES and recreates the database from scratch.
+Only use it for initial setup or disaster recovery. Normal operations
+should never need this — the ws_server writes events to SQLite in
+real-time and resumes from stored offset on restart.
 
 Usage: ./venv/bin/python3 backfill_db.py
 """
