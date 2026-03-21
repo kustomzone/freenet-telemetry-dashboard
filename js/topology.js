@@ -265,6 +265,11 @@ export function spawnRingParticle(fromId, toId, eventType, peers) {
     startRingParticleLoop();
 }
 
+/** Returns true if there are active particles (used to suppress static hover line). */
+export function hasActiveParticles() {
+    return ringParticles.length > 0;
+}
+
 function drawRingParticles(ctx) {
     if (ringParticles.length === 0) return;
     const now = performance.now();
@@ -282,20 +287,42 @@ function drawRingParticles(ctx) {
         // Ease-out for smooth deceleration along the spline
         const eased = 1 - (1 - t) * (1 - t);
         const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
-        const alpha = 1 - t * 0.6;
+        const alpha = 1 - t * 0.5;
 
-        // Glow
+        // Trail: draw a fading line from start to current position
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 2;
+        ctx.globalAlpha = alpha * 0.3;
+        // Draw the spline segment from start up to current t
+        const TRAIL_STEPS = 8;
+        ctx.moveTo(p.fromPos.x, p.fromPos.y);
+        for (let s = 1; s <= TRAIL_STEPS; s++) {
+            const st = eased * (s / TRAIL_STEPS);
+            const sp = quadBezierAt(p.fromPos, p.cp, p.toPos, st);
+            ctx.lineTo(sp.x, sp.y);
+        }
+        ctx.stroke();
+
+        // Outer glow
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 12, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
-        ctx.globalAlpha = alpha * 0.25;
+        ctx.globalAlpha = alpha * 0.15;
         ctx.fill();
 
         // Core dot
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.globalAlpha = alpha;
+        ctx.fill();
+
+        // Bright center
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+        ctx.fillStyle = '#ffffff';
+        ctx.globalAlpha = alpha * 0.9;
         ctx.fill();
     }
     ctx.globalAlpha = 1;
@@ -734,7 +761,10 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
         stopTreeEdgeAnimation();
         drawConnectionsCanvas(ctx, peers, connections, subscriberPeerIds);
         drawSelectedTransactionArrows(ctx, peers);
-        drawHoveredEventLine(ctx, peers);
+        // Suppress static hover line when particles are animating — particles show the flow
+        if (ringParticles.length === 0) {
+            drawHoveredEventLine(ctx, peers);
+        }
     }
 
     // Draw peers on canvas and build hit-test array
