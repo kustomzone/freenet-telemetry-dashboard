@@ -252,7 +252,7 @@ function quadBezierAt(from, cp, to, t) {
 
 /**
  * Start looping replay of message flows.
- * flows: [{fromPeer, toPeer, eventType, offsetMs}] from collectFlowsForRange
+ * flows: [{fromPeer, toPeer, eventType, offsetMs}] from server query_flows
  * peers: current peer Map from updateView
  */
 export function startReplay(flows, peers) {

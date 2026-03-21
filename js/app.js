@@ -10,8 +10,7 @@ import { updateRingSVG, startReplay, stopReplay, isReplaying, adjustReplaySpeed,
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
-    addEventMarker, renderExponentialTimeline,
-    collectFlowsForRange
+    addEventMarker, renderExponentialTimeline
 } from './timeline.js';
 import {
     selectEvent, selectPeer, togglePeerFilter, toggleTxFilter,
@@ -227,22 +226,17 @@ function startFullReplay() {
 }
 
 /**
- * Re-collect flows for the current replay range with current filters.
- * Tries server-side query first (pre-computed flows from SQLite),
- * falls back to client-side collection from allEvents.
+ * Request flows from the server for the current replay range and filters.
+ * Server queries SQLite with full fidelity when filtered, sampled when not.
  */
 function refreshReplay() {
     if (!state.replayRange || _cachedPeers.size === 0) return;
-    // Request server-side flows (faster, covers full history)
     queryFlows(
         state.replayRange.startNs,
         state.replayRange.endNs,
         state.selectedContract,
         state.selectedPeerId
     );
-    // Also start with client-side flows immediately (server result will replace)
-    const flows = collectFlowsForRange(state.replayRange.startNs, state.replayRange.endNs);
-    startReplay(flows, _cachedPeers);
 }
 
 /**
@@ -251,13 +245,12 @@ function refreshReplay() {
  */
 function handleReplayRange(range) {
     if (!range) {
-        // Reset to full range instead of stopping
         startFullReplay();
         return;
     }
     if (_cachedPeers.size === 0) return;
-    const flows = collectFlowsForRange(range.startNs, range.endNs);
-    startReplay(flows, _cachedPeers);
+    state.replayRange = range;
+    refreshReplay();
 }
 
 // ============================================================================

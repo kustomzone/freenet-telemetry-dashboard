@@ -194,25 +194,19 @@ function drawTicks(ctx, tNow, totalDurationNs, width, height) {
         const x = timeToX(tNow - tick.ageNs, tNow, totalDurationNs, width);
         if (x < 15 || x > width - 15) continue;
 
-        // Tick mark from top
+        // Tick mark from bottom
         ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.1)';
         ctx.lineWidth = 1;
         ctx.beginPath();
-        ctx.moveTo(x, 0);
-        ctx.lineTo(x, 8);
+        ctx.moveTo(x, height);
+        ctx.lineTo(x, height - 6);
         ctx.stroke();
 
-        // Label at top with background pill for readability
+        // Label below timeline (bottom-anchored, outside the event area)
         ctx.font = '9px "JetBrains Mono", monospace';
-        const metrics = ctx.measureText(tick.label);
-        const labelW = metrics.width + 6;
-        const labelH = 12;
-        const lx = x - labelW / 2;
-        ctx.fillStyle = isLight ? 'rgba(255, 255, 255, 0.8)' : 'rgba(13, 17, 23, 0.85)';
-        ctx.fillRect(lx, 0, labelW, labelH);
-        ctx.fillStyle = isLight ? 'rgba(0, 0, 0, 0.6)' : 'rgba(255, 255, 255, 0.6)';
-        ctx.textBaseline = 'top';
-        ctx.fillText(tick.label, x, 1);
+        ctx.fillStyle = isLight ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)';
+        ctx.textBaseline = 'bottom';
+        ctx.fillText(tick.label, x, height - 1);
     }
 }
 
@@ -337,76 +331,6 @@ let dragCurrentX = null;  // canvas X of current drag position
 let isDragging = false;
 let suppressNextClick = false; // eat the click event that follows a successful drag
 
-/**
- * Collect message flows for a time range from transaction data.
- * Returns [{fromPeer, toPeer, eventType, offsetMs}] where offsetMs is
- * the relative time from range start (for staggered replay).
- */
-export function collectFlowsForRange(startNs, endNs) {
-    const events = state.allEvents;
-    if (events.length === 0) return [];
-
-    // Binary search for start of range
-    let lo = 0, hi = events.length;
-    while (lo < hi) {
-        const mid = (lo + hi) >>> 1;
-        if (events[mid].timestamp < startNs) lo = mid + 1;
-        else hi = mid;
-    }
-
-    // Group events by tx_id. For peer/contract filtering, we first collect
-    // ALL events (unfiltered by peer) so multi-peer transactions are complete,
-    // then filter the resulting flows.
-    const txGroups = new Map(); // tx_id → [{peer_id, timestamp, event_type}]
-    for (let i = lo; i < events.length; i++) {
-        const e = events[i];
-        if (e.timestamp > endNs) break;
-        // Apply contract filter but NOT peer filter at event level —
-        // peer filter is applied to the resulting flows
-        if (state.selectedContract && e.contract_full !== state.selectedContract) continue;
-        if (!e.tx_id || !e.peer_id) continue;
-
-        if (!txGroups.has(e.tx_id)) txGroups.set(e.tx_id, []);
-        txGroups.get(e.tx_id).push({
-            peer_id: e.peer_id,
-            timestamp: e.timestamp,
-            event_type: e.event_type
-        });
-    }
-
-    // Build flows from multi-peer transactions
-    const flows = [];
-    const peerFilter = state.selectedPeerId;
-    for (const [, txEvents] of txGroups) {
-        if (txEvents.length < 2) continue;
-
-        const peers = new Set(txEvents.map(e => e.peer_id));
-        if (peers.size < 2) continue;
-
-        // If peer filter is active, skip transactions that don't involve the peer
-        if (peerFilter && !peers.has(peerFilter)) continue;
-
-        txEvents.sort((a, b) => a.timestamp - b.timestamp);
-        for (let j = 1; j < txEvents.length; j++) {
-            if (txEvents[j].peer_id !== txEvents[j - 1].peer_id) {
-                const from = txEvents[j - 1].peer_id;
-                const to = txEvents[j].peer_id;
-                // Only include flows where the selected peer is sender or receiver
-                if (peerFilter && from !== peerFilter && to !== peerFilter) continue;
-                const midTs = (txEvents[j - 1].timestamp + txEvents[j].timestamp) / 2;
-                flows.push({
-                    fromPeer: from,
-                    toPeer: to,
-                    eventType: txEvents[j].event_type,
-                    offsetMs: Math.max(0, (midTs - startNs) / 1_000_000)
-                });
-            }
-        }
-    }
-
-
-    return flows;
-}
 
 /**
  * Draw the replay selection highlight on the timeline canvas.
