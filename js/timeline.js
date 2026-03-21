@@ -425,10 +425,12 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
     ctx.lineWidth = 1.5;
     ctx.strokeRect(left, 0, right - left, height);
 
-    // Sweeping playhead line
+    // Sweeping playhead line — convert progress to timestamp, then through
+    // the logarithmic timeToX scale so it tracks correctly on the timeline
     const progress = state.replayProgress;
     if (progress >= 0 && progress <= 1) {
-        const px = left + (right - left) * progress;
+        const playheadNs = range.startNs + (range.endNs - range.startNs) * progress;
+        const px = timeToX(playheadNs, tNow, totalDurationNs, width);
         ctx.beginPath();
         ctx.moveTo(px, 0);
         ctx.lineTo(px, height);
