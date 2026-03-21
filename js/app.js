@@ -318,6 +318,7 @@ window.showTransactionDetail = (tx) => showTransactionDetail(tx, updateView, upd
 function findMyPeer() {
     if (state.youArePeer && state.yourPeerId) {
         selectPeer(state.yourPeerId, updateView, updateURL);
+        refreshReplay();
     }
 }
 window.findMyPeer = findMyPeer;
