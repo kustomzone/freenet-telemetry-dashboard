@@ -333,7 +333,7 @@ setupTimeline({
         state.replayPaused = paused;
         const btn = document.getElementById('replay-pause-btn');
         if (btn) {
-            btn.querySelector('.replay-pause-icon').textContent = paused ? '▶' : '⏸';
+            btn.querySelector('.replay-pause-label').textContent = paused ? 'play' : 'pause';
             btn.classList.toggle('active', paused);
         }
     },
@@ -382,7 +382,7 @@ if (pauseBtn) {
     pauseBtn.addEventListener('click', () => {
         const paused = toggleReplayPause();
         state.replayPaused = paused;
-        pauseBtn.querySelector('.replay-pause-icon').textContent = paused ? '▶' : '⏸';
+        pauseBtn.querySelector('.replay-pause-label').textContent = paused ? 'play' : 'pause';
         pauseBtn.classList.toggle('active', paused);
     });
 }

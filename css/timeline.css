@@ -23,36 +23,44 @@
             margin-bottom: 8px;
         }
 
+        .replay-time {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: rgba(0, 180, 255, 0.7);
+            letter-spacing: 0.5px;
+        }
+
         .replay-pause-btn {
             display: flex;
             flex-direction: column;
             align-items: center;
             background: none;
-            border: 1px solid var(--border-color, rgba(255,255,255,0.1));
-            border-radius: 6px;
-            padding: 2px 10px;
+            border: 1px solid rgba(255,255,255,0.15);
+            border-radius: 4px;
+            padding: 2px 8px;
             cursor: pointer;
-            opacity: 0.5;
-            transition: opacity 0.15s;
+            transition: border-color 0.15s;
         }
         .replay-pause-btn:hover {
-            opacity: 1;
-            border-color: rgba(0, 180, 255, 0.4);
+            border-color: rgba(0, 180, 255, 0.5);
         }
         .replay-pause-btn.active {
-            opacity: 1;
             border-color: rgba(0, 180, 255, 0.6);
         }
-        .replay-pause-icon {
-            font-size: 14px;
-            line-height: 1;
+        .replay-pause-label {
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 11px;
+            color: rgba(255,255,255,0.6);
+            line-height: 1.2;
+        }
+        .replay-pause-btn:hover .replay-pause-label {
+            color: rgba(255,255,255,0.9);
         }
         .replay-pause-hint {
             font-family: 'JetBrains Mono', monospace;
             font-size: 8px;
-            color: var(--text-muted, #6b7280);
+            color: rgba(255,255,255,0.25);
             line-height: 1;
-            margin-top: 1px;
         }
 
         .timeline-info {

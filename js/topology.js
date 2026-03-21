@@ -321,6 +321,8 @@ export function stopReplay() {
     }
     const playhead = document.getElementById('replay-playhead');
     if (playhead) playhead.style.display = 'none';
+    const timeEl = document.getElementById('replay-time');
+    if (timeEl) timeEl.textContent = '';
 }
 
 let replayPaused = false;
@@ -463,6 +465,13 @@ function updateTimelinePlayhead() {
 
     el.style.display = '';
     el.style.left = px + 'px';
+
+    // Update the replay time display
+    const timeEl = document.getElementById('replay-time');
+    if (timeEl) {
+        const d = new Date(playheadNs / 1_000_000);
+        timeEl.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+    }
 }
 
 function drawRingParticles(ctx) {
