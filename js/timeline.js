@@ -370,6 +370,8 @@ export function collectFlowsForRange(startNs, endNs) {
     const seenTx = new Set();
     const rangeMs = (endNs - startNs) / 1_000_000;
 
+    let dbgNoTx = 0, dbgNotFound = 0, dbgTooFew = 0, dbgSinglePeer = 0, dbgMultiPeer = 0;
+
     for (const evt of windowEvents) {
         // Direct from_peer/to_peer (rare but ideal)
         if (evt.from_peer && evt.to_peer && evt.from_peer !== evt.to_peer) {
@@ -385,11 +387,15 @@ export function collectFlowsForRange(startNs, endNs) {
         if (evt.tx_id && !seenTx.has(evt.tx_id)) {
             seenTx.add(evt.tx_id);
             const txIdx = state.transactionMap.get(evt.tx_id);
-            if (txIdx === undefined) continue;
+            if (txIdx === undefined) { dbgNotFound++; continue; }
             const tx = state.allTransactions[txIdx];
-            if (!tx || !tx.events || tx.events.length < 2) continue;
+            if (!tx || !tx.events || tx.events.length < 2) { dbgTooFew++; continue; }
 
             const sorted = [...tx.events].sort((a, b) => a.timestamp - b.timestamp);
+            const uniquePeers = new Set(sorted.map(e => e.peer_id).filter(Boolean));
+            if (uniquePeers.size < 2) { dbgSinglePeer++; continue; }
+            dbgMultiPeer++;
+
             for (let j = 1; j < sorted.length; j++) {
                 if (sorted[j].peer_id && sorted[j - 1].peer_id &&
                     sorted[j].peer_id !== sorted[j - 1].peer_id) {
@@ -403,8 +409,12 @@ export function collectFlowsForRange(startNs, endNs) {
                     });
                 }
             }
+        } else if (!evt.tx_id) {
+            dbgNoTx++;
         }
     }
+
+    console.log(`[flows] txns: ${seenTx.size} unique, notFound=${dbgNotFound}, tooFew=${dbgTooFew}, singlePeer=${dbgSinglePeer}, multiPeer=${dbgMultiPeer}, noTxId=${dbgNoTx}`);
 
     return flows;
 }
