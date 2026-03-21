@@ -401,9 +401,9 @@ function drawRingParticles(ctx) {
         // Trail along the spline
         ctx.beginPath();
         ctx.strokeStyle = p.color;
-        ctx.lineWidth = 2;
-        ctx.globalAlpha = alpha * 0.3;
-        const TRAIL_STEPS = 8;
+        ctx.lineWidth = 1;
+        ctx.globalAlpha = alpha * 0.2;
+        const TRAIL_STEPS = 6;
         ctx.moveTo(p.fromPos.x, p.fromPos.y);
         for (let s = 1; s <= TRAIL_STEPS; s++) {
             const st = eased * (s / TRAIL_STEPS);
@@ -412,25 +412,25 @@ function drawRingParticles(ctx) {
         }
         ctx.stroke();
 
-        // Outer glow
+        // Subtle glow
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 12, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.globalAlpha = alpha * 0.15;
         ctx.fill();
 
         // Core dot
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
         ctx.fillStyle = p.color;
         ctx.globalAlpha = alpha;
         ctx.fill();
 
         // Bright center
         ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+        ctx.arc(pt.x, pt.y, 1, 0, Math.PI * 2);
         ctx.fillStyle = '#ffffff';
-        ctx.globalAlpha = alpha * 0.9;
+        ctx.globalAlpha = alpha * 0.8;
         ctx.fill();
     }
     ctx.globalAlpha = 1;
