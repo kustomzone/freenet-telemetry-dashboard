@@ -336,8 +336,13 @@ export function stopReplay() {
         const ctx = particleCanvas.getContext('2d');
         ctx.clearRect(0, 0, particleCanvas.width, particleCanvas.height);
     }
+    // Clear playhead overlays
     const playhead = document.getElementById('replay-playhead');
     if (playhead) playhead.style.display = 'none';
+    if (_playheadCanvas) {
+        const ctx = _playheadCanvas.getContext('2d');
+        ctx.clearRect(0, 0, _playheadCanvas.width, _playheadCanvas.height);
+    }
     const timeEl = document.getElementById('replay-time');
     if (timeEl) timeEl.textContent = '';
 }
@@ -460,46 +465,71 @@ function startReplayLoop() {
 }
 
 /**
- * Position the timeline playhead DOM element based on replay progress.
- * Much cheaper than redrawing the entire timeline canvas.
+ * Draw the replay playhead on a thin overlay canvas above the timeline.
+ * Uses the same logarithmic timeToX formula as the timeline event bars.
  */
+let _playheadCanvas = null;
+
 function updateTimelinePlayhead() {
-    let el = document.getElementById('replay-playhead');
-    const canvas = document.getElementById('timeline-canvas');
-    if (!canvas) return;
+    const timelineCanvas = document.getElementById('timeline-canvas');
+    if (!timelineCanvas) return;
+
+    // Hide old DOM playhead if it exists
+    const oldEl = document.getElementById('replay-playhead');
+    if (oldEl) oldEl.style.display = 'none';
 
     if (state.replayProgress < 0 || !state.replayRange) {
-        if (el) el.style.display = 'none';
+        if (_playheadCanvas) {
+            const ctx = _playheadCanvas.getContext('2d');
+            ctx.clearRect(0, 0, _playheadCanvas.width, _playheadCanvas.height);
+        }
         return;
     }
 
-    if (!el) {
-        el = document.createElement('div');
-        el.id = 'replay-playhead';
-        el.style.cssText = 'position:absolute;top:0;width:1.5px;height:100%;background:rgba(255,255,255,0.7);pointer-events:none;z-index:10;';
-        canvas.parentElement.style.position = 'relative';
-        canvas.parentElement.appendChild(el);
+    // Create/resize overlay canvas
+    const parent = timelineCanvas.parentElement;
+    if (!_playheadCanvas) {
+        _playheadCanvas = document.createElement('canvas');
+        _playheadCanvas.style.cssText = 'position:absolute;top:0;left:0;width:100%;height:100%;pointer-events:none;z-index:10;';
+        parent.style.position = 'relative';
+        parent.appendChild(_playheadCanvas);
+    }
+    const dpr = window.devicePixelRatio || 1;
+    const w = timelineCanvas.clientWidth;
+    const h = timelineCanvas.clientHeight;
+    if (_playheadCanvas.width !== w * dpr || _playheadCanvas.height !== h * dpr) {
+        _playheadCanvas.width = w * dpr;
+        _playheadCanvas.height = h * dpr;
     }
 
-    // Use live time (not cached state.currentTime which may be stale
-    // since the timeline canvas isn't redrawn every frame during replay)
+    const ctx = _playheadCanvas.getContext('2d');
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, w, h);
+
+    // Use the same tNow and formula as renderExponentialTimeline
     const tNow = Date.now() * 1_000_000;
     const totalDurationNs = tNow - state.timeRange.start;
     if (totalDurationNs <= 0) return;
 
-    // Map progress to actual flow timestamps (not the full replay range,
-    // which may extend beyond the last flow)
+    // Map progress to actual flow timestamps
     const flowStart = replayFlowStartNs || state.replayRange.startNs;
     const flowEnd = replayFlowEndNs || state.replayRange.endNs;
     const playheadNs = flowStart + (flowEnd - flowStart) * Math.min(1, state.replayProgress);
+
+    // Same logarithmic formula as timeToX in timeline.js
     const age = tNow - playheadNs;
+    if (age <= 0) return;
     const normalizedAge = Math.min(age / totalDurationNs, 1);
     const K = 6;
-    const width = canvas.clientWidth;
-    const px = width * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
+    const px = w * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
 
-    el.style.display = '';
-    el.style.left = px + 'px';
+    // Draw the playhead line
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, h);
+    ctx.strokeStyle = 'rgba(255, 255, 255, 0.8)';
+    ctx.lineWidth = 1.5;
+    ctx.stroke();
 
     // Update the replay time display
     const timeEl = document.getElementById('replay-time');
