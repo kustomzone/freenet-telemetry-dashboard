@@ -34,6 +34,7 @@ HISTORY_EVENT_TYPES = {
     "update_broadcast_received", "update_broadcast_applied",
     "update_broadcast_emitted", "broadcast_emitted",
     "update_broadcast_delivery_summary",
+    "connect_connected", "connect_rejected",
     "peer_startup", "peer_shutdown",
     "seeding_started", "seeding_stopped",
     "subscribed",

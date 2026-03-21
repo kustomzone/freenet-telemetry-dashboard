@@ -202,6 +202,8 @@ HISTORY_EVENT_TYPES = {
     "update_broadcast_received", "update_broadcast_applied",
     "update_broadcast_emitted", "broadcast_emitted",
     "update_broadcast_delivery_summary",
+    # Connections (needed for timeline CONN lane and flow animation)
+    "connect_connected", "connect_rejected",
     # Peer lifecycle
     "peer_startup", "peer_shutdown",
     # Subscription tree
@@ -210,11 +212,13 @@ HISTORY_EVENT_TYPES = {
     "subscribed",
 }
 
-# High-volume event types that are sampled (1 in 10) for history/DB storage.
+# High-volume event types that are sampled (1 in N) for history/DB storage.
 # These are useful for flow computation but individually they're noise.
 _SAMPLED_EVENT_TYPES = {
-    "update_broadcast_received",
-    "update_broadcast_applied",
+    "update_broadcast_received": 10,   # 1 in 10
+    "update_broadcast_applied": 10,
+    "connect_connected": 20,           # 1 in 20 (very high volume)
+    "connect_rejected": 20,
 }
 _sample_counters = {}  # event_type -> count
 
@@ -1675,10 +1679,11 @@ def process_record(record, store_history=True):
 
     # Store in history buffer and SQLite DB
     if store_history and event_type in HISTORY_EVENT_TYPES:
-        # Sample high-volume event types (1 in 10) to avoid flooding
-        if event_type in _SAMPLED_EVENT_TYPES:
+        # Sample high-volume event types to avoid flooding
+        sample_rate = _SAMPLED_EVENT_TYPES.get(event_type)
+        if sample_rate:
             _sample_counters[event_type] = _sample_counters.get(event_type, 0) + 1
-            if _sample_counters[event_type] % 10 != 0:
+            if _sample_counters[event_type] % sample_rate != 0:
                 return event  # skip storage, still return for real-time broadcast
         event_history.append(event)
         db.insert_event(event)
