@@ -285,6 +285,8 @@ export function startReplay(flows, peers) {
 
     if (replayFlows.length === 0) return;
 
+    console.log(`[replay] ${replayFlows.length} resolved flows, offsetMs range: ${Math.min(...replayFlows.map(f=>f.offsetMs)).toFixed(0)} - ${Math.max(...replayFlows.map(f=>f.offsetMs)).toFixed(0)}`);
+
     // Compute loop duration: compress real time range into a readable replay speed.
     // The replay takes 3-8 seconds depending on the number of flows,
     // plus PARTICLE_DURATION so the last particle finishes before the loop restarts.
@@ -315,6 +317,10 @@ export function startReplay(flows, peers) {
             f.normalizedOffset = (i / replayFlows.length) * Math.min(2000, compressedDuration);
         });
     }
+
+    console.log(`[replay] compressedDuration=${compressedDuration}ms, loopDuration=${replayLoopDuration}ms, activeDuration=${replayActiveDuration}ms, speed=${replaySpeed}`);
+    console.log(`[replay] normalizedOffset range: ${Math.min(...replayFlows.map(f=>f.normalizedOffset)).toFixed(0)} - ${Math.max(...replayFlows.map(f=>f.normalizedOffset)).toFixed(0)}`);
+    console.log(`[replay] flowStartNs=${replayFlowStartNs}, flowEndNs=${replayFlowEndNs}`);
 
     replayLoopStart = performance.now();
     startReplayLoop();
@@ -427,11 +433,13 @@ function startReplayLoop() {
 
         // Spawn particles whose offset has been reached in this cycle
         const spawnWindow = 50 / replaySpeed;
+        let spawned = 0;
         for (const flow of replayFlows) {
             const scaledOffset = flow.normalizedOffset / replaySpeed;
             if (cycleTime >= scaledOffset && cycleTime < scaledOffset + spawnWindow) {
                 if (!flow._lastSpawn || (now - flow._lastSpawn) > effectiveDuration * 0.9) {
                     flow._lastSpawn = now;
+                    spawned++;
                     ringParticles.push({
                         fromPos: flow.fromPos, toPos: flow.toPos,
                         cp: flow.cp, color: flow.color,
@@ -440,6 +448,8 @@ function startReplayLoop() {
                 }
             }
         }
+
+        if (spawned > 0) console.log(`[spawn] t=${cycleTime.toFixed(0)}ms progress=${state.replayProgress.toFixed(3)} spawned=${spawned} particles=${ringParticles.length}`);
 
         // Draw particles directly on the overlay canvas (no full redraw needed)
         if (particleCanvas) {
