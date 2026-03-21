@@ -184,30 +184,20 @@ function drawTicks(ctx, tNow, totalDurationNs, width, height) {
         { label: '2h',  ageNs: 2 * 60 * 60e9 },
     ];
 
-    ctx.font = '10px "JetBrains Mono", monospace';
-    ctx.textAlign = 'center';
+    // Position tick labels as DOM elements below the canvas (not on it)
+    const tickContainer = document.getElementById('timeline-ticks');
+    if (!tickContainer) return;
 
-    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
-
+    // Build tick HTML only if positions changed
+    let html = '';
     for (const tick of ticks) {
         if (tick.ageNs > totalDurationNs) continue;
         const x = timeToX(tNow - tick.ageNs, tNow, totalDurationNs, width);
-        if (x < 15 || x > width - 15) continue;
-
-        // Tick mark from bottom
-        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.15)' : 'rgba(255, 255, 255, 0.1)';
-        ctx.lineWidth = 1;
-        ctx.beginPath();
-        ctx.moveTo(x, height);
-        ctx.lineTo(x, height - 6);
-        ctx.stroke();
-
-        // Label below timeline (bottom-anchored, outside the event area)
-        ctx.font = '9px "JetBrains Mono", monospace';
-        ctx.fillStyle = isLight ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.5)';
-        ctx.textBaseline = 'bottom';
-        ctx.fillText(tick.label, x, height - 1);
+        if (x < 10 || x > width - 10) continue;
+        const pct = (x / width * 100).toFixed(2);
+        html += `<span class="timeline-tick" style="left:${pct}%">${tick.label}</span>`;
     }
+    tickContainer.innerHTML = html;
 }
 
 // ============================================================================

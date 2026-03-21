@@ -124,6 +124,23 @@
             display: block;
         }
 
+        .timeline-ticks {
+            position: absolute;
+            bottom: -14px;
+            left: 50px;
+            right: 0;
+            height: 14px;
+            pointer-events: none;
+        }
+        .timeline-tick {
+            position: absolute;
+            font-family: 'JetBrains Mono', monospace;
+            font-size: 9px;
+            color: var(--text-muted, rgba(255,255,255,0.45));
+            transform: translateX(-50%);
+            white-space: nowrap;
+        }
+
         .timeline-lane-labels {
             position: absolute;
             top: 0;
