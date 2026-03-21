@@ -193,6 +193,146 @@ let treeAnimFrame = null;
 let treeAnimEdges = []; // [{from, to, cp1, cp2}]
 let treeAnimT = 0;
 
+// ============================================================================
+// Ring particle animation system
+// Particles travel along spline paths between peers, triggered by timeline scrubbing
+// ============================================================================
+
+const ringParticles = [];       // [{fromPos, toPos, cp, color, startTime, duration}]
+const PARTICLE_DURATION = 700;  // ms
+const MAX_RING_PARTICLES = 40;
+let ringParticleFrame = null;
+
+/**
+ * Compute the quadratic bezier control point for a connection between two
+ * ring locations, matching the curve used by drawConnectionsCanvas.
+ */
+function connectionControlPoint(fromLoc, toLoc) {
+    const a1 = fromLoc * 2 * Math.PI - Math.PI / 2;
+    const a2 = toLoc * 2 * Math.PI - Math.PI / 2;
+    let angleDiff = a2 - a1;
+    while (angleDiff > Math.PI) angleDiff -= 2 * Math.PI;
+    while (angleDiff < -Math.PI) angleDiff += 2 * Math.PI;
+    const midAngle = a1 + angleDiff / 2;
+    const angularDist = Math.abs(angleDiff) / Math.PI;
+    const pullFrac = 0.3 + angularDist * 0.5;
+    const cpRadius = RADIUS * (1 - pullFrac);
+    return { x: CENTER + cpRadius * Math.cos(midAngle), y: CENTER + cpRadius * Math.sin(midAngle) };
+}
+
+/**
+ * Evaluate a point on a quadratic bezier at parameter t (0..1).
+ */
+function quadBezierAt(from, cp, to, t) {
+    const u = 1 - t;
+    return {
+        x: u * u * from.x + 2 * u * t * cp.x + t * t * to.x,
+        y: u * u * from.y + 2 * u * t * cp.y + t * t * to.y
+    };
+}
+
+export function spawnRingParticle(fromId, toId, eventType, peers) {
+    if (ringParticles.length >= MAX_RING_PARTICLES) return;
+
+    // Resolve peer locations and positions
+    let fromLoc = null, toLoc = null, fromPos = null, toPos = null;
+    peers.forEach((peer, id) => {
+        if (id === fromId || peer.peer_id === fromId) {
+            fromLoc = peer.location;
+            fromPos = locationToXY(peer.location);
+        }
+        if (id === toId || peer.peer_id === toId) {
+            toLoc = peer.location;
+            toPos = locationToXY(peer.location);
+        }
+    });
+    if (!fromPos || !toPos || fromLoc === null || toLoc === null) return;
+
+    // Skip very short distances
+    const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
+    if (dx * dx + dy * dy < 100) return;
+
+    const eventClass = getEventClass(eventType);
+    const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
+    const cp = connectionControlPoint(fromLoc, toLoc);
+
+    ringParticles.push({
+        fromPos, toPos, cp, color,
+        startTime: performance.now(),
+        duration: PARTICLE_DURATION
+    });
+
+    startRingParticleLoop();
+}
+
+function drawRingParticles(ctx) {
+    if (ringParticles.length === 0) return;
+    const now = performance.now();
+
+    ctx.save();
+    for (let i = ringParticles.length - 1; i >= 0; i--) {
+        const p = ringParticles[i];
+        const elapsed = now - p.startTime;
+        if (elapsed > p.duration) {
+            ringParticles.splice(i, 1);
+            continue;
+        }
+
+        const t = elapsed / p.duration;
+        // Ease-out for smooth deceleration along the spline
+        const eased = 1 - (1 - t) * (1 - t);
+        const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
+        const alpha = 1 - t * 0.6;
+
+        // Glow
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 8, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = alpha * 0.25;
+        ctx.fill();
+
+        // Core dot
+        ctx.beginPath();
+        ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = p.color;
+        ctx.globalAlpha = alpha;
+        ctx.fill();
+    }
+    ctx.globalAlpha = 1;
+    ctx.restore();
+
+    if (ringParticles.length === 0) {
+        stopRingParticleLoop();
+    }
+}
+
+function startRingParticleLoop() {
+    if (ringParticleFrame) return;
+
+    function step() {
+        ringParticleFrame = requestAnimationFrame(step);
+
+        const canvas = peerCanvasEl;
+        if (!canvas || ringParticles.length === 0) return;
+        const ctx = canvas.getContext('2d');
+        const dpr = window.devicePixelRatio || 1;
+        const displaySize = parseInt(canvas.style.width) || SVG_SIZE;
+        const scale = displaySize / SVG_SIZE;
+        ctx.save();
+        ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
+        drawRingParticles(ctx);
+        ctx.restore();
+    }
+    ringParticleFrame = requestAnimationFrame(step);
+}
+
+function stopRingParticleLoop() {
+    if (ringParticleFrame) {
+        cancelAnimationFrame(ringParticleFrame);
+        ringParticleFrame = null;
+    }
+}
+
 
 function getOrCreateTreeAnimCanvas(container) {
     if (treeAnimCanvas && treeAnimCanvas.parentNode === container) return treeAnimCanvas;
@@ -597,6 +737,9 @@ export function updateRingSVG(peers, connections, subscriberPeerIds = new Set(),
 
     // Draw peers on canvas and build hit-test array
     drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, treeOverlay);
+
+    // Draw any active ring particles (from timeline scrubbing)
+    drawRingParticles(ctx);
 
     // Install mouse events once
     installCanvasEvents(canvas, container);

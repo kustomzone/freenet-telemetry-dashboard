@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG } from './topology.js';
+import { updateRingSVG, spawnRingParticle } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
@@ -38,6 +38,9 @@ import { initVersionsChart, updateVersionsChart, destroyVersionsChart } from './
 
 // rAF-based throttle: updateView runs at most once per animation frame
 let _updateViewScheduled = false;
+
+// Cached peers map for particle spawning (updated each render)
+let _cachedPeers = new Map();
 
 function scheduleUpdateView() {
     if (_updateViewScheduled) return;
@@ -89,6 +92,9 @@ function _updateViewImpl() {
             });
         }
     }
+
+    // Cache peers for particle spawning
+    _cachedPeers = peers;
 
     // Always show ring; tree overlay renders on ring canvas when contract selected
     const ringContainer = document.getElementById('ring-container');
@@ -201,6 +207,20 @@ function handleEventHover(event) {
     updateView();
 }
 
+/**
+ * Handle timeline scrub — spawn ring particles for events under the cursor.
+ */
+function handleTimelineScrub(events) {
+    if (_cachedPeers.size === 0) return;
+    for (const evt of events) {
+        const fromId = evt.from_peer || evt.peer_id;
+        const toId = evt.to_peer;
+        if (fromId && toId && fromId !== toId) {
+            spawnRingParticle(fromId, toId, evt.event_type, _cachedPeers);
+        }
+    }
+}
+
 // ============================================================================
 // Global Window Bindings (for onclick handlers in HTML)
 // ============================================================================
@@ -280,7 +300,8 @@ setupTimeline({
     updateView: updateView,
     renderContractsList: renderContractsList,
     selectEvent: handleEventClick,
-    onEventHover: handleEventHover
+    onEventHover: handleEventHover,
+    onScrub: handleTimelineScrub
 });
 
 // Connect to WebSocket

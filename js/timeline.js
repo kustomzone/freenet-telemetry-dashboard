@@ -311,6 +311,52 @@ function hideTooltip() {
 }
 
 // ============================================================================
+// Scrub hit-test: collect all events in a pixel-width time window
+// ============================================================================
+
+/**
+ * Return all events whose timestamp falls within ±3px of canvasX.
+ * Respects current contract/peer filters.
+ */
+function scrubHitTest(canvasX, canvas) {
+    const width = canvas.clientWidth;
+    const tNow = state.currentTime;
+    const totalDurationNs = tNow - state.timeRange.start;
+    if (totalDurationNs <= 0) return [];
+
+    const tLeft = xToTime(canvasX + 3, tNow, totalDurationNs, width);
+    const tRight = xToTime(canvasX - 3, tNow, totalDurationNs, width);
+    const tMin = Math.min(tLeft, tRight);
+    const tMax = Math.max(tLeft, tRight);
+
+    const events = state.allEvents;
+    if (events.length === 0) return [];
+
+    // Binary search for start
+    let lo = 0, hi = events.length;
+    while (lo < hi) {
+        const mid = (lo + hi) >>> 1;
+        if (events[mid].timestamp < tMin) lo = mid + 1;
+        else hi = mid;
+    }
+
+    const results = [];
+    for (let i = lo; i < events.length && results.length < 8; i++) {
+        const e = events[i];
+        if (e.timestamp > tMax) break;
+        if (!eventMatchesFilters(e)) continue;
+        // Only include events with two-peer info (can draw a path)
+        if (e.from_peer && e.to_peer && e.from_peer !== e.to_peer) {
+            results.push(e);
+        } else if (e.peer_id) {
+            // Single-peer events still useful for glow effect
+            results.push(e);
+        }
+    }
+    return results;
+}
+
+// ============================================================================
 // Public API
 // ============================================================================
 
@@ -351,7 +397,8 @@ export function setupTimeline(callbacks) {
     const canvas = document.getElementById('timeline-canvas');
     if (!canvas) return;
 
-    // --- Canvas hover for tooltips + event visualization ---
+    // --- Canvas hover for tooltips + event visualization + particle scrubbing ---
+    let lastScrubX = -1;  // deduplicate scrub calls for same pixel
     canvas.addEventListener('mousemove', (e) => {
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
@@ -368,6 +415,16 @@ export function setupTimeline(callbacks) {
             if (state.hoveredEvent) {
                 state.hoveredEvent = null;
                 if (callbacks.onEventHover) callbacks.onEventHover(null);
+            }
+        }
+
+        // Particle scrubbing: collect events in a time window around cursor
+        const pixelX = Math.round(x);
+        if (callbacks.onScrub && pixelX !== lastScrubX) {
+            lastScrubX = pixelX;
+            const scrubEvents = scrubHitTest(x, canvas);
+            if (scrubEvents.length > 0) {
+                callbacks.onScrub(scrubEvents);
             }
         }
     });
