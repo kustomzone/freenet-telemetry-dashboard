@@ -10,7 +10,8 @@ import { formatTime, formatDate, getEventClass, getEventLabel } from './utils.js
 export const MIN_TIME_WINDOW_NS = 1 * 60 * 1_000_000_000;
 export const MAX_TIME_WINDOW_NS = 60 * 60 * 1_000_000_000;
 
-const K = 6; // exponential scale factor: last ~5min fills ~50% of width
+// Linear scale — previously logarithmic (K=6) but with SQLite providing
+// consistent history, linear is clearer and the playhead sweeps at constant speed.
 
 // Lane configuration (order matches left-side labels)
 const LANE_ROWS = { connect: 0, get: 1, put: 2, subscribe: 3, update: 4 };
@@ -40,7 +41,7 @@ export function timeToX(timestamp, tNow, totalDurationNs, width) {
     if (age <= 0) return width;
     if (totalDurationNs <= 0) return width;
     const normalizedAge = Math.min(age / totalDurationNs, 1);
-    return width * (1 - Math.log1p(K * normalizedAge) / Math.log1p(K));
+    return width * (1 - normalizedAge);
 }
 
 /**
@@ -49,8 +50,7 @@ export function timeToX(timestamp, tNow, totalDurationNs, width) {
 export function xToTime(x, tNow, totalDurationNs, width) {
     if (width <= 0) return tNow;
     const normalizedX = Math.max(0, Math.min(1, x / width));
-    const normalizedAge = Math.expm1((1 - normalizedX) * Math.log1p(K)) / K;
-    return tNow - normalizedAge * totalDurationNs;
+    return tNow - (1 - normalizedX) * totalDurationNs;
 }
 
 /**
