@@ -344,13 +344,16 @@ export function collectFlowsForRange(startNs, endNs) {
         else hi = mid;
     }
 
-    // Group events by tx_id directly (don't rely on transactionMap which
-    // may not cover the same time range as allEvents)
+    // Group events by tx_id. For peer/contract filtering, we first collect
+    // ALL events (unfiltered by peer) so multi-peer transactions are complete,
+    // then filter the resulting flows.
     const txGroups = new Map(); // tx_id → [{peer_id, timestamp, event_type}]
     for (let i = lo; i < events.length; i++) {
         const e = events[i];
         if (e.timestamp > endNs) break;
-        if (!eventMatchesFilters(e)) continue;
+        // Apply contract filter but NOT peer filter at event level —
+        // peer filter is applied to the resulting flows
+        if (state.selectedContract && e.contract_full !== state.selectedContract) continue;
         if (!e.tx_id || !e.peer_id) continue;
 
         if (!txGroups.has(e.tx_id)) txGroups.set(e.tx_id, []);
@@ -363,21 +366,27 @@ export function collectFlowsForRange(startNs, endNs) {
 
     // Build flows from multi-peer transactions
     const flows = [];
+    const peerFilter = state.selectedPeerId;
     for (const [, txEvents] of txGroups) {
         if (txEvents.length < 2) continue;
 
-        // Check for multiple peers
         const peers = new Set(txEvents.map(e => e.peer_id));
         if (peers.size < 2) continue;
 
-        // Sort by timestamp, extract consecutive peer-to-peer hops
+        // If peer filter is active, skip transactions that don't involve the peer
+        if (peerFilter && !peers.has(peerFilter)) continue;
+
         txEvents.sort((a, b) => a.timestamp - b.timestamp);
         for (let j = 1; j < txEvents.length; j++) {
             if (txEvents[j].peer_id !== txEvents[j - 1].peer_id) {
+                const from = txEvents[j - 1].peer_id;
+                const to = txEvents[j].peer_id;
+                // Only include flows where the selected peer is sender or receiver
+                if (peerFilter && from !== peerFilter && to !== peerFilter) continue;
                 const midTs = (txEvents[j - 1].timestamp + txEvents[j].timestamp) / 2;
                 flows.push({
-                    fromPeer: txEvents[j - 1].peer_id,
-                    toPeer: txEvents[j].peer_id,
+                    fromPeer: from,
+                    toPeer: to,
                     eventType: txEvents[j].event_type,
                     offsetMs: Math.max(0, (midTs - startNs) / 1_000_000)
                 });
