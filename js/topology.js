@@ -210,6 +210,8 @@ let replayFlows = [];           // [{fromPos, toPos, cp, color, offsetMs}] pre-r
 let replayLoopDuration = 0;     // full loop duration in ms including padding (before speed multiplier)
 let replayActiveDuration = 0;   // active portion in ms (just the compressed event range, no padding)
 let replayRealDurationMs = 0;   // actual time range in ms (for computing real-time speed)
+let replayFlowStartNs = 0;     // timestamp of earliest flow (for playhead mapping)
+let replayFlowEndNs = 0;       // timestamp of latest flow (for playhead mapping)
 let replayLoopStart = 0;        // performance.now() when current loop cycle began
 let replayFrame = null;         // rAF handle
 let replaySpeed = 1.0;          // speed multiplier
@@ -287,7 +289,14 @@ export function startReplay(flows, peers) {
     // The replay takes 3-8 seconds depending on the number of flows,
     // plus PARTICLE_DURATION so the last particle finishes before the loop restarts.
     const maxOffset = Math.max(...replayFlows.map(f => f.offsetMs));
+    const minOffset = Math.min(...replayFlows.map(f => f.offsetMs));
     replayRealDurationMs = maxOffset;
+
+    // Store flow time range for accurate playhead mapping
+    if (state.replayRange) {
+        replayFlowStartNs = state.replayRange.startNs + minOffset * 1_000_000;
+        replayFlowEndNs = state.replayRange.startNs + maxOffset * 1_000_000;
+    }
     // Compress to 3-8s replay window
     const compressedDuration = Math.min(8000, Math.max(3000, maxOffset * 0.5));
     replayActiveDuration = compressedDuration;
@@ -317,6 +326,8 @@ export function stopReplay() {
     replayFlows = [];
     ringParticles.length = 0;
     state.replayProgress = -1;
+    replayFlowStartNs = 0;
+    replayFlowEndNs = 0;
     replayPaused = false;
     // Clear overlay canvases
     if (particleCanvas) {
@@ -474,8 +485,11 @@ function updateTimelinePlayhead() {
     const totalDurationNs = tNow - state.timeRange.start;
     if (totalDurationNs <= 0) return;
 
-    const playheadNs = state.replayRange.startNs +
-        (state.replayRange.endNs - state.replayRange.startNs) * state.replayProgress;
+    // Map progress to actual flow timestamps (not the full replay range,
+    // which may extend beyond the last flow)
+    const flowStart = replayFlowStartNs || state.replayRange.startNs;
+    const flowEnd = replayFlowEndNs || state.replayRange.endNs;
+    const playheadNs = flowStart + (flowEnd - flowStart) * Math.min(1, state.replayProgress);
     const age = tNow - playheadNs;
     const normalizedAge = Math.min(age / totalDurationNs, 1);
     const K = 6;
