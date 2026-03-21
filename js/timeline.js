@@ -439,12 +439,14 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
     if (state.replayPlayheadMs > 0) {
         const playheadNs = state.replayPlayheadMs * 1_000_000;
         const px = timeToX(playheadNs, tNow, totalDurationNs, width);
-        ctx.beginPath();
-        ctx.moveTo(px, 0);
-        ctx.lineTo(px, height);
-        ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.7)' : 'rgba(255, 255, 255, 0.8)';
-        ctx.lineWidth = 1.5;
-        ctx.stroke();
+        if (px >= 0 && px <= width) {
+            ctx.beginPath();
+            ctx.moveTo(px, 0);
+            ctx.lineTo(px, height);
+            ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.95)';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+        }
     }
 
     // PAUSED label in the selection region
