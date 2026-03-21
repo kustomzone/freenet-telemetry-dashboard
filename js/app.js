@@ -214,9 +214,15 @@ function handleEventHover(event) {
  * Start replay for the full timeline range.
  */
 function startFullReplay() {
-    if (state.timeRange.start === 0 || state.allEvents.length === 0) return;
+    if (state.timeRange.start === 0) return;
     const range = { startNs: state.timeRange.start, endNs: state.timeRange.end };
     state.replayRange = range;
+
+    // Use pre-computed server flows if available (instant, no round-trip)
+    if (state.serverFlows && state.serverFlows.length > 0 && _cachedPeers.size > 0) {
+        startReplay(state.serverFlows, _cachedPeers);
+        return;
+    }
     refreshReplay();
 }
 

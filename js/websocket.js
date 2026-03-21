@@ -241,6 +241,12 @@ function handleMessage(data, callbacks) {
             }
         }
 
+        // Store pre-computed flows for immediate replay
+        if (data.flows && data.flows.length > 0) {
+            state.serverFlows = data.flows;
+            console.log(`Loaded ${data.flows.length} pre-computed flows`);
+        }
+
         // Store peer presence for historical reconstruction
         if (data.peer_presence) {
             state.peerPresence = data.peer_presence;

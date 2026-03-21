@@ -63,6 +63,9 @@ export const state = {
     selectedTransaction: null,
     selectedTxEvents: [],     // Full events for the selected transaction (for topology arrows)
 
+    // Pre-computed flows from server (SQLite)
+    serverFlows: null,  // [{fromPeer, toPeer, eventType, offsetMs, timestamp_ns}]
+
     // Replay: selected time range for looping particle animation
     replayRange: null,  // {startNs, endNs} or null
     replayProgress: -1, // 0..1 cycle progress, -1 if not replaying

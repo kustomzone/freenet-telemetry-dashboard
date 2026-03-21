@@ -2007,10 +2007,16 @@ def get_history():
 
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
+    # Include pre-computed flows for immediate replay animation
+    flows_list = []
+    if db_event_count > 0:
+        flows_list = db.get_flows_for_range(start_ns, end_ns)
+
     return {
         "type": "history",
         "events": events_list,
         "transactions": tx_list,
+        "flows": flows_list,
         "peer_presence": sorted_presence,
         "time_range": {"start": start_ns, "end": end_ns},
     }
