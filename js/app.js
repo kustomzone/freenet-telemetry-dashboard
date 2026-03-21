@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, spawnRingParticle } from './topology.js';
+import { updateRingSVG, spawnRingParticle, setParticleRedrawCallback } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
@@ -208,16 +208,13 @@ function handleEventHover(event) {
 }
 
 /**
- * Handle timeline scrub — spawn ring particles for events under the cursor.
+ * Handle timeline scrub — spawn ring particles for message flows under the cursor.
+ * Flows are [{fromPeer, toPeer, eventType}] inferred from transactions.
  */
-function handleTimelineScrub(events) {
+function handleTimelineScrub(flows) {
     if (_cachedPeers.size === 0) return;
-    for (const evt of events) {
-        const fromId = evt.from_peer || evt.peer_id;
-        const toId = evt.to_peer;
-        if (fromId && toId && fromId !== toId) {
-            spawnRingParticle(fromId, toId, evt.event_type, _cachedPeers);
-        }
+    for (const flow of flows) {
+        spawnRingParticle(flow.fromPeer, flow.toPeer, flow.eventType, _cachedPeers);
     }
 }
 
@@ -294,6 +291,9 @@ function showFindMyPeerButton() {
 // ============================================================================
 // Initialization
 // ============================================================================
+
+// Wire particle animation to trigger view updates
+setParticleRedrawCallback(scheduleUpdateView);
 
 // Setup timeline interactions (canvas hover/click, keyboard shortcuts)
 setupTimeline({

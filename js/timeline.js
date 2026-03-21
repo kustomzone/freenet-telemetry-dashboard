@@ -315,8 +315,10 @@ function hideTooltip() {
 // ============================================================================
 
 /**
- * Return all events whose timestamp falls within ±3px of canvasX.
- * Respects current contract/peer filters.
+ * Collect message-flow pairs from events near the cursor position.
+ * Returns [{fromPeer, toPeer, eventType}] by inferring flows from
+ * transaction data: consecutive events on different peers within
+ * the same transaction imply a message traveled between them.
  */
 function scrubHitTest(canvasX, canvas) {
     const width = canvas.clientWidth;
@@ -340,20 +342,51 @@ function scrubHitTest(canvasX, canvas) {
         else hi = mid;
     }
 
-    const results = [];
-    for (let i = lo; i < events.length && results.length < 8; i++) {
+    // Collect events in the time window, respecting filters
+    const windowEvents = [];
+    for (let i = lo; i < events.length && windowEvents.length < 20; i++) {
         const e = events[i];
         if (e.timestamp > tMax) break;
         if (!eventMatchesFilters(e)) continue;
-        // Only include events with two-peer info (can draw a path)
-        if (e.from_peer && e.to_peer && e.from_peer !== e.to_peer) {
-            results.push(e);
-        } else if (e.peer_id) {
-            // Single-peer events still useful for glow effect
-            results.push(e);
+        windowEvents.push(e);
+    }
+
+    // Build message flows
+    const flows = [];
+    const seenTx = new Set();
+
+    for (const evt of windowEvents) {
+        // Direct from_peer/to_peer (rare but ideal)
+        if (evt.from_peer && evt.to_peer && evt.from_peer !== evt.to_peer) {
+            flows.push({ fromPeer: evt.from_peer, toPeer: evt.to_peer, eventType: evt.event_type });
+            continue;
+        }
+
+        // Infer from transaction: find previous event on a different peer
+        if (evt.tx_id && !seenTx.has(evt.tx_id)) {
+            seenTx.add(evt.tx_id);
+            const txIdx = state.transactionMap.get(evt.tx_id);
+            if (txIdx !== undefined) {
+                const tx = state.allTransactions[txIdx];
+                if (tx && tx.events && tx.events.length >= 2) {
+                    // Sort by timestamp, find consecutive peer-to-peer hops
+                    const sorted = [...tx.events].sort((a, b) => a.timestamp - b.timestamp);
+                    for (let j = 1; j < sorted.length && flows.length < 8; j++) {
+                        if (sorted[j].peer_id && sorted[j - 1].peer_id &&
+                            sorted[j].peer_id !== sorted[j - 1].peer_id) {
+                            flows.push({
+                                fromPeer: sorted[j - 1].peer_id,
+                                toPeer: sorted[j].peer_id,
+                                eventType: sorted[j].event_type || tx.op
+                            });
+                        }
+                    }
+                }
+            }
         }
     }
-    return results;
+
+    return flows;
 }
 
 // ============================================================================

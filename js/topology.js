@@ -306,22 +306,24 @@ function drawRingParticles(ctx) {
     }
 }
 
+// Callback to schedule a view update (set from app.js)
+let _scheduleRedraw = null;
+
+export function setParticleRedrawCallback(cb) {
+    _scheduleRedraw = cb;
+}
+
 function startRingParticleLoop() {
     if (ringParticleFrame) return;
 
     function step() {
+        if (ringParticles.length === 0) {
+            ringParticleFrame = null;
+            return;
+        }
         ringParticleFrame = requestAnimationFrame(step);
-
-        const canvas = peerCanvasEl;
-        if (!canvas || ringParticles.length === 0) return;
-        const ctx = canvas.getContext('2d');
-        const dpr = window.devicePixelRatio || 1;
-        const displaySize = parseInt(canvas.style.width) || SVG_SIZE;
-        const scale = displaySize / SVG_SIZE;
-        ctx.save();
-        ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
-        drawRingParticles(ctx);
-        ctx.restore();
+        // Request a full redraw which will call drawRingParticles in the render path
+        if (_scheduleRedraw) _scheduleRedraw();
     }
     ringParticleFrame = requestAnimationFrame(step);
 }
