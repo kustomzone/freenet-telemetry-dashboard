@@ -323,6 +323,7 @@ function hideTooltip() {
 let dragStartX = null;   // canvas X where drag started
 let dragCurrentX = null;  // canvas X of current drag position
 let isDragging = false;
+let suppressNextClick = false; // eat the click event that follows a successful drag
 
 /**
  * Collect message flows for a time range from transaction data.
@@ -578,6 +579,7 @@ export function setupTimeline(callbacks) {
         }
 
         state.replayRange = { startNs, endNs };
+        suppressNextClick = true; // prevent the click event from immediately clearing it
         lastCanvasKey = null;
         renderExponentialTimeline();
         if (callbacks.onReplayRange) callbacks.onReplayRange({ startNs, endNs });
@@ -585,6 +587,10 @@ export function setupTimeline(callbacks) {
 
     // --- Canvas click: select event or clear replay ---
     canvas.addEventListener('click', (e) => {
+        if (suppressNextClick) {
+            suppressNextClick = false;
+            return;
+        }
         const rect = canvas.getBoundingClientRect();
         const x = e.clientX - rect.left;
         const y = e.clientY - rect.top;

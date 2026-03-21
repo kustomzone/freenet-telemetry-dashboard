@@ -214,11 +214,15 @@ function handleEventHover(event) {
  */
 function handleReplayRange(range) {
     if (!range) {
+        console.log('[replay] range cleared');
         stopReplay();
         return;
     }
+    console.log(`[replay] range: ${new Date(range.startNs/1e6).toISOString()} - ${new Date(range.endNs/1e6).toISOString()}, peers=${_cachedPeers.size}`);
     if (_cachedPeers.size === 0) return;
     const flows = collectFlowsForRange(range.startNs, range.endNs);
+    console.log(`[replay] found ${flows.length} flows`);
+    if (flows.length > 0) console.log('[replay] first flow:', flows[0]);
     startReplay(flows, _cachedPeers);
 }
 
