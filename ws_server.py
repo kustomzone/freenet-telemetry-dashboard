@@ -210,6 +210,14 @@ HISTORY_EVENT_TYPES = {
     "subscribed",
 }
 
+# High-volume event types that are sampled (1 in 10) for history/DB storage.
+# These are useful for flow computation but individually they're noise.
+_SAMPLED_EVENT_TYPES = {
+    "update_broadcast_received",
+    "update_broadcast_applied",
+}
+_sample_counters = {}  # event_type -> count
+
 # Broader set sent in the real-time stream — includes noisy types that
 # are useful to see live but would flood the history buffer.
 REALTIME_EVENT_TYPES = HISTORY_EVENT_TYPES | {
@@ -1667,6 +1675,11 @@ def process_record(record, store_history=True):
 
     # Store in history buffer and SQLite DB
     if store_history and event_type in HISTORY_EVENT_TYPES:
+        # Sample high-volume event types (1 in 10) to avoid flooding
+        if event_type in _SAMPLED_EVENT_TYPES:
+            _sample_counters[event_type] = _sample_counters.get(event_type, 0) + 1
+            if _sample_counters[event_type] % 10 != 0:
+                return event  # skip storage, still return for real-time broadcast
         event_history.append(event)
         db.insert_event(event)
         if len(event_history) % 100 == 0:
@@ -1989,7 +2002,7 @@ def get_history():
     # Try DB first — has deeper history that survives restarts
     db_event_count = db.event_count()
     if db_event_count > 0:
-        events_list = db.get_recent_events(limit=MAX_INITIAL_EVENTS)
+        events_list = db.get_sampled_events(limit=MAX_INITIAL_EVENTS)
         HISTORY_TX_OPS = {"put", "get", "update", "broadcast", "connect", "subscribe"}
         tx_list = db.get_recent_transactions(limit=MAX_INITIAL_TRANSACTIONS, ops=HISTORY_TX_OPS)
         start_ns, end_ns = db.get_time_range()

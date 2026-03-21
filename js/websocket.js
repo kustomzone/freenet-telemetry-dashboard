@@ -216,15 +216,13 @@ function handleMessage(data, callbacks) {
     } else if (data.type === 'history') {
         state.allEvents.length = 0;
         state.allEvents.push(...data.events);
-        // Use the server's time_range which reflects the full DB history,
-        // not just the events sent in this message
+        // Use the actual events for the display range — no empty padding.
+        // With SQLite persistence we always have real data to show.
         state.timeRange.end = Date.now() * 1_000_000;
-        state.timeRange.start = data.time_range.start || state.timeRange.end;
-        // Ensure minimum 2-hour display range
-        const MIN_DISPLAY_RANGE_NS = 2 * 60 * 60 * 1_000_000_000;
-        const actualRange = state.timeRange.end - state.timeRange.start;
-        if (actualRange < MIN_DISPLAY_RANGE_NS) {
-            state.timeRange.start = state.timeRange.end - MIN_DISPLAY_RANGE_NS;
+        if (state.allEvents.length > 0) {
+            state.timeRange.start = state.allEvents[0].timestamp;
+        } else {
+            state.timeRange.start = data.time_range.start || state.timeRange.end;
         }
         state.currentTime = state.timeRange.end;
 

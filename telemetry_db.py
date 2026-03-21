@@ -250,6 +250,31 @@ class TelemetryDB:
         # Reverse so oldest-first (clients expect chronological order)
         return [orjson.loads(row[0]) for row in reversed(rows)]
 
+    def get_sampled_events(self, limit=10000):
+        """Get events sampled evenly across the full time range.
+        Returns up to `limit` events spread across all available history,
+        ensuring good timeline coverage rather than just the last few seconds."""
+        start_ns, end_ns = self.get_time_range()
+        if not start_ns or not end_ns or start_ns >= end_ns:
+            return self.get_recent_events(limit)
+
+        total = self.event_count()
+        if total <= limit:
+            # Fewer events than limit — return all
+            cur = self.conn.execute(
+                "SELECT data FROM events ORDER BY timestamp_ns"
+            )
+            return [orjson.loads(row[0]) for row in cur.fetchall()]
+
+        # Sample by selecting every Nth row using rowid modulo
+        # This gives even distribution regardless of event rate spikes
+        step = max(1, total // limit)
+        cur = self.conn.execute(
+            "SELECT data FROM events WHERE id % ? = 0 ORDER BY timestamp_ns LIMIT ?",
+            (step, limit),
+        )
+        return [orjson.loads(row[0]) for row in cur.fetchall()]
+
     def get_time_range(self):
         """Get (min_timestamp, max_timestamp) from events table.
         Uses indexed MIN/MAX which are O(1) on the timestamp_ns index."""
