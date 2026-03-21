@@ -6,7 +6,7 @@
 // Import modules
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { getEventClass, getEventLabel, formatTime } from './utils.js';
-import { updateRingSVG, startReplay, stopReplay, isReplaying, setParticleRedrawCallback, adjustReplaySpeed } from './topology.js';
+import { updateRingSVG, startReplay, stopReplay, isReplaying, setParticleRedrawCallback, adjustReplaySpeed, toggleReplayPause } from './topology.js';
 import {
     renderTimeline, renderRuler,
     updatePlayhead, setupTimeline,
@@ -320,11 +320,15 @@ setupTimeline({
     selectEvent: handleEventClick,
     onEventHover: handleEventHover,
     onReplayRange: handleReplayRange,
-    onStopReplay: () => { stopReplay(); },
+    onStopReplay: () => { stopReplay(); state.replayPaused = false; },
+    onTogglePause: () => {
+        const paused = toggleReplayPause();
+        state.replayPaused = paused;
+    },
     onSpeedChange: (factor) => {
         const newSpeed = adjustReplaySpeed(factor);
         state.replaySpeed = newSpeed;
-        state.replaySpeedShownUntil = performance.now() + 1500; // show for 1.5s
+        state.replaySpeedShownUntil = performance.now() + 1500;
     }
 });
 

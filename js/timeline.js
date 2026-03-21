@@ -439,15 +439,17 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
         ctx.stroke();
     }
 
-    // Speed label (shown briefly after scroll wheel adjustment)
-    if (state.replaySpeedShownUntil > performance.now()) {
-        const speedLabel = `${state.replaySpeed.toFixed(1)}×`;
-        const centerX = (left + right) / 2;
-        ctx.font = 'bold 11px "JetBrains Mono", monospace';
-        ctx.textAlign = 'center';
-        ctx.textBaseline = 'top';
-        ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.8)' : 'rgba(0, 180, 255, 0.8)';
-        ctx.fillText(speedLabel, centerX, 2);
+    // Status label: PAUSED or speed change
+    const centerX = (left + right) / 2;
+    ctx.font = 'bold 11px "JetBrains Mono", monospace';
+    ctx.textAlign = 'center';
+    ctx.textBaseline = 'top';
+    ctx.fillStyle = isLight ? 'rgba(0, 127, 255, 0.8)' : 'rgba(0, 180, 255, 0.8)';
+
+    if (state.replayPaused) {
+        ctx.fillText('⏸ PAUSED', centerX, 2);
+    } else if (state.replaySpeedShownUntil > performance.now()) {
+        ctx.fillText(`${state.replaySpeed.toFixed(1)}×`, centerX, 2);
     }
 }
 
@@ -627,11 +629,17 @@ export function setupTimeline(callbacks) {
         renderExponentialTimeline();
     });
 
-    // Escape stops replay
+    // Escape stops replay, Space pauses/resumes
     document.addEventListener('keydown', (e) => {
         if (e.key === 'Escape' && state.replayRange) {
             state.replayRange = null;
             if (callbacks.onStopReplay) callbacks.onStopReplay();
+            lastCanvasKey = null;
+            renderExponentialTimeline();
+        }
+        if (e.key === ' ' && state.replayRange) {
+            e.preventDefault(); // don't scroll the page
+            if (callbacks.onTogglePause) callbacks.onTogglePause();
             lastCanvasKey = null;
             renderExponentialTimeline();
         }

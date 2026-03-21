@@ -67,6 +67,7 @@ export const state = {
     replayRange: null,  // {startNs, endNs} or null
     replayProgress: -1, // 0..1 cycle progress, -1 if not replaying
     replaySpeed: 1.0,   // current speed for display
+    replayPaused: false, // true when replay is paused
     replaySpeedShownUntil: 0, // performance.now() timestamp to hide speed label
 
     // Network state from server

@@ -310,6 +310,27 @@ export function stopReplay() {
     replayFlows = [];
     ringParticles.length = 0;
     state.replayProgress = -1;
+    replayPaused = false;
+}
+
+let replayPaused = false;
+let replayPauseOffset = 0; // how far into the cycle we were when paused
+
+export function toggleReplayPause() {
+    if (replayFlows.length === 0) return false;
+    replayPaused = !replayPaused;
+    if (replayPaused) {
+        // Remember where we are in the cycle
+        replayPauseOffset = performance.now() - replayLoopStart;
+    } else {
+        // Resume from where we paused
+        replayLoopStart = performance.now() - replayPauseOffset;
+    }
+    return replayPaused;
+}
+
+export function isReplayPaused() {
+    return replayPaused;
 }
 
 export function isReplaying() {
@@ -339,6 +360,13 @@ function startReplayLoop() {
         if (replayFlows.length === 0) {
             cancelAnimationFrame(replayFrame);
             replayFrame = null;
+            return;
+        }
+
+        // When paused, keep the animation frame running (for future resume)
+        // but don't advance anything
+        if (replayPaused) {
+            if (_scheduleRedraw) _scheduleRedraw(); // still redraw (shows PAUSED state)
             return;
         }
 
