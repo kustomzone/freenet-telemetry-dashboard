@@ -416,6 +416,20 @@ export function collectFlowsForRange(startNs, endNs) {
 
     console.log(`[flows] txns: ${seenTx.size} unique, notFound=${dbgNotFound}, tooFew=${dbgTooFew}, singlePeer=${dbgSinglePeer}, multiPeer=${dbgMultiPeer}, noTxId=${dbgNoTx}`);
 
+    // Debug: sample a tx_id from events and check the map
+    if (dbgNotFound > 0) {
+        const sampleEvt = windowEvents.find(e => e.tx_id);
+        if (sampleEvt) {
+            console.log(`[flows] sample evt tx_id: "${sampleEvt.tx_id}" (type: ${typeof sampleEvt.tx_id})`);
+            const mapKeys = [...state.transactionMap.keys()].slice(0, 3);
+            console.log(`[flows] transactionMap sample keys:`, mapKeys);
+            console.log(`[flows] map.has(sample): ${state.transactionMap.has(sampleEvt.tx_id)}`);
+            // Try exact string match
+            const sampleKey = mapKeys[0];
+            if (sampleKey) console.log(`[flows] key type: ${typeof sampleKey}, key[0]: "${sampleKey}"`);
+        }
+    }
+
     return flows;
 }
 
