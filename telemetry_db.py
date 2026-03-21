@@ -347,52 +347,57 @@ class TelemetryDB:
         return result
 
     def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=300):
-        """Get pre-computed flows for a time range, sampled evenly.
-        Contract filtering uses the tx_id stored on each flow to JOIN
-        to the transactions table."""
+        """Get pre-computed flows for a time range, sampled evenly across time.
+        Divides the range into time buckets and takes flows from each bucket
+        to ensure good visual coverage across the full replay."""
+        where = "timestamp_ns BETWEEN ? AND ?"
+        params = [start_ns, end_ns]
+        table = "flows"
+        select_cols = "timestamp_ns, from_peer, to_peer, event_type"
+
         if contract_key:
-            base_sql = (
-                "SELECT f.id, f.timestamp_ns, f.from_peer, f.to_peer, f.event_type "
-                "FROM flows f "
-                "JOIN transactions t ON f.tx_id = t.tx_id "
-                "WHERE f.timestamp_ns BETWEEN ? AND ? AND t.contract_key = ?"
-            )
+            table = "flows f JOIN transactions t ON f.tx_id = t.tx_id"
+            select_cols = "f.timestamp_ns, f.from_peer, f.to_peer, f.event_type"
+            where = "f.timestamp_ns BETWEEN ? AND ? AND t.contract_key = ?"
             params = [start_ns, end_ns, contract_key]
             if peer_id:
-                base_sql += " AND (f.from_peer = ? OR f.to_peer = ?)"
+                where += " AND (f.from_peer = ? OR f.to_peer = ?)"
                 params.extend([peer_id, peer_id])
-        else:
-            base_sql = "SELECT id, timestamp_ns, from_peer, to_peer, event_type FROM flows WHERE timestamp_ns BETWEEN ? AND ?"
-            params = [start_ns, end_ns]
-            if peer_id:
-                base_sql += " AND (from_peer = ? OR to_peer = ?)"
-                params.extend([peer_id, peer_id])
+        elif peer_id:
+            where += " AND (from_peer = ? OR to_peer = ?)"
+            params.extend([peer_id, peer_id])
 
-        # Count matching flows to determine sampling rate
-        count_sql = f"SELECT COUNT(*) FROM ({base_sql})"
-        cur = self.conn.execute(count_sql, params)
-        total = cur.fetchone()[0]
+        # Divide range into time buckets and take a few flows from each
+        range_ns = end_ns - start_ns
+        if range_ns <= 0:
+            return []
 
-        if total <= limit:
-            # Few enough to return all
-            sql = base_sql + " ORDER BY timestamp_ns"
-        else:
-            # Sample by id modulo for even distribution
-            step = max(1, total // limit)
-            base_sql += f" AND f.id % {step} = 0" if contract_key else f" AND id % {step} = 0"
-            sql = base_sql + f" ORDER BY timestamp_ns LIMIT {limit}"
+        num_buckets = min(limit, 100)  # up to 100 time buckets
+        per_bucket = max(1, limit // num_buckets)
+        bucket_ns = range_ns // num_buckets
 
-        cur = self.conn.execute(sql, params)
-        return [
-            {
-                "timestamp_ns": row[1],
-                "fromPeer": row[2],
-                "toPeer": row[3],
-                "eventType": row[4],
-                "offsetMs": (row[1] - start_ns) / 1_000_000,
-            }
-            for row in cur.fetchall()
-        ]
+        all_flows = []
+        for b in range(num_buckets):
+            bucket_start = start_ns + b * bucket_ns
+            bucket_end = bucket_start + bucket_ns
+            bucket_params = list(params)
+            bucket_params[0] = bucket_start
+            bucket_params[1] = bucket_end
+
+            sql = f"SELECT {select_cols} FROM {table} WHERE {where} ORDER BY timestamp_ns LIMIT {per_bucket}"
+            cur = self.conn.execute(sql, bucket_params)
+            for row in cur.fetchall():
+                all_flows.append({
+                    "timestamp_ns": row[0],
+                    "fromPeer": row[1],
+                    "toPeer": row[2],
+                    "eventType": row[3],
+                    "offsetMs": (row[0] - start_ns) / 1_000_000,
+                })
+            if len(all_flows) >= limit:
+                break
+
+        return all_flows[:limit]
 
     # ---- Metadata ----
 

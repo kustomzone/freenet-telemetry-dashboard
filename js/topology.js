@@ -292,9 +292,11 @@ export function startReplay(flows, peers) {
     const minOffset = Math.min(...replayFlows.map(f => f.offsetMs));
     replayRealDurationMs = maxOffset;
 
-    // Store flow time range for accurate playhead mapping
+    // Store flow time range for playhead mapping.
+    // Progress 0 = first particle (offsetMs=0 = range start),
+    // Progress 1 = last particle (offsetMs=maxOffset).
     if (state.replayRange) {
-        replayFlowStartNs = state.replayRange.startNs + minOffset * 1_000_000;
+        replayFlowStartNs = state.replayRange.startNs;
         replayFlowEndNs = state.replayRange.startNs + maxOffset * 1_000_000;
     }
     // Compress to 3-8s replay window
@@ -479,9 +481,9 @@ function updateTimelinePlayhead() {
         canvas.parentElement.appendChild(el);
     }
 
-    // Import timeToX dynamically would create a circular dep, so compute inline
-    // using the same exponential formula
-    const tNow = state.currentTime;
+    // Use live time (not cached state.currentTime which may be stale
+    // since the timeline canvas isn't redrawn every frame during replay)
+    const tNow = Date.now() * 1_000_000;
     const totalDurationNs = tNow - state.timeRange.start;
     if (totalDurationNs <= 0) return;
 
