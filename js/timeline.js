@@ -386,18 +386,23 @@ export function collectFlowsForRange(startNs, endNs) {
         }
     }
 
-    // Add transfer flows (gateway ↔ remote peer)
+    // Add transfer flows (gateway ↔ remote peer), sampled to avoid overwhelming
     const gatewayId = state.gatewayPeerId;
-    if (gatewayId) {
+    if (gatewayId && !state.selectedContract) {
         const transfers = getTransferEvents();
+        // Collect eligible transfers first
+        const eligible = [];
         for (const t of transfers) {
             if (t.timestamp < startNs || t.timestamp > endNs) continue;
             if (!t.peer_id) continue;
-            // Respect contract filter — transfers don't have contracts, skip if filtering
-            if (state.selectedContract) continue;
-            // Respect peer filter
             if (state.selectedPeerId && t.peer_id !== state.selectedPeerId && gatewayId !== state.selectedPeerId) continue;
-
+            eligible.push(t);
+        }
+        // Sample: keep at most ~30 transfer flows spread across the range
+        const MAX_TRANSFER_FLOWS = 30;
+        const step = eligible.length > MAX_TRANSFER_FLOWS ? Math.floor(eligible.length / MAX_TRANSFER_FLOWS) : 1;
+        for (let i = 0; i < eligible.length; i += step) {
+            const t = eligible[i];
             const fromPeer = t.direction === 'Send' ? gatewayId : t.peer_id;
             const toPeer = t.direction === 'Send' ? t.peer_id : gatewayId;
             flows.push({
