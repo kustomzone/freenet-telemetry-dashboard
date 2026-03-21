@@ -331,6 +331,11 @@ setupTimeline({
     onTogglePause: () => {
         const paused = toggleReplayPause();
         state.replayPaused = paused;
+        const btn = document.getElementById('replay-pause-btn');
+        if (btn) {
+            btn.querySelector('.replay-pause-icon').textContent = paused ? '▶' : '⏸';
+            btn.classList.toggle('active', paused);
+        }
     },
     onSpeedChange: (factor) => {
         const newSpeed = adjustReplaySpeed(factor);
@@ -370,5 +375,16 @@ connect({
 
 // Initialize transfer chart
 initTransferChart();
+
+// Pause button
+const pauseBtn = document.getElementById('replay-pause-btn');
+if (pauseBtn) {
+    pauseBtn.addEventListener('click', () => {
+        const paused = toggleReplayPause();
+        state.replayPaused = paused;
+        pauseBtn.querySelector('.replay-pause-icon').textContent = paused ? '▶' : '⏸';
+        pauseBtn.classList.toggle('active', paused);
+    });
+}
 
 console.log('Freenet Dashboard initialized (modular)');
