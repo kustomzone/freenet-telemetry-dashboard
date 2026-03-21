@@ -170,13 +170,19 @@ class TelemetryDB:
             if len(events) < 2:
                 return
 
-            # Find consecutive events on different peers
+            # Find consecutive events on different peers, capped to avoid
+            # explosion from large broadcast transactions (100+ peers)
+            MAX_FLOWS_PER_TX = 5
+            flow_count = 0
             for j in range(1, len(events)):
                 ts_prev, _et_prev, pid_prev = events[j - 1]
                 ts_curr, et_curr, pid_curr = events[j]
                 if pid_prev and pid_curr and pid_prev != pid_curr:
                     mid_ts = (ts_prev + ts_curr) // 2
                     self._flow_buf.append((mid_ts, pid_prev, pid_curr, et_curr, tx_id))
+                    flow_count += 1
+                    if flow_count >= MAX_FLOWS_PER_TX:
+                        break
         except Exception as e:
             print(f"[db] compute_flows_for_tx error: {e}")
 
@@ -340,39 +346,50 @@ class TelemetryDB:
             })
         return result
 
-    def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None):
-        """Get pre-computed flows for a time range.
+    def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=300):
+        """Get pre-computed flows for a time range, sampled evenly.
         Contract filtering uses the tx_id stored on each flow to JOIN
         to the transactions table."""
         if contract_key:
-            # Filter via tx_id -> transactions.contract_key
-            sql = (
-                "SELECT f.timestamp_ns, f.from_peer, f.to_peer, f.event_type "
+            base_sql = (
+                "SELECT f.id, f.timestamp_ns, f.from_peer, f.to_peer, f.event_type "
                 "FROM flows f "
                 "JOIN transactions t ON f.tx_id = t.tx_id "
                 "WHERE f.timestamp_ns BETWEEN ? AND ? AND t.contract_key = ?"
             )
             params = [start_ns, end_ns, contract_key]
             if peer_id:
-                sql += " AND (f.from_peer = ? OR f.to_peer = ?)"
+                base_sql += " AND (f.from_peer = ? OR f.to_peer = ?)"
                 params.extend([peer_id, peer_id])
         else:
-            sql = "SELECT timestamp_ns, from_peer, to_peer, event_type FROM flows WHERE timestamp_ns BETWEEN ? AND ?"
+            base_sql = "SELECT id, timestamp_ns, from_peer, to_peer, event_type FROM flows WHERE timestamp_ns BETWEEN ? AND ?"
             params = [start_ns, end_ns]
             if peer_id:
-                sql += " AND (from_peer = ? OR to_peer = ?)"
+                base_sql += " AND (from_peer = ? OR to_peer = ?)"
                 params.extend([peer_id, peer_id])
 
-        sql += " ORDER BY timestamp_ns LIMIT 500"
+        # Count matching flows to determine sampling rate
+        count_sql = f"SELECT COUNT(*) FROM ({base_sql})"
+        cur = self.conn.execute(count_sql, params)
+        total = cur.fetchone()[0]
+
+        if total <= limit:
+            # Few enough to return all
+            sql = base_sql + " ORDER BY timestamp_ns"
+        else:
+            # Sample by id modulo for even distribution
+            step = max(1, total // limit)
+            base_sql += f" AND f.id % {step} = 0" if contract_key else f" AND id % {step} = 0"
+            sql = base_sql + f" ORDER BY timestamp_ns LIMIT {limit}"
 
         cur = self.conn.execute(sql, params)
         return [
             {
-                "timestamp_ns": row[0],
-                "fromPeer": row[1],
-                "toPeer": row[2],
-                "eventType": row[3],
-                "offsetMs": (row[0] - start_ns) / 1_000_000,
+                "timestamp_ns": row[1],
+                "fromPeer": row[2],
+                "toPeer": row[3],
+                "eventType": row[4],
+                "offsetMs": (row[1] - start_ns) / 1_000_000,
             }
             for row in cur.fetchall()
         ]

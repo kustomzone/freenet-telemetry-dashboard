@@ -348,15 +348,19 @@ def main():
         for ts, et, pid in tx["events"]:
             txe_rows.append((tx_id, ts, et, pid))
 
-        # Compute flows
+        # Compute flows (capped per transaction to avoid explosion from broadcasts)
         events = sorted(tx["events"], key=lambda e: e[0])
         if len(events) >= 2:
             peers = set(e[2] for e in events if e[2])
             if len(peers) >= 2:
+                tx_flow_count = 0
                 for j in range(1, len(events)):
                     if events[j][2] and events[j - 1][2] and events[j][2] != events[j - 1][2]:
                         mid_ts = (events[j - 1][0] + events[j][0]) // 2
                         flow_rows.append((mid_ts, events[j - 1][2], events[j][2], events[j][1], tx_id))
+                        tx_flow_count += 1
+                        if tx_flow_count >= 5:
+                            break
 
     conn.execute("BEGIN")
     conn.executemany(
