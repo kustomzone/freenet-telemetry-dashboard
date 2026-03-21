@@ -216,14 +216,10 @@ function handleMessage(data, callbacks) {
     } else if (data.type === 'history') {
         state.allEvents.length = 0;
         state.allEvents.push(...data.events);
-        // Use the actual events' timestamps for the display range, not
-        // the server's full history range (which may be wider than what was sent)
+        // Use the server's time_range which reflects the full DB history,
+        // not just the events sent in this message
         state.timeRange.end = Date.now() * 1_000_000;
-        if (state.allEvents.length > 0) {
-            state.timeRange.start = state.allEvents[0].timestamp;
-        } else {
-            state.timeRange.start = data.time_range.start;
-        }
+        state.timeRange.start = data.time_range.start || state.timeRange.end;
         // Ensure minimum 2-hour display range
         const MIN_DISPLAY_RANGE_NS = 2 * 60 * 60 * 1_000_000_000;
         const actualRange = state.timeRange.end - state.timeRange.start;
