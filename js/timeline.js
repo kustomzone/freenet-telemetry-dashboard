@@ -332,7 +332,12 @@ let suppressNextClick = false; // eat the click event that follows a successful 
  */
 export function collectFlowsForRange(startNs, endNs) {
     const events = state.allEvents;
-    if (events.length === 0) return [];
+    if (events.length === 0) { console.log('[flows] no events'); return []; }
+
+    // Debug: check event timestamp range
+    console.log(`[flows] searching ${startNs} - ${endNs}`);
+    console.log(`[flows] events[0].ts=${events[0].timestamp}, events[last].ts=${events[events.length-1].timestamp}`);
+    console.log(`[flows] total events: ${events.length}, total txns: ${state.allTransactions.length}`);
 
     // Binary search for start
     let lo = 0, hi = events.length;
@@ -342,13 +347,22 @@ export function collectFlowsForRange(startNs, endNs) {
         else hi = mid;
     }
 
+    console.log(`[flows] binary search lo=${lo}`);
+
     // Collect events in the range, respecting filters
     const windowEvents = [];
+    let skippedByFilter = 0;
     for (let i = lo; i < events.length; i++) {
         const e = events[i];
         if (e.timestamp > endNs) break;
-        if (!eventMatchesFilters(e)) continue;
+        if (!eventMatchesFilters(e)) { skippedByFilter++; continue; }
         windowEvents.push(e);
+    }
+
+    console.log(`[flows] windowEvents: ${windowEvents.length}, skippedByFilter: ${skippedByFilter}`);
+    if (windowEvents.length > 0) {
+        const withTx = windowEvents.filter(e => e.tx_id).length;
+        console.log(`[flows] with tx_id: ${withTx}, sample:`, windowEvents[0]);
     }
 
     // Build message flows from transactions
