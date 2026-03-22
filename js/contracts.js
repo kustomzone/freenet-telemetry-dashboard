@@ -188,8 +188,9 @@ export function renderContractsList() {
                         ? `${(propagationSec / 60).toFixed(1)}min`
                         : `${(propagationSec / 3600).toFixed(1)}hr`;
             const timeAgo = formatRelativeTime(prop.first_seen);
+            const txInfo = prop.tx_id ? `Tx: ${prop.tx_id.substring(0, 12)}...` : `State: ${prop.hash.substring(0, 16)}`;
             sparklineHtml = `
-                <div class="propagation-sparkline-container" title="State ${prop.hash}&#10;Changed: ${timeAgo}&#10;Spread to ${prop.peer_count} peers in ${propagationStr}">
+                <div class="propagation-sparkline-container" title="${txInfo}&#10;Changed: ${timeAgo}&#10;Spread to ${prop.peer_count} peers in ${propagationStr}">
                     <span class="propagation-sparkline">${sparkline}</span>
                     <span class="propagation-stats">${propagationStr}</span>
                 </div>

@@ -374,12 +374,15 @@ contract_states = {}
 # contract_key -> {size: int, timestamp: int}
 contract_state_sizes = {}
 
-# Contract propagation tracking - tracks how quickly new states spread across peers
-# contract_key -> {current_hash, first_seen, peers: {peer_id -> timestamp}, previous: {...}}
+# Contract propagation tracking - tracks how quickly updates spread across peers
+# Tracks by transaction ID (each chat message = one tx) to avoid conflating
+# independent updates that converge to the same CRDT state hash.
+# contract_key -> {current_tx, first_seen, peers: {peer_id -> timestamp}, previous: {...}}
 contract_propagation = {}
 
 
-def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_type):
+def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_type,
+                          tx_id=None, state_hash_before=None):
     """Update the known state hash for a (contract, peer) pair."""
     if not contract_key or not peer_id or not state_hash:
         return
@@ -398,41 +401,57 @@ def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_ty
         "event_type": event_type,
     }
 
-    # Track propagation timeline - only for UPDATE events that represent state changes spreading
+    # Track propagation timeline - only for UPDATE events that represent actual state changes
     # GET and PUT don't represent propagation - GET is reading existing data, PUT is initial creation
     if event_type in ("update_success", "update_broadcast_applied", "update_broadcast_emitted"):
-        update_propagation_tracking(contract_key, peer_id, state_hash, timestamp)
+        # Fix #2: Skip no-op merges where state didn't actually change (CRDT convergence artifact)
+        if state_hash_before and state_hash_before == state_hash:
+            return
+        update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx_id=tx_id)
 
 
-def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp):
-    """Track how a new state hash propagates across peers."""
+def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx_id=None):
+    """Track how an update propagates across peers.
+
+    Fix #1: Tracks by transaction ID instead of final state hash. In a CRDT system,
+    independent updates (e.g. two chat messages sent minutes apart) converge to the
+    same final state hash. Tracking by hash conflates these into one slow "propagation"
+    when each individual broadcast actually completes in seconds.
+
+    Falls back to state_hash tracking when tx_id is unavailable.
+    """
     prop = contract_propagation.setdefault(contract_key, {})
 
-    # Propagation window: only count peers that receive state within 5 minutes of first_seen
+    # Propagation window: only count peers that receive state within 2 minutes of first_seen
     # Anything after that is likely a peer catching up after being offline, not real propagation
-    PROPAGATION_WINDOW_NS = 5 * 60 * 1_000_000_000  # 5 minutes in nanoseconds
+    PROPAGATION_WINDOW_NS = 2 * 60 * 1_000_000_000  # 2 minutes in nanoseconds
 
-    # Check if this is a new state version
-    if prop.get("current_hash") != state_hash:
-        # Archive current state as previous (if exists)
-        if "current_hash" in prop and prop.get("peers"):
+    # Use tx_id as the tracking key when available; fall back to state_hash
+    tracking_key = tx_id if tx_id else state_hash
+
+    # Check if this is a new update wave
+    if prop.get("current_key") != tracking_key:
+        # Archive current as previous (if exists)
+        if "current_key" in prop and prop.get("peers"):
             peers = prop["peers"]
             prop["previous"] = {
-                "hash": prop["current_hash"],
+                "hash": prop.get("current_hash", ""),
+                "tx_id": prop.get("current_tx"),
                 "first_seen": prop["first_seen"],
                 "propagation_ms": (prop.get("last_seen", prop["first_seen"]) - prop["first_seen"]) // 1_000_000,
                 "peer_count": len(peers),
             }
-        # Start tracking new state
+        # Start tracking new update wave
+        prop["current_key"] = tracking_key
         prop["current_hash"] = state_hash
+        prop["current_tx"] = tx_id
         prop["first_seen"] = timestamp
         prop["last_seen"] = timestamp
         prop["peers"] = {peer_id: timestamp}
     else:
-        # Same hash - record when this peer first got it (if within propagation window)
+        # Same update wave - record when this peer received it
         if peer_id not in prop.get("peers", {}):
             first_seen = prop.get("first_seen", timestamp)
-            # Only count if within propagation window - late arrivals are peers catching up, not propagation
             if (timestamp - first_seen) <= PROPAGATION_WINDOW_NS:
                 prop.setdefault("peers", {})[peer_id] = timestamp
                 prop["last_seen"] = max(prop.get("last_seen", timestamp), timestamp)
@@ -459,7 +478,8 @@ def get_propagation_data():
         propagation_ms = (prop.get("last_seen", first_seen) - first_seen) // 1_000_000
 
         result[contract_key] = {
-            "hash": prop["current_hash"],
+            "hash": prop.get("current_hash", ""),
+            "tx_id": prop.get("current_tx"),
             "first_seen": first_seen,
             "propagation_ms": int(propagation_ms),
             "peer_count": len(peers),
@@ -945,7 +965,7 @@ def cleanup_stale_peers():
         prop_peers = prop.get("peers", {})
         for pid in stale_peer_ids:
             prop_peers.pop(pid, None)
-        if not prop_peers and "current_hash" in prop:
+        if not prop_peers and "current_key" in prop:
             del contract_propagation[contract_key]
 
     if removed_peers:
@@ -1199,14 +1219,18 @@ def process_record(record, store_history=True):
         elif event_type == "get_success" and state_hash:
             update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
         elif event_type == "update_success" and state_hash_after:
-            update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
+            update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type,
+                                  tx_id=tx_id, state_hash_before=state_hash_before)
         elif event_type in ("broadcast_emitted", "update_broadcast_emitted") and state_hash:
-            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
+            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type,
+                                  tx_id=tx_id)
         elif event_type == "update_broadcast_received" and state_hash:
-            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type)
+            update_contract_state(contract_key, event_peer_id, state_hash, timestamp, event_type,
+                                  tx_id=tx_id)
         elif event_type == "update_broadcast_applied" and state_hash_after:
             # broadcast_applied is the definitive post-merge state - takes precedence
-            update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type)
+            update_contract_state(contract_key, event_peer_id, state_hash_after, timestamp, event_type,
+                                  tx_id=tx_id, state_hash_before=state_hash_before)
 
     # Track contract state sizes (from put_success, update_success, broadcast_applied)
     if contract_key and state_size is not None:
