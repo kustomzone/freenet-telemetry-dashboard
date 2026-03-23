@@ -488,6 +488,21 @@ class TelemetryDB:
         if not all_events:
             return []
 
+        # Batch lookup: tx_id → contract_key
+        tx_ids = set(e[3] for e in all_events if e[3])
+        tx_to_contract = {}
+        if tx_ids:
+            # Query in chunks to avoid too-large IN clause
+            tx_list = list(tx_ids)
+            for i in range(0, len(tx_list), 500):
+                chunk = tx_list[i:i+500]
+                ph_chunk = ",".join("?" * len(chunk))
+                cur = self.conn.execute(
+                    f"SELECT tx_id, contract_key FROM transactions WHERE tx_id IN ({ph_chunk}) AND contract_key IS NOT NULL",
+                    chunk)
+                for row in cur.fetchall():
+                    tx_to_contract[row[0]] = row[1]
+
         # Group by tx_id for hop reconstruction
         by_tx = {}
         no_tx = []
@@ -514,13 +529,14 @@ class TelemetryDB:
             events.sort(key=lambda e: e[0])
             hops_emitted = 0
             prev_pulse_peer = None
+            ck = tx_to_contract.get(txid)
 
             for j in range(len(events)):
                 ts, et, pid = events[j]
                 if j > 0 and hops_emitted < MAX_HOPS_PER_TX:
                     ts_prev, _et_prev, pid_prev = events[j - 1]
                     if pid and pid_prev and pid != pid_prev:
-                        particles.append({
+                        p = {
                             "type": "hop",
                             "timestamp_ns": (ts_prev + ts) // 2,
                             "fromPeer": pid_prev,
@@ -528,21 +544,27 @@ class TelemetryDB:
                             "eventType": et,
                             "txId": txid,
                             "offsetMs": ((ts_prev + ts) // 2 - start_ns) / 1_000_000,
-                        })
+                        }
+                        if ck:
+                            p["contractKey"] = ck
+                        particles.append(p)
                         hops_emitted += 1
                         prev_pulse_peer = pid
                         continue
 
                 # Single-peer event or no hop detected — emit pulse
                 if pid and pid != prev_pulse_peer:
-                    particles.append({
+                    p = {
                         "type": "pulse",
                         "timestamp_ns": ts,
                         "peer": pid,
                         "eventType": et,
                         "txId": txid,
                         "offsetMs": (ts - start_ns) / 1_000_000,
-                    })
+                    }
+                    if ck:
+                        p["contractKey"] = ck
+                    particles.append(p)
                     prev_pulse_peer = pid
 
         # Events with explicit from/to or without tx_id
@@ -550,10 +572,10 @@ class TelemetryDB:
             ts, et, pid, txid = event_tuple[0], event_tuple[1], event_tuple[2], event_tuple[3]
             from_peer = event_tuple[4] if len(event_tuple) > 4 else None
             to_peer = event_tuple[5] if len(event_tuple) > 5 else None
+            ck = tx_to_contract.get(txid) if txid else None
 
             if from_peer and to_peer and from_peer != to_peer:
-                # Direct hop from explicit peers (broadcast events)
-                particles.append({
+                p = {
                     "type": "hop",
                     "timestamp_ns": ts,
                     "fromPeer": from_peer,
@@ -561,15 +583,21 @@ class TelemetryDB:
                     "eventType": et,
                     "txId": txid,
                     "offsetMs": (ts - start_ns) / 1_000_000,
-                })
+                }
+                if ck:
+                    p["contractKey"] = ck
+                particles.append(p)
             elif pid:
-                particles.append({
+                p = {
                     "type": "pulse",
                     "timestamp_ns": ts,
                     "peer": pid,
                     "eventType": et,
                     "offsetMs": (ts - start_ns) / 1_000_000,
-                })
+                }
+                if ck:
+                    p["contractKey"] = ck
+                particles.append(p)
 
         # Add sparse connect sample
         CONNECT_LIMIT = 500

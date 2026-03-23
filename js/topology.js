@@ -314,6 +314,13 @@ export function startReplay(flows, peers) {
         const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
         const et = flow.eventType || '';
 
+        // Compute contract ring position for tether line
+        let contractPos = null;
+        if (flow.contractKey) {
+            const loc = contractKeyToLocation(flow.contractKey);
+            if (loc !== null) contractPos = locationToXY(loc);
+        }
+
         if (flow.type === 'pulse') {
             // Single-peer event — pulse at peer position
             const peer = peerLookup.get(flow.peer);
@@ -321,7 +328,7 @@ export function startReplay(flows, peers) {
             const pos = locationToXY(peer.location);
             replayFlows.push({
                 peerPos: pos, color, offsetMs: flow.offsetMs,
-                txId: flow.txId,
+                txId: flow.txId, contractPos,
                 style: et.includes('broadcast') ? 'broadcast_pulse' : 'pulse',
             });
         } else {
@@ -347,7 +354,7 @@ export function startReplay(flows, peers) {
 
             replayFlows.push({
                 fromPos, toPos, cp, color, offsetMs: flow.offsetMs,
-                txId: flow.txId, style,
+                txId: flow.txId, style, contractPos,
             });
         }
     }
@@ -543,11 +550,10 @@ function startReplayLoop() {
                     startTime: now, duration: particleDuration,
                     style: flow.style || 'dot',
                 };
+                if (flow.contractPos) particle.contractPos = flow.contractPos;
                 if (flow.peerPos) {
-                    // Pulse particle — single position
                     particle.peerPos = flow.peerPos;
                 } else {
-                    // Hop particle — travelling between peers
                     particle.fromPos = flow.fromPos;
                     particle.toPos = flow.toPos;
                     particle.cp = flow.cp;
@@ -623,6 +629,21 @@ function drawRingParticles(ctx) {
 
     ctx.save();
     ctx.lineCap = 'round';
+
+    // Draw contract tether lines first (underneath particles)
+    for (const p of ringParticles) {
+        if (!p.contractPos) continue;
+        const t = (now - p.startTime) / p.duration;
+        const pos = p.peerPos || (p.fromPos ? quadBezierAt(p.fromPos, p.cp, p.toPos, 1 - (1 - t) * (1 - t)) : null);
+        if (!pos) continue;
+        ctx.globalAlpha = (1 - t) * 0.08;
+        ctx.strokeStyle = p.color;
+        ctx.lineWidth = 0.5;
+        ctx.beginPath();
+        ctx.moveTo(pos.x, pos.y);
+        ctx.lineTo(p.contractPos.x, p.contractPos.y);
+        ctx.stroke();
+    }
 
     // Batch particles by color to minimize state changes
     const byColor = new Map();
