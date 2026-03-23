@@ -49,6 +49,7 @@ CREATE TABLE IF NOT EXISTS transactions (
     event_count INTEGER DEFAULT 0
 );
 CREATE INDEX IF NOT EXISTS idx_tx_start ON transactions(start_ns);
+CREATE INDEX IF NOT EXISTS idx_tx_contract ON transactions(contract_key) WHERE contract_key IS NOT NULL;
 
 -- Transaction events: individual events within a transaction
 CREATE TABLE IF NOT EXISTS tx_events (
@@ -347,12 +348,17 @@ class TelemetryDB:
         return result
 
     def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=None):
-        """Get pre-computed flows for a time range, sampled evenly across time.
-        When filtered by contract or peer, returns all flows (full fidelity).
+        """Get pre-computed flows for a time range.
+        When filtered by contract or peer, returns all flows via single query.
         When unfiltered, samples across time buckets to limit volume."""
-        # All flows when filtered by peer/contract, sampled when showing everything
+        is_filtered = bool(contract_key or peer_id)
         if limit is None:
-            limit = 50000 if (contract_key or peer_id) else 1200
+            limit = 50000 if is_filtered else 1200
+
+        range_ns = end_ns - start_ns
+        if range_ns <= 0:
+            return []
+
         where = "timestamp_ns BETWEEN ? AND ?"
         params = [start_ns, end_ns]
         table = "flows"
@@ -370,12 +376,20 @@ class TelemetryDB:
             where += " AND (from_peer = ? OR to_peer = ?)"
             params.extend([peer_id, peer_id])
 
-        # Divide range into time buckets and take a few flows from each
-        range_ns = end_ns - start_ns
-        if range_ns <= 0:
-            return []
+        if is_filtered:
+            # Single query — relies on idx_tx_contract and idx_flows_tx indexes
+            sql = f"SELECT {select_cols} FROM {table} WHERE {where} ORDER BY timestamp_ns LIMIT {limit}"
+            cur = self.conn.execute(sql, params)
+            return [{
+                "timestamp_ns": row[0],
+                "fromPeer": row[1],
+                "toPeer": row[2],
+                "eventType": row[3],
+                "offsetMs": (row[0] - start_ns) / 1_000_000,
+            } for row in cur.fetchall()]
 
-        num_buckets = min(limit, 100)  # up to 100 time buckets
+        # Unfiltered: sample across time buckets for even distribution
+        num_buckets = min(limit, 100)
         per_bucket = max(1, limit // num_buckets)
         bucket_ns = range_ns // num_buckets
 
