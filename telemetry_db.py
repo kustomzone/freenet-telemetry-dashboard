@@ -60,6 +60,7 @@ CREATE TABLE IF NOT EXISTS tx_events (
     peer_id TEXT
 );
 CREATE INDEX IF NOT EXISTS idx_txe_txid ON tx_events(tx_id);
+CREATE INDEX IF NOT EXISTS idx_txe_type_ts ON tx_events(event_type, timestamp_ns);
 
 -- Pre-computed flows: peer-to-peer message hops
 -- tx_id stored for contract filtering via JOIN
@@ -347,6 +348,181 @@ class TelemetryDB:
                 "events": events,
             })
         return result
+
+    def get_events_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None):
+        """Get events for particle animation, with per-type budgets.
+        Returns a mix of 'hop' particles (peer-to-peer travel) and 'pulse'
+        particles (single-peer glow). Uses tx_events for hop reconstruction."""
+        if not self.conn:
+            return []
+
+        range_ns = end_ns - start_ns
+        if range_ns <= 0:
+            return []
+
+        # Per-type budgets — proportional to visual importance, not raw count
+        TYPE_BUDGETS = {
+            'get': {
+                'types': ('get_request', 'get_success', 'get_not_found', 'get_failure'),
+                'limit': 10000,
+            },
+            'subscribe': {
+                'types': ('subscribe_request', 'subscribe_success', 'subscribe_not_found'),
+                'limit': 10000,
+            },
+            'update': {
+                'types': ('update_request', 'update_success', 'update_failure'),
+                'limit': 10000,
+            },
+            'broadcast': {
+                'types': ('update_broadcast_received', 'update_broadcast_applied',
+                          'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied'),
+                'limit': 5000,
+            },
+            'put': {
+                'types': ('put_request', 'put_success'),
+                'limit': 2000,
+            },
+        }
+
+        # Collect events from tx_events with per-type budgets
+        all_events = []  # [(timestamp_ns, event_type, peer_id, tx_id)]
+
+        for group in TYPE_BUDGETS.values():
+            types = group['types']
+            budget = group['limit']
+            ph = ",".join("?" * len(types))
+
+            if contract_key:
+                sql = (f"SELECT te.timestamp_ns, te.event_type, te.peer_id, te.tx_id "
+                       f"FROM tx_events te JOIN transactions t ON te.tx_id = t.tx_id "
+                       f"WHERE te.event_type IN ({ph}) AND te.timestamp_ns BETWEEN ? AND ? "
+                       f"AND t.contract_key = ? ORDER BY te.timestamp_ns LIMIT ?")
+                params = list(types) + [start_ns, end_ns, contract_key, budget]
+            elif peer_id:
+                sql = (f"SELECT timestamp_ns, event_type, peer_id, tx_id "
+                       f"FROM tx_events WHERE event_type IN ({ph}) "
+                       f"AND timestamp_ns BETWEEN ? AND ? AND peer_id = ? "
+                       f"ORDER BY timestamp_ns LIMIT ?")
+                params = list(types) + [start_ns, end_ns, peer_id, budget]
+            else:
+                # Unfiltered — use bucketed sampling for even time distribution
+                num_buckets = 50
+                per_bucket = max(1, budget // num_buckets)
+                bucket_ns = range_ns // num_buckets
+                count = 0
+                for b in range(num_buckets):
+                    bs = start_ns + b * bucket_ns
+                    be = bs + bucket_ns
+                    cur = self.conn.execute(
+                        f"SELECT timestamp_ns, event_type, peer_id, tx_id "
+                        f"FROM tx_events WHERE event_type IN ({ph}) "
+                        f"AND timestamp_ns BETWEEN ? AND ? "
+                        f"ORDER BY timestamp_ns LIMIT ?",
+                        list(types) + [bs, be, per_bucket])
+                    for row in cur.fetchall():
+                        all_events.append(row)
+                        count += 1
+                    if count >= budget:
+                        break
+                continue  # skip the single-query path below
+
+            cur = self.conn.execute(sql, params)
+            all_events.extend(cur.fetchall())
+
+        if not all_events:
+            return []
+
+        # Group by tx_id for hop reconstruction
+        by_tx = {}
+        no_tx = []
+        for ts, et, pid, txid in all_events:
+            if txid:
+                if txid not in by_tx:
+                    by_tx[txid] = []
+                by_tx[txid].append((ts, et, pid))
+            else:
+                no_tx.append((ts, et, pid, None))
+
+        particles = []
+
+        # Reconstruct hops from tx groups (consecutive events on different peers)
+        MAX_HOPS_PER_TX = 8
+        for txid, events in by_tx.items():
+            events.sort(key=lambda e: e[0])
+            hops_emitted = 0
+            prev_pulse_peer = None
+
+            for j in range(len(events)):
+                ts, et, pid = events[j]
+                if j > 0 and hops_emitted < MAX_HOPS_PER_TX:
+                    ts_prev, _et_prev, pid_prev = events[j - 1]
+                    if pid and pid_prev and pid != pid_prev:
+                        particles.append({
+                            "type": "hop",
+                            "timestamp_ns": (ts_prev + ts) // 2,
+                            "fromPeer": pid_prev,
+                            "toPeer": pid,
+                            "eventType": et,
+                            "txId": txid,
+                            "offsetMs": ((ts_prev + ts) // 2 - start_ns) / 1_000_000,
+                        })
+                        hops_emitted += 1
+                        prev_pulse_peer = pid
+                        continue
+
+                # Single-peer event or no hop detected — emit pulse
+                if pid and pid != prev_pulse_peer:
+                    particles.append({
+                        "type": "pulse",
+                        "timestamp_ns": ts,
+                        "peer": pid,
+                        "eventType": et,
+                        "txId": txid,
+                        "offsetMs": (ts - start_ns) / 1_000_000,
+                    })
+                    prev_pulse_peer = pid
+
+        # Events without tx_id — always pulses
+        for ts, et, pid, _ in no_tx:
+            if pid:
+                particles.append({
+                    "type": "pulse",
+                    "timestamp_ns": ts,
+                    "peer": pid,
+                    "eventType": et,
+                    "offsetMs": (ts - start_ns) / 1_000_000,
+                })
+
+        # Add sparse connect sample
+        CONNECT_LIMIT = 500
+        num_buckets = 50
+        conn_per_bucket = max(1, CONNECT_LIMIT // num_buckets)
+        bucket_ns = range_ns // num_buckets
+        conn_count = 0
+        for b in range(num_buckets):
+            bs = start_ns + b * bucket_ns
+            be = bs + bucket_ns
+            cur = self.conn.execute(
+                "SELECT timestamp_ns, from_peer, to_peer, event_type, tx_id FROM flows "
+                "WHERE event_type = 'connected' AND timestamp_ns BETWEEN ? AND ? "
+                "ORDER BY timestamp_ns LIMIT ?",
+                (bs, be, conn_per_bucket))
+            for row in cur.fetchall():
+                particles.append({
+                    "type": "hop",
+                    "timestamp_ns": row[0],
+                    "fromPeer": row[1],
+                    "toPeer": row[2],
+                    "eventType": row[3],
+                    "txId": row[4],
+                    "offsetMs": (row[0] - start_ns) / 1_000_000,
+                })
+                conn_count += 1
+            if conn_count >= CONNECT_LIMIT:
+                break
+
+        return particles
 
     def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=None):
         """Get pre-computed flows for a time range.

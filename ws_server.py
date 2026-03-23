@@ -2050,16 +2050,16 @@ def get_history():
 
     sorted_presence = sorted(peer_presence.values(), key=lambda p: p["first_seen"])
 
-    # Include pre-computed flows for immediate replay animation
-    flows_list = []
+    # Include event-based particles for immediate replay animation
+    particles_list = []
     if db_event_count > 0:
-        flows_list = db.get_flows_for_range(start_ns, end_ns)
+        particles_list = db.get_events_for_range(start_ns, end_ns)
 
     return {
         "type": "history",
         "events": events_list,
         "transactions": tx_list,
-        "flows": flows_list,
+        "flows": particles_list,  # now event-based particles (hops + pulses)
         "peer_presence": sorted_presence,
         "time_range": {"start": start_ns, "end": end_ns},
     }
@@ -2391,18 +2391,18 @@ async def handle_client(websocket):
                         }))
 
                 elif msg_type == "query_flows":
-                    # Server-side flow query for replay animation
+                    # Server-side event query for replay animation
                     start_ns = msg.get("start_ns")
                     end_ns = msg.get("end_ns")
                     contract = msg.get("contract")
                     peer = msg.get("peer_id")
                     if start_ns and end_ns:
-                        flows = db.get_flows_for_range(
+                        particles = db.get_events_for_range(
                             int(start_ns), int(end_ns), contract, peer
                         )
                         await handler.send_direct(json_encode({
                             "type": "flows_result",
-                            "flows": flows,
+                            "flows": particles,
                             "start_ns": start_ns,
                             "end_ns": end_ns,
                         }))

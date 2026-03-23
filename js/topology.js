@@ -311,32 +311,45 @@ export function startReplay(flows, peers) {
             if ((h % 10000) / 10000 >= rate) continue;
         }
 
-        const fromPeer = peerLookup.get(flow.fromPeer);
-        const toPeer = peerLookup.get(flow.toPeer);
-        if (!fromPeer || !toPeer || fromPeer.location == null || toPeer.location == null) continue;
-        const fromPos = locationToXY(fromPeer.location);
-        const toPos = locationToXY(toPeer.location);
-        const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
-        if (dx * dx + dy * dy < 100) continue;
-
         const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
-        const cp = connectionControlPoint(fromPeer.location, toPeer.location);
-
-        // Classify flow role for visual differentiation
         const et = flow.eventType || '';
-        let style = 'dot'; // default
-        if (eventClass === 'connect') {
-            style = 'connect'; // subtle background particle
-        } else if (et.includes('success') || et.includes('not_found') || et.includes('failure')) {
-            style = 'return'; // response flowing back
-        } else if (et.includes('broadcast')) {
-            style = 'broadcast'; // fan-out from owner
-        }
 
-        replayFlows.push({
-            fromPos, toPos, cp, color, offsetMs: flow.offsetMs,
-            txId: flow.txId, style,
-        });
+        if (flow.type === 'pulse') {
+            // Single-peer event — pulse at peer position
+            const peer = peerLookup.get(flow.peer);
+            if (!peer || peer.location == null) continue;
+            const pos = locationToXY(peer.location);
+            replayFlows.push({
+                peerPos: pos, color, offsetMs: flow.offsetMs,
+                txId: flow.txId,
+                style: et.includes('broadcast') ? 'broadcast_pulse' : 'pulse',
+            });
+        } else {
+            // Hop — travelling particle between peers
+            const fromPeer = peerLookup.get(flow.fromPeer);
+            const toPeer = peerLookup.get(flow.toPeer);
+            if (!fromPeer || !toPeer || fromPeer.location == null || toPeer.location == null) continue;
+            const fromPos = locationToXY(fromPeer.location);
+            const toPos = locationToXY(toPeer.location);
+            const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
+            if (dx * dx + dy * dy < 100) continue;
+
+            const cp = connectionControlPoint(fromPeer.location, toPeer.location);
+
+            let style = 'dot';
+            if (eventClass === 'connect') {
+                style = 'connect';
+            } else if (et.includes('success') || et.includes('not_found') || et.includes('failure')) {
+                style = 'return';
+            } else if (et.includes('broadcast')) {
+                style = 'broadcast';
+            }
+
+            replayFlows.push({
+                fromPos, toPos, cp, color, offsetMs: flow.offsetMs,
+                txId: flow.txId, style,
+            });
+        }
     }
 
     if (replayFlows.length === 0) return;
@@ -525,12 +538,21 @@ function startReplayLoop() {
             if (flow.normalizedOffset > scaledCycle) break; // sorted — no more to spawn
             if (!flow._lastSpawn || (now - flow._lastSpawn) > effectiveDuration * 0.9) {
                 flow._lastSpawn = now;
-                ringParticles.push({
-                    fromPos: flow.fromPos, toPos: flow.toPos,
-                    cp: flow.cp, color: flow.color,
+                const particle = {
+                    color: flow.color,
                     startTime: now, duration: particleDuration,
                     style: flow.style || 'dot',
-                });
+                };
+                if (flow.peerPos) {
+                    // Pulse particle — single position
+                    particle.peerPos = flow.peerPos;
+                } else {
+                    // Hop particle — travelling between peers
+                    particle.fromPos = flow.fromPos;
+                    particle.toPos = flow.toPos;
+                    particle.cp = flow.cp;
+                }
+                ringParticles.push(particle);
             }
             replayNextSpawnIdx = i + 1;
         }
@@ -615,9 +637,27 @@ function drawRingParticles(ctx) {
 
         for (const p of particles) {
             const t = (now - p.startTime) / p.duration;
+            const alpha = 1 - t * 0.5;
+
+            // Pulse particles — single position, no travel
+            if (p.peerPos) {
+                const pos = p.peerPos;
+                const radius = 2 + t * 10;
+                ctx.globalAlpha = (1 - t) * 0.5;
+                ctx.lineWidth = p.style === 'broadcast_pulse' ? 1 : 1.5;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
+                ctx.stroke();
+                ctx.globalAlpha = (1 - t) * 0.7;
+                ctx.beginPath();
+                ctx.arc(pos.x, pos.y, 1.5, 0, Math.PI * 2);
+                ctx.fill();
+                continue;
+            }
+
+            // Hop particles — travel along bezier curve
             const eased = 1 - (1 - t) * (1 - t);
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
-            const alpha = 1 - t * 0.5;
 
             if (p.style === 'connect') {
                 // Connect events — tiny dim dot, no trail
