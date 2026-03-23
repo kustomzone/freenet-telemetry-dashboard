@@ -1942,7 +1942,8 @@ def get_network_state():
         filtered_contract_states = dict(sorted_contracts[:MAX_INITIAL_CONTRACTS])
 
     # Cap subscription trees similarly
-    all_subscriptions = get_subscription_trees(active_peer_ids)
+    # Pass None if no active peers yet (e.g. right after restart) to avoid filtering everything out
+    all_subscriptions = get_subscription_trees(active_peer_ids if active_peer_ids else None)
     if len(all_subscriptions) > MAX_INITIAL_CONTRACTS:
         sorted_subs = sorted(
             all_subscriptions.items(),
