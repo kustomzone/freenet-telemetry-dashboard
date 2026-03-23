@@ -108,6 +108,17 @@
                         <span class="legend-item"><span style="color:#7ecfef; font-size:12px; margin-right:3px;">&#9678;</span>Contract Location</span>
                         <span class="legend-item find-my-peer" id="find-my-peer-btn" style="display: none;" onclick="findMyPeer()"><span class="legend-marker you"></span><a href="#" onclick="event.preventDefault()">Find My Peer</a></span>
                     </div>
+                    <div class="topology-legend-inline message-filter-bar" id="message-filter-bar">
+                        <span class="legend-item msg-toggle active" data-type="connect"><span class="legend-dot" style="background:var(--color-connect)"></span>conn</span>
+                        <span class="legend-item msg-toggle active" data-type="put"><span class="legend-dot" style="background:var(--color-put)"></span>put</span>
+                        <span class="legend-item msg-toggle active" data-type="get"><span class="legend-dot" style="background:var(--color-get)"></span>get</span>
+                        <span class="legend-item msg-toggle active" data-type="update"><span class="legend-dot" style="background:var(--color-update)"></span>upd</span>
+                        <span class="legend-item msg-toggle active" data-type="subscribe"><span class="legend-dot" style="background:var(--color-subscribe)"></span>sub</span>
+                        <span class="msg-sample-control">
+                            <input type="range" id="msg-sample-slider" min="0" max="100" value="100" title="Sample rate">
+                            <span id="msg-sample-label" class="msg-sample-label">100%</span>
+                        </span>
+                    </div>
                     <div class="topology-legend-inline" id="tree-legend" style="display: none;">
                         <span class="legend-item"><span class="legend-marker tree-root"></span>Root (seeder)</span>
                         <span class="legend-item"><span class="legend-marker subscriber"></span>Subscriber</span>

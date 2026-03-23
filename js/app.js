@@ -450,4 +450,37 @@ if (realtimeBtn) {
     });
 }
 
+// ============================================================================
+// Message type filter toggles + sample slider
+// ============================================================================
+
+function reapplyMessageFilter() {
+    // Re-run startReplay with the current server flows and filter settings
+    if (state.serverFlows && state.serverFlows.length > 0 && _cachedPeers.size > 0) {
+        startReplay(state.serverFlows, _cachedPeers);
+    }
+}
+
+// Per-type toggles
+document.querySelectorAll('.msg-toggle').forEach(el => {
+    el.addEventListener('click', () => {
+        const type = el.dataset.type;
+        state.messageTypeEnabled[type] = !state.messageTypeEnabled[type];
+        el.classList.toggle('active', state.messageTypeEnabled[type]);
+        reapplyMessageFilter();
+    });
+});
+
+// Sample rate slider
+const sampleSlider = document.getElementById('msg-sample-slider');
+const sampleLabel = document.getElementById('msg-sample-label');
+if (sampleSlider) {
+    sampleSlider.addEventListener('input', () => {
+        const pct = parseInt(sampleSlider.value);
+        state.messageSampleRate = pct / 100;
+        sampleLabel.textContent = pct + '%';
+        reapplyMessageFilter();
+    });
+}
+
 console.log('Freenet Dashboard initialized (modular)');

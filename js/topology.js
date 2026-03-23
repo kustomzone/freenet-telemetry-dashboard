@@ -287,9 +287,25 @@ export function startReplay(flows, peers) {
     stopReplay();
     if (flows.length === 0) return;
 
+    // Apply message type filter and sample rate
+    const enabled = state.messageTypeEnabled;
+    const sampleRate = state.messageSampleRate;
+
     // Resolve peer positions and build pre-resolved flow list
     replayFlows = [];
     for (const flow of flows) {
+        const eventClass = getEventClass(flow.eventType);
+
+        // Type filter: skip disabled types
+        if (!enabled[eventClass] && !(eventClass === 'transfer' && enabled.other)) continue;
+
+        // Sample filter: deterministic hash-based sampling for stability
+        if (sampleRate < 1.0) {
+            // Use offsetMs as a stable seed so same flows are shown on re-filter
+            const h = (flow.offsetMs * 2654435761) >>> 0;
+            if ((h % 10000) / 10000 >= sampleRate) continue;
+        }
+
         let fromLoc = null, toLoc = null, fromPos = null, toPos = null;
         peers.forEach((peer, id) => {
             if (id === flow.fromPeer || peer.peer_id === flow.fromPeer) {
@@ -305,7 +321,6 @@ export function startReplay(flows, peers) {
         const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
         if (dx * dx + dy * dy < 100) continue;
 
-        const eventClass = getEventClass(flow.eventType);
         const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
         const cp = connectionControlPoint(fromLoc, toLoc);
 
