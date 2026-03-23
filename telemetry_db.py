@@ -353,7 +353,7 @@ class TelemetryDB:
         When unfiltered, samples across time buckets to limit volume."""
         is_filtered = bool(contract_key or peer_id)
         if limit is None:
-            limit = 50000 if is_filtered else 1200
+            limit = 50000 if is_filtered else 10000
 
         range_ns = end_ns - start_ns
         if range_ns <= 0:

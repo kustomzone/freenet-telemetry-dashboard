@@ -48,8 +48,8 @@
         .msg-type-chip:not(.active) {
             opacity: 0.25;
         }
-        .msg-type-chip:hover {
-            opacity: 1;
+        .msg-type-chip.active:hover {
+            opacity: 0.7;
         }
         .msg-type-dot {
             width: 6px;
