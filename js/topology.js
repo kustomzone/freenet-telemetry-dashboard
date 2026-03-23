@@ -645,15 +645,8 @@ function drawRingParticles(ctx) {
             const t = (now - p.startTime) / p.duration;
             const alpha = 1 - t * 0.5;
 
-            // Pulse particles — subtle glow at peer position
-            if (p.peerPos) {
-                const pos = p.peerPos;
-                ctx.globalAlpha = (1 - t) * 0.25;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
-                ctx.fill();
-                continue;
-            }
+            // Skip pulse particles — only show hop particles that travel between peers
+            if (p.peerPos) continue;
 
             // Hop particles — travel along bezier curve
             const eased = 1 - (1 - t) * (1 - t);
