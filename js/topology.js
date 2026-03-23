@@ -242,6 +242,7 @@ let replayRealDurationMs = 0;   // actual time range in ms (for computing real-t
 let replayFlowMinOffsetMs = 0;  // earliest flow offset from range start (ms)
 let replayFlowMaxOffsetMs = 0; // latest flow offset from range start (ms)
 let replayLoopStart = 0;        // performance.now() when current loop cycle began
+let replayNextSpawnIdx = 0;     // index into sorted replayFlows for spawn scanning
 let replayFrame = null;         // rAF handle
 let replaySpeed = 1.0;          // speed multiplier
 let _scheduleRedraw = null;
@@ -357,6 +358,10 @@ export function startReplay(flows, peers) {
         });
     }
 
+    // Sort by normalizedOffset for efficient spawn scanning
+    replayFlows.sort((a, b) => a.normalizedOffset - b.normalizedOffset);
+    replayNextSpawnIdx = 0;
+
     replayLoopStart = performance.now();
     startReplayLoop();
 }
@@ -455,6 +460,7 @@ function startReplayLoop() {
         // Loop: restart when the cycle completes
         if (elapsed >= effectiveDuration) {
             replayLoopStart = now;
+            replayNextSpawnIdx = 0;
             ringParticles.length = 0;
         }
 
@@ -465,35 +471,43 @@ function startReplayLoop() {
         const effectiveActive = replayActiveDuration / replaySpeed;
         state.replayProgress = Math.min(1, cycleTime / effectiveActive);
 
-        // Spawn particles whose offset has been reached in this cycle
-        const spawnWindow = 50 / replaySpeed;
-        for (const flow of replayFlows) {
-            const scaledOffset = flow.normalizedOffset / replaySpeed;
-            if (cycleTime >= scaledOffset && cycleTime < scaledOffset + spawnWindow) {
-                if (!flow._lastSpawn || (now - flow._lastSpawn) > effectiveDuration * 0.9) {
-                    flow._lastSpawn = now;
-                    ringParticles.push({
-                        fromPos: flow.fromPos, toPos: flow.toPos,
-                        cp: flow.cp, color: flow.color,
-                        startTime: now, duration: PARTICLE_DURATION / Math.sqrt(replaySpeed)
-                    });
-                }
+        // Spawn particles whose offset has been reached in this cycle.
+        // Flows are sorted by normalizedOffset so we can skip already-spawned ones.
+        const particleDuration = PARTICLE_DURATION / Math.sqrt(replaySpeed);
+        const scaledCycle = cycleTime * replaySpeed;
+        for (let i = replayNextSpawnIdx; i < replayFlows.length; i++) {
+            const flow = replayFlows[i];
+            if (flow.normalizedOffset > scaledCycle) break; // sorted — no more to spawn
+            if (!flow._lastSpawn || (now - flow._lastSpawn) > effectiveDuration * 0.9) {
+                flow._lastSpawn = now;
+                ringParticles.push({
+                    fromPos: flow.fromPos, toPos: flow.toPos,
+                    cp: flow.cp, color: flow.color,
+                    startTime: now, duration: particleDuration
+                });
             }
+            replayNextSpawnIdx = i + 1;
         }
 
-        // Draw particles directly on the overlay canvas (no full redraw needed)
-        if (particleCanvas) {
+        // Draw particles on the overlay canvas
+        if (particleCanvas && ringParticles.length > 0) {
+            if (!step._ctx) {
+                step._ctx = particleCanvas.getContext('2d');
+            }
+            const ctx = step._ctx;
             const dpr = window.devicePixelRatio || 1;
             const displaySize = parseInt(particleCanvas.style.width) || SVG_SIZE;
             const scale = displaySize / SVG_SIZE;
-            const ctx = particleCanvas.getContext('2d');
             ctx.setTransform(dpr * scale, 0, 0, dpr * scale, 0, 0);
             ctx.clearRect(0, 0, SVG_WIDTH, SVG_SIZE);
             drawRingParticles(ctx);
         }
 
-        // Update timeline playhead via lightweight DOM element
-        updateTimelinePlayhead();
+        // Update timeline playhead — throttle to every 3rd frame (~20fps)
+        if (!step._frameCount) step._frameCount = 0;
+        if (++step._frameCount % 3 === 0) {
+            updateTimelinePlayhead();
+        }
     }
 
     replayFrame = requestAnimationFrame(step);
@@ -532,55 +546,55 @@ function drawRingParticles(ctx) {
     if (ringParticles.length === 0) return;
     const now = performance.now();
 
-    ctx.save();
-    for (let i = ringParticles.length - 1; i >= 0; i--) {
-        const p = ringParticles[i];
-        const elapsed = now - p.startTime;
-        if (elapsed > p.duration) {
-            ringParticles.splice(i, 1);
-            continue;
+    // Remove expired particles (swap-and-pop for O(1))
+    let writeIdx = 0;
+    for (let i = 0; i < ringParticles.length; i++) {
+        if (now - ringParticles[i].startTime <= ringParticles[i].duration) {
+            ringParticles[writeIdx++] = ringParticles[i];
         }
-
-        const t = elapsed / p.duration;
-        const eased = 1 - (1 - t) * (1 - t); // ease-out
-        const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
-        const alpha = 1 - t * 0.5;
-
-        // Trail along the spline
-        ctx.beginPath();
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = 1;
-        ctx.globalAlpha = alpha * 0.2;
-        const TRAIL_STEPS = 6;
-        ctx.moveTo(p.fromPos.x, p.fromPos.y);
-        for (let s = 1; s <= TRAIL_STEPS; s++) {
-            const st = eased * (s / TRAIL_STEPS);
-            const sp = quadBezierAt(p.fromPos, p.cp, p.toPos, st);
-            ctx.lineTo(sp.x, sp.y);
-        }
-        ctx.stroke();
-
-        // Subtle glow
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 5, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = alpha * 0.15;
-        ctx.fill();
-
-        // Core dot
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 2.5, 0, Math.PI * 2);
-        ctx.fillStyle = p.color;
-        ctx.globalAlpha = alpha;
-        ctx.fill();
-
-        // Bright center
-        ctx.beginPath();
-        ctx.arc(pt.x, pt.y, 1, 0, Math.PI * 2);
-        ctx.fillStyle = '#ffffff';
-        ctx.globalAlpha = alpha * 0.8;
-        ctx.fill();
     }
+    ringParticles.length = writeIdx;
+
+    if (ringParticles.length === 0) return;
+
+    ctx.save();
+    ctx.lineCap = 'round';
+
+    // Batch particles by color to minimize state changes
+    const byColor = new Map();
+    for (const p of ringParticles) {
+        if (!byColor.has(p.color)) byColor.set(p.color, []);
+        byColor.get(p.color).push(p);
+    }
+
+    for (const [color, particles] of byColor) {
+        ctx.strokeStyle = color;
+        ctx.fillStyle = color;
+
+        for (const p of particles) {
+            const t = (now - p.startTime) / p.duration;
+            const eased = 1 - (1 - t) * (1 - t);
+            const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
+            const alpha = 1 - t * 0.5;
+
+            // Short trail: line from ~15% behind to current position
+            const trailT = Math.max(0, eased - 0.15);
+            const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
+            ctx.globalAlpha = alpha * 0.25;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(trailPt.x, trailPt.y);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.stroke();
+
+            // Core dot
+            ctx.globalAlpha = alpha;
+            ctx.beginPath();
+            ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+            ctx.fill();
+        }
+    }
+
     ctx.globalAlpha = 1;
     ctx.restore();
 }
