@@ -386,12 +386,66 @@ class TelemetryDB:
         }
 
         # Collect events from tx_events with per-type budgets
-        all_events = []  # [(timestamp_ns, event_type, peer_id, tx_id)]
+        # Format: (timestamp_ns, event_type, peer_id, tx_id, from_peer_or_None, to_peer_or_None)
+        all_events = []
 
-        for group in TYPE_BUDGETS.values():
+        for group_name, group in TYPE_BUDGETS.items():
             types = group['types']
             budget = group['limit']
             ph = ",".join("?" * len(types))
+
+            # For broadcast events, query events table to get from_peer/to_peer from data JSON
+            use_events_table = (group_name == 'broadcast')
+
+            if use_events_table:
+                # Query events table with data JSON for broadcast src/dest
+                base_sql = (f"SELECT timestamp_ns, event_type, peer_id, tx_id, data "
+                            f"FROM events WHERE event_type IN ({ph}) "
+                            f"AND timestamp_ns BETWEEN ? AND ?")
+                base_params = list(types) + [start_ns, end_ns]
+                if contract_key:
+                    base_sql += " AND contract_key = ?"
+                    base_params.append(contract_key)
+                elif peer_id:
+                    base_sql += " AND peer_id = ?"
+                    base_params.append(peer_id)
+
+                # Bucketed sampling
+                num_buckets = 50
+                per_bucket = max(1, budget // num_buckets)
+                bucket_ns = range_ns // num_buckets
+                count = 0
+                for b in range(num_buckets):
+                    bs = start_ns + b * bucket_ns
+                    be = bs + bucket_ns
+                    bp = list(base_params)
+                    bp[len(types)] = bs  # start_ns param
+                    bp[len(types) + 1] = be  # end_ns param
+                    sql = base_sql + f" ORDER BY timestamp_ns LIMIT {per_bucket}"
+                    cur = self.conn.execute(sql, bp)
+                    for row in cur.fetchall():
+                        # Extract from_peer/to_peer from data JSON
+                        # For broadcast events: from_peer = sender, to_peer = receiver
+                        from_peer, to_peer = None, None
+                        if row[4]:
+                            try:
+                                d = orjson.loads(row[4])
+                                fp = d.get("from_peer")
+                                tp = d.get("to_peer")
+                                pid = d.get("peer_id")
+                                if fp and tp:
+                                    # New format: both set correctly
+                                    from_peer, to_peer = fp, tp
+                                elif tp and pid and tp != pid:
+                                    # Old format: to_peer was actually the requester (sender)
+                                    from_peer, to_peer = tp, pid
+                            except Exception:
+                                pass
+                        all_events.append((row[0], row[1], row[2], row[3], from_peer, to_peer))
+                        count += 1
+                    if count >= budget:
+                        break
+                continue
 
             if contract_key:
                 sql = (f"SELECT te.timestamp_ns, te.event_type, te.peer_id, te.tx_id "
@@ -421,14 +475,15 @@ class TelemetryDB:
                         f"ORDER BY timestamp_ns LIMIT ?",
                         list(types) + [bs, be, per_bucket])
                     for row in cur.fetchall():
-                        all_events.append(row)
+                        all_events.append((row[0], row[1], row[2], row[3], None, None))
                         count += 1
                     if count >= budget:
                         break
                 continue  # skip the single-query path below
 
             cur = self.conn.execute(sql, params)
-            all_events.extend(cur.fetchall())
+            for row in cur.fetchall():
+                all_events.append((row[0], row[1], row[2], row[3], None, None))
 
         if not all_events:
             return []
@@ -436,13 +491,20 @@ class TelemetryDB:
         # Group by tx_id for hop reconstruction
         by_tx = {}
         no_tx = []
-        for ts, et, pid, txid in all_events:
-            if txid:
+        for event_tuple in all_events:
+            ts, et, pid, txid = event_tuple[0], event_tuple[1], event_tuple[2], event_tuple[3]
+            from_peer = event_tuple[4] if len(event_tuple) > 4 else None
+            to_peer = event_tuple[5] if len(event_tuple) > 5 else None
+
+            # If we have explicit from/to peers (broadcast events), emit hop directly
+            if from_peer and to_peer and from_peer != to_peer:
+                no_tx.append((ts, et, pid, txid, from_peer, to_peer))
+            elif txid:
                 if txid not in by_tx:
                     by_tx[txid] = []
                 by_tx[txid].append((ts, et, pid))
             else:
-                no_tx.append((ts, et, pid, None))
+                no_tx.append((ts, et, pid, txid, None, None))
 
         particles = []
 
@@ -483,9 +545,24 @@ class TelemetryDB:
                     })
                     prev_pulse_peer = pid
 
-        # Events without tx_id — always pulses
-        for ts, et, pid, _ in no_tx:
-            if pid:
+        # Events with explicit from/to or without tx_id
+        for event_tuple in no_tx:
+            ts, et, pid, txid = event_tuple[0], event_tuple[1], event_tuple[2], event_tuple[3]
+            from_peer = event_tuple[4] if len(event_tuple) > 4 else None
+            to_peer = event_tuple[5] if len(event_tuple) > 5 else None
+
+            if from_peer and to_peer and from_peer != to_peer:
+                # Direct hop from explicit peers (broadcast events)
+                particles.append({
+                    "type": "hop",
+                    "timestamp_ns": ts,
+                    "fromPeer": from_peer,
+                    "toPeer": to_peer,
+                    "eventType": et,
+                    "txId": txid,
+                    "offsetMs": (ts - start_ns) / 1_000_000,
+                })
+            elif pid:
                 particles.append({
                     "type": "pulse",
                     "timestamp_ns": ts,

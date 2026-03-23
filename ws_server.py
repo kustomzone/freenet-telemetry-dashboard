@@ -1662,12 +1662,23 @@ def process_record(record, store_history=True):
     }
 
     # Include source/destination peers for message flow visualization
-    if this_ip and is_public_ip(this_ip):
-        event["from_peer"] = anonymize_ip(this_ip)
-        event["from_location"] = this_loc
-    if other_ip and is_public_ip(other_ip):
-        event["to_peer"] = anonymize_ip(other_ip)
-        event["to_location"] = other_loc
+    if event_type in ("update_broadcast_received", "broadcast_received"):
+        # Broadcast: requester (sender) → target (receiver = reporting peer)
+        _, req_ip, req_loc = parse_peer_string(body.get("requester", ""))
+        _, tgt_ip, tgt_loc = parse_peer_string(body.get("target", ""))
+        if req_ip and is_public_ip(req_ip):
+            event["from_peer"] = anonymize_ip(req_ip)
+            event["from_location"] = req_loc
+        if tgt_ip and is_public_ip(tgt_ip):
+            event["to_peer"] = anonymize_ip(tgt_ip)
+            event["to_location"] = tgt_loc
+    else:
+        if this_ip and is_public_ip(this_ip):
+            event["from_peer"] = anonymize_ip(this_ip)
+            event["from_location"] = this_loc
+        if other_ip and is_public_ip(other_ip):
+            event["to_peer"] = anonymize_ip(other_ip)
+            event["to_location"] = other_loc
 
     # Include connection info if new connection
     if connection_added:
