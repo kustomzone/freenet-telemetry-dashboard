@@ -1819,7 +1819,7 @@ def get_subscription_trees(active_peer_ids=None):
                 # Aggregate stats for quick display
                 "total_downstream": total_downstream,
                 "any_seeding": any_seeding,
-                "peer_count": max(len(peers_with_data), len(active_cs_peers)),
+                "peer_count": max(len(peers_with_data), len(active_cs_peers), len(sub_data["subscribers"])),
             }
             # Include state size if known
             size_info = contract_state_sizes.get(contract_key)

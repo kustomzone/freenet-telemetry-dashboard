@@ -125,11 +125,13 @@ export function renderContractsList() {
         return;
     }
 
-    // Sort contracts by peer count (highest first)
+    // Sort contracts by peer count (highest first), using subscriber count as fallback
     const sortedContracts = filteredContracts.sort((a, b) => {
-        const aStates = state.contractStates[a] || {};
-        const bStates = state.contractStates[b] || {};
-        return Object.keys(bStates).length - Object.keys(aStates).length;
+        const aCount = Object.keys(state.contractStates[a] || {}).length
+            || (state.contractData[a]?.subscribers?.length || 0);
+        const bCount = Object.keys(state.contractStates[b] || {}).length
+            || (state.contractData[b]?.subscribers?.length || 0);
+        return bCount - aCount;
     });
 
     list.innerHTML = sortedContracts.map(key => {
@@ -202,10 +204,11 @@ export function renderContractsList() {
         const subscribers = data.subscribers || [];
         const subscriberCount = subscribers.length;
         if (peerCount > 0 || subscriberCount > 0) {
-            if (subscriberCount > 0 && peerCount !== subscriberCount) {
+            if (peerCount > 0 && subscriberCount > 0 && peerCount !== subscriberCount) {
                 statsRow1.push(`<span class="peer-count" title="${peerCount} peers have reported state, ${subscriberCount} total subscribers">${peerCount}/${subscriberCount} peers</span>`);
             } else {
-                statsRow1.push(`<span class="peer-count" title="${peerCount} peers have this contract">${peerCount} peers</span>`);
+                const displayCount = peerCount || subscriberCount;
+                statsRow1.push(`<span class="peer-count" title="${displayCount} peers have this contract">${displayCount} peers</span>`);
             }
         }
 
