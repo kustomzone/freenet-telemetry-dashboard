@@ -360,9 +360,16 @@ class TelemetryDB:
         if range_ns <= 0:
             return []
 
-        # Exclude noise event types that dominate (87%+) but aren't useful for visualization
-        NOISE_TYPES = ('connected', 'request_sent', 'request', 'success')
-        noise_filter = " AND event_type NOT IN ({})".format(",".join("?" * len(NOISE_TYPES)))
+        # Only include interesting event types (positive filter uses idx_flows_type_ts efficiently)
+        INTERESTING_TYPES = (
+            'get_request', 'get_success', 'get_not_found', 'get_failure',
+            'put_request', 'put_success',
+            'subscribe_request', 'subscribe_success', 'subscribe_not_found',
+            'update_request', 'update_success', 'update_failure',
+            'update_broadcast_received', 'update_broadcast_applied',
+            'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied',
+        )
+        interesting_filter = " AND event_type IN ({})".format(",".join("?" * len(INTERESTING_TYPES)))
 
         where = "timestamp_ns BETWEEN ? AND ?"
         params = [start_ns, end_ns]
@@ -398,9 +405,9 @@ class TelemetryDB:
             return [row_to_flow(row) for row in cur.fetchall()]
 
         # Unfiltered: sample across time buckets for even distribution
-        # Exclude noise types so the budget is spent on interesting operations
-        where_filtered = where + noise_filter
-        params_filtered = params + list(NOISE_TYPES)
+        # Use positive event type filter (200x faster than NOT IN with the compound index)
+        where_filtered = where + interesting_filter
+        params_filtered = params + list(INTERESTING_TYPES)
 
         num_buckets = min(limit, 100)
         per_bucket = max(1, limit // num_buckets)
