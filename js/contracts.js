@@ -125,16 +125,10 @@ export function renderContractsList() {
         return;
     }
 
-    // Sort contracts by whichever count is higher: state-tracking peers or subscribers
+    // Sort contracts by subscriber count (highest first)
     const sortedContracts = filteredContracts.sort((a, b) => {
-        const aStates = Object.keys(state.contractStates[a] || {}).length;
-        const aSubs = state.contractData[a]?.subscribers?.length || 0;
-        const aPeerCount = state.contractData[a]?.peer_count || 0;
-        const aCount = Math.max(aStates, aSubs, aPeerCount);
-        const bStates = Object.keys(state.contractStates[b] || {}).length;
-        const bSubs = state.contractData[b]?.subscribers?.length || 0;
-        const bPeerCount = state.contractData[b]?.peer_count || 0;
-        const bCount = Math.max(bStates, bSubs, bPeerCount);
+        const aCount = state.contractData[a]?.subscribers?.length || 0;
+        const bCount = state.contractData[b]?.subscribers?.length || 0;
         return bCount - aCount;
     });
 
