@@ -416,6 +416,48 @@ class TelemetryDB:
 
         return all_flows[:limit]
 
+    # ---- Contract reconstruction ----
+
+    def get_active_contracts(self, since_ns=None):
+        """Get contracts with recent activity for rebuilding in-memory state.
+        Returns {contract_key: {subscribers: set(peer_id), peer_count: int}}
+        from transactions and tx_events tables."""
+        if not self.conn:
+            return {}
+
+        if since_ns is None:
+            # Default: last 7 days
+            max_ts = self.conn.execute("SELECT MAX(timestamp_ns) FROM events").fetchone()[0]
+            if not max_ts:
+                return {}
+            since_ns = max_ts - 7 * 24 * 3600 * 1_000_000_000
+
+        # Find contracts with recent transactions
+        cur = self.conn.execute(
+            "SELECT DISTINCT contract_key FROM transactions "
+            "WHERE contract_key IS NOT NULL AND start_ns > ?",
+            (since_ns,)
+        )
+        contract_keys = [row[0] for row in cur.fetchall()]
+        if not contract_keys:
+            return {}
+
+        result = {}
+        for ck in contract_keys:
+            # Get distinct peer_ids involved with this contract
+            cur = self.conn.execute(
+                "SELECT DISTINCT te.peer_id FROM tx_events te "
+                "JOIN transactions t ON te.tx_id = t.tx_id "
+                "WHERE t.contract_key = ? AND te.timestamp_ns > ? "
+                "AND te.peer_id IS NOT NULL",
+                (ck, since_ns)
+            )
+            peers = set(row[0] for row in cur.fetchall() if row[0])
+            if peers:
+                result[ck] = {"subscribers": peers, "peer_count": len(peers)}
+
+        return result
+
     # ---- Metadata ----
 
     def get_meta(self, key, default=None):

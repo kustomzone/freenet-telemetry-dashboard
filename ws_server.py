@@ -2490,11 +2490,23 @@ async def load_initial_state():
     print(f"History: {history_eligible} eligible, {history_stored} stored, {len(event_history)} in buffer", flush=True)
     print(f"DB: {db.event_count()} events, {db.flow_count()} flows", flush=True)
     print(f"Transfer events: {len(transfer_events)} transfers for scatter plot", flush=True)
+
+    # Rebuild contract subscriptions from DB if JSONL tail didn't have any
+    if not subscriptions and not contract_states:
+        db_contracts = db.get_active_contracts()
+        if db_contracts:
+            for ck, info in db_contracts.items():
+                subscriptions[ck] = {
+                    "subscribers": info["subscribers"],
+                    "tree": {},
+                }
+            print(f"Rebuilt {len(db_contracts)} contracts from DB", flush=True)
+
     print(f"Contract states: {len(contract_states)} contracts", flush=True)
-    for ck, ps in list(contract_states.items())[:3]:
-        print(f"  {ck[:20]}... has {len(ps)} peers", flush=True)
-        for pid, state_data in list(ps.items())[:2]:
-            print(f"    peer_id={pid}: hash={state_data.get('hash', 'none')[:12]}", flush=True)
+    print(f"Subscriptions: {len(subscriptions)} contracts", flush=True)
+    for ck in list(subscriptions.keys())[:3]:
+        sub = subscriptions[ck]
+        print(f"  {ck[:20]}... has {len(sub['subscribers'])} subscribers", flush=True)
 
 
 async def main():
