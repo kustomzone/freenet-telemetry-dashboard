@@ -350,9 +350,9 @@ class TelemetryDB:
         """Get pre-computed flows for a time range, sampled evenly across time.
         When filtered by contract or peer, returns all flows (full fidelity).
         When unfiltered, samples across time buckets to limit volume."""
-        # Full fidelity when filtered, sampled when showing everything
+        # All flows when filtered by peer/contract, sampled when showing everything
         if limit is None:
-            limit = 2000 if (contract_key or peer_id) else 300
+            limit = 50000 if (contract_key or peer_id) else 1200
         where = "timestamp_ns BETWEEN ? AND ?"
         params = [start_ns, end_ns]
         table = "flows"

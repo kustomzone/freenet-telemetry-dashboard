@@ -647,18 +647,18 @@ function startTreeEdgeAnimation(container) {
 
         if (hasSelection) {
             // Dim edges
-            ctx.lineWidth = 1;
-            ctx.strokeStyle = 'rgba(126, 207, 239, 0.1)';
+            ctx.lineWidth = 0.75;
+            ctx.strokeStyle = 'rgba(126, 207, 239, 0.08)';
             ctx.stroke(dimPath);
             // Highlighted edges
-            ctx.lineWidth = 2.5;
-            ctx.strokeStyle = 'rgba(126, 207, 239, 0.9)';
+            ctx.lineWidth = 1.5;
+            ctx.strokeStyle = 'rgba(126, 207, 239, 0.6)';
             ctx.stroke(highlightPath);
         } else {
-            ctx.lineWidth = treeAnimEdges.length > 80 ? 1 : 2;
+            ctx.lineWidth = treeAnimEdges.length > 80 ? 0.75 : 1.25;
             ctx.strokeStyle = treeAnimEdges.length > 80
-                ? 'rgba(126, 207, 239, 0.2)'
-                : 'rgba(126, 207, 239, 0.7)';
+                ? 'rgba(126, 207, 239, 0.15)'
+                : 'rgba(126, 207, 239, 0.4)';
             ctx.stroke(normalPath);
         }
 

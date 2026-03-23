@@ -231,6 +231,9 @@ function startFullReplay() {
  */
 function refreshReplay() {
     if (!state.replayRange || _cachedPeers.size === 0) return;
+    // Immediately clear old particles so stale animation doesn't linger
+    // while waiting for the server to respond with new filtered flows.
+    stopReplay();
     queryFlows(
         state.replayRange.startNs,
         state.replayRange.endNs,
