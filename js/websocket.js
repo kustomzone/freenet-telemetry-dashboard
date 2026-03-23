@@ -13,7 +13,7 @@ import { formatLatency, getRateClass } from './utils.js';
  */
 export function connect(callbacks) {
     const wsProtocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
-    let wsUrl = `${wsProtocol}//${window.location.host}/ws`;
+    let wsUrl = `${wsProtocol}//${window.location.hostname}:3134/`;
 
     // Include priority token if we have one (returning user)
     const token = localStorage.getItem('dashboard_priority_token');
