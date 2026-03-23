@@ -689,12 +689,19 @@ function drawRingParticles(ctx) {
                 ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
                 ctx.fill();
             } else if (p.style === 'broadcast') {
-                // Broadcast fan-out — ring (unfilled circle)
-                ctx.globalAlpha = alpha * 0.8;
+                // Broadcast — same as request dot
+                const trailT = Math.max(0, eased - 0.15);
+                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
+                ctx.globalAlpha = alpha * 0.25;
                 ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+                ctx.moveTo(trailPt.x, trailPt.y);
+                ctx.lineTo(pt.x, pt.y);
                 ctx.stroke();
+                ctx.globalAlpha = alpha;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+                ctx.fill();
             } else {
                 // Default request dot — small with short trail
                 const trailT = Math.max(0, eased - 0.15);
