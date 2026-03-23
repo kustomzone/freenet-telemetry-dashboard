@@ -2575,7 +2575,7 @@ async def main():
         handle_client,
         "0.0.0.0",
         WS_PORT,
-        compression="deflate",  # Enable per-message deflate compression
+        compression=None,  # Disabled — was causing 30s delays on 3.6MB messages
         max_size=50 * 1024 * 1024,  # 50MB max message size for large history
         process_request=process_request,  # Capture X-Forwarded-For headers
     ):
