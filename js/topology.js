@@ -660,10 +660,18 @@ function drawRingParticles(ctx) {
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
 
             if (p.style === 'connect') {
-                // Connect events — small dim dot
-                ctx.globalAlpha = alpha * 0.3;
+                // Connect events — same as default request dot
+                const trailT = Math.max(0, eased - 0.15);
+                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
+                ctx.globalAlpha = alpha * 0.25;
+                ctx.lineWidth = 1.5;
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
+                ctx.moveTo(trailPt.x, trailPt.y);
+                ctx.lineTo(pt.x, pt.y);
+                ctx.stroke();
+                ctx.globalAlpha = alpha;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
                 ctx.fill();
             } else if (p.style === 'return') {
                 // Response "bounce back" — larger dot with glow halo
