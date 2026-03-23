@@ -15,12 +15,29 @@ let initialized = false;
 // Track zoom state
 let isZoomed = false;
 
+// Theme-aware colors for canvas rendering
+function isLightMode() {
+    return document.documentElement.getAttribute('data-theme') === 'light';
+}
+function chartColors() {
+    const light = isLightMode();
+    return {
+        medianLine: light ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.25)',
+        labelText: light ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.4)',
+    };
+}
+
 // Cached sorted speeds for tooltip lookup
 let sortedSpeeds = [];
 
 /**
  * Initialize the transfer chart
  */
+// Re-render on theme change
+window.addEventListener('themechange', () => {
+    if (initialized) renderTransferChart();
+});
+
 export function initTransferChart() {
     if (initialized) return;
 
@@ -187,8 +204,9 @@ export function renderTransferChart() {
         const medianSpeed = speeds[Math.floor(n / 2)];
         const medianY = speedToY(medianSpeed, minLog, logRange, pad, plotH);
 
+        const cc = chartColors();
         ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.strokeStyle = cc.medianLine;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(pad, medianY);
@@ -198,7 +216,7 @@ export function renderTransferChart() {
 
         // Median label
         ctx.font = '9px "JetBrains Mono", monospace';
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.fillStyle = cc.labelText;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
         ctx.fillText('median ' + formatSpeed(medianSpeed), pad + plotW, medianY - 3);
@@ -206,8 +224,9 @@ export function renderTransferChart() {
 
     // Axis labels when zoomed
     if (isZoomed) {
+        const cc = chartColors();
         ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.fillStyle = cc.labelText;
 
         // Bottom-left: min speed
         ctx.textAlign = 'left';

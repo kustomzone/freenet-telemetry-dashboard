@@ -37,6 +37,8 @@
                 if (icon) icon.textContent = '🌙';
                 try { localStorage.setItem('theme', 'light'); } catch (e) {}
             }
+            // Notify canvas-based charts to re-render with new theme colors
+            window.dispatchEvent(new Event('themechange'));
         }
 
         // Sync icon on load when light mode was restored from localStorage

@@ -8,12 +8,23 @@ import { state } from './state.js';
 let chart = null;
 let chartCanvas = null;
 
-const CHART_COLORS = {
-    grid: 'rgba(48, 54, 61, 0.3)',
-    text: '#8b949e',
-    textMuted: '#484f58',
-    other: '#484f58',
-};
+function isLightMode() {
+    return document.documentElement.getAttribute('data-theme') === 'light';
+}
+
+function getChartColors() {
+    const light = isLightMode();
+    return {
+        grid: light ? 'rgba(148, 163, 184, 0.25)' : 'rgba(48, 54, 61, 0.3)',
+        text: light ? '#475569' : '#8b949e',
+        textMuted: light ? '#94a3b8' : '#484f58',
+        other: light ? '#94a3b8' : '#484f58',
+        tooltipBg: light ? 'rgba(255, 255, 255, 0.95)' : 'rgba(13, 17, 23, 0.95)',
+        tooltipBorder: light ? 'rgba(0, 0, 0, 0.12)' : 'rgba(48, 54, 61, 0.6)',
+        tooltipTitle: light ? '#0f172a' : '#e6edf3',
+        tooltipBody: light ? '#475569' : '#8b949e',
+    };
+}
 
 /**
  * Generate a color for a version based on its position in the sorted list.
@@ -112,8 +123,8 @@ function buildDatasets(series, versions) {
                 for (const v of grouped) sum += (p[v] || 0);
                 return sum;
             }),
-            borderColor: CHART_COLORS.other,
-            backgroundColor: CHART_COLORS.other + '18',
+            borderColor: getChartColors().other,
+            backgroundColor: getChartColors().other + '18',
             borderWidth: 1.5,
             borderDash: [4, 3],
             pointRadius: 0,
@@ -156,6 +167,8 @@ export function initVersionsChart(container) {
     const labels = series.map(p => new Date(p.t / 1_000_000));
     const datasets = buildDatasets(series, versions);
 
+    const CC = getChartColors();
+
     chart = new Chart(chartCanvas, {
         type: 'line',
         data: { labels, datasets },
@@ -172,7 +185,7 @@ export function initVersionsChart(container) {
                     position: 'top',
                     align: 'start',
                     labels: {
-                        color: CHART_COLORS.text,
+                        color: CC.text,
                         font: { size: 10, family: "'JetBrains Mono', monospace" },
                         boxWidth: 16,
                         boxHeight: 2,
@@ -180,13 +193,13 @@ export function initVersionsChart(container) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(13, 17, 23, 0.95)',
-                    borderColor: 'rgba(48, 54, 61, 0.6)',
+                    backgroundColor: CC.tooltipBg,
+                    borderColor: CC.tooltipBorder,
                     borderWidth: 1,
                     titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
                     bodyFont: { family: "'JetBrains Mono', monospace", size: 10 },
-                    titleColor: '#e6edf3',
-                    bodyColor: '#8b949e',
+                    titleColor: CC.tooltipTitle,
+                    bodyColor: CC.tooltipBody,
                     padding: 10,
                     displayColors: true,
                     boxWidth: 8,
@@ -218,9 +231,9 @@ export function initVersionsChart(container) {
                         tooltipFormat: 'MMM d, HH:mm',
                         displayFormats: { hour: 'HH:mm', day: 'MMM d' }
                     },
-                    grid: { color: CHART_COLORS.grid, drawBorder: false },
+                    grid: { color: CC.grid, drawBorder: false },
                     ticks: {
-                        color: CHART_COLORS.textMuted,
+                        color: CC.textMuted,
                         font: { size: 10, family: "'JetBrains Mono', monospace" },
                         maxRotation: 0,
                         maxTicksLimit: 12,
@@ -233,12 +246,12 @@ export function initVersionsChart(container) {
                     title: {
                         display: true,
                         text: 'peers',
-                        color: CHART_COLORS.textMuted,
+                        color: CC.textMuted,
                         font: { size: 9, family: "'JetBrains Mono', monospace" },
                     },
-                    grid: { color: CHART_COLORS.grid, drawBorder: false },
+                    grid: { color: CC.grid, drawBorder: false },
                     ticks: {
-                        color: CHART_COLORS.textMuted,
+                        color: CC.textMuted,
                         font: { size: 9, family: "'JetBrains Mono', monospace" },
                         precision: 0,
                     },
@@ -270,3 +283,20 @@ export function destroyVersionsChart() {
         chart = null;
     }
 }
+
+// Re-render with updated theme colors on theme change
+window.addEventListener('themechange', () => {
+    if (!chart) return;
+    const CC = getChartColors();
+    chart.options.plugins.legend.labels.color = CC.text;
+    chart.options.plugins.tooltip.backgroundColor = CC.tooltipBg;
+    chart.options.plugins.tooltip.borderColor = CC.tooltipBorder;
+    chart.options.plugins.tooltip.titleColor = CC.tooltipTitle;
+    chart.options.plugins.tooltip.bodyColor = CC.tooltipBody;
+    chart.options.scales.x.grid.color = CC.grid;
+    chart.options.scales.x.ticks.color = CC.textMuted;
+    chart.options.scales.y.grid.color = CC.grid;
+    chart.options.scales.y.ticks.color = CC.textMuted;
+    chart.options.scales.y.title.color = CC.textMuted;
+    chart.update('none');
+});

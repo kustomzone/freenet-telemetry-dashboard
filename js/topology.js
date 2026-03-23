@@ -10,6 +10,34 @@ import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { hashToColor, contractKeyToLocation, getEventClass } from './utils.js';
 import { renderExponentialTimeline } from './timeline.js';
 
+// Re-render canvas charts on theme change
+window.addEventListener('themechange', () => {
+    // Force distance chart re-render by resetting cache
+    if (typeof _lastDistCount !== 'undefined') {
+        _lastDistCount = -1;
+        if (lastConnectionDistances && lastConnectionDistances.length > 0) {
+            renderDistChart(lastConnectionDistances);
+        }
+    }
+});
+
+// Theme-aware colors for canvas rendering
+function isLightMode() {
+    return document.documentElement.getAttribute('data-theme') === 'light';
+}
+function themeColors() {
+    const light = isLightMode();
+    return {
+        medianLine: light ? 'rgba(0, 0, 0, 0.2)' : 'rgba(255, 255, 255, 0.25)',
+        labelText: light ? 'rgba(0, 0, 0, 0.5)' : 'rgba(255, 255, 255, 0.4)',
+        tooltipBg: light ? 'rgba(255, 255, 255, 0.95)' : 'rgba(13, 17, 23, 0.95)',
+        tooltipText: light ? '#0f172a' : '#e6edf3',
+        tooltipBorder: light ? 'rgba(0,0,0,0.12)' : 'rgba(255,255,255,0.1)',
+        labelBg: light ? 'rgba(255, 255, 255, 0.9)' : 'rgba(13, 17, 23, 0.9)',
+        peerStroke: light ? '#c8cdd2' : '#2a2f35',
+    };
+}
+
 // Convert ring location (0-1) to SVG coordinates
 export function locationToXY(location) {
     const angle = location * 2 * Math.PI - Math.PI / 2;
@@ -1018,16 +1046,17 @@ function getOrCreateTooltip(container) {
 
     tooltipEl = document.createElement('div');
     tooltipEl.id = 'peer-canvas-tooltip';
+    const tc = themeColors();
     tooltipEl.style.cssText = `
         position: absolute;
         pointer-events: none;
-        background: rgba(13, 17, 23, 0.95);
-        color: #e6edf3;
+        background: ${tc.tooltipBg};
+        color: ${tc.tooltipText};
         font-family: 'JetBrains Mono', monospace;
         font-size: 11px;
         padding: 6px 10px;
         border-radius: 6px;
-        border: 1px solid rgba(255,255,255,0.1);
+        border: 1px solid ${tc.tooltipBorder};
         white-space: pre-line;
         z-index: 100;
         display: none;
@@ -1597,7 +1626,7 @@ function drawEventLabel(ctx, mx, my, eventType, color) {
     const bx = mx - boxW / 2;
     const by = my - boxH / 2;
     ctx.globalAlpha = 0.85;
-    ctx.fillStyle = 'rgba(13, 17, 23, 0.9)';
+    ctx.fillStyle = themeColors().labelBg;
     ctx.beginPath();
     ctx.roundRect(bx, by, boxW, boxH, 4);
     ctx.fill();
@@ -1888,9 +1917,10 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
     }
 
     // Draw non-subscriber dots (with stroke border)
+    const peerStrokeColor = themeColors().peerStroke;
     for (const d of strokeDots) {
         ctx.fillStyle = d.fillColor;
-        ctx.strokeStyle = '#2a2f35';
+        ctx.strokeStyle = peerStrokeColor;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.arc(d.pos.x, d.pos.y, d.nodeSize, 0, Math.PI * 2);
@@ -2251,8 +2281,9 @@ function renderDistChart(connectionDistances) {
         const medianDist = sorted[Math.floor(n / 2)];
         const medianY = pad + plotH - (medianDist / maxDist) * plotH;
 
+        const tc = themeColors();
         ctx.setLineDash([4, 4]);
-        ctx.strokeStyle = 'rgba(255, 255, 255, 0.25)';
+        ctx.strokeStyle = tc.medianLine;
         ctx.lineWidth = 1;
         ctx.beginPath();
         ctx.moveTo(pad, medianY);
@@ -2262,7 +2293,7 @@ function renderDistChart(connectionDistances) {
 
         // Median label
         ctx.font = '9px "JetBrains Mono", monospace';
-        ctx.fillStyle = 'rgba(255, 255, 255, 0.4)';
+        ctx.fillStyle = tc.labelText;
         ctx.textAlign = 'right';
         ctx.textBaseline = 'bottom';
         ctx.fillText('median ' + medianDist.toFixed(3), pad + plotW, medianY - 3);
@@ -2270,8 +2301,9 @@ function renderDistChart(connectionDistances) {
 
     // Axis labels when zoomed
     if (distChartZoomed) {
+        const tc = themeColors();
         ctx.font = '10px "JetBrains Mono", monospace';
-        ctx.fillStyle = 'rgba(255,255,255,0.4)';
+        ctx.fillStyle = tc.labelText;
 
         // Bottom-left: min distance
         ctx.textAlign = 'left';

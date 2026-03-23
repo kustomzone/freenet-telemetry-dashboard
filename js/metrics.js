@@ -8,17 +8,28 @@ import { state } from './state.js';
 let chart = null;
 let chartCanvas = null;
 
-const COLORS = {
-    put: '#fbbf24',
-    get: '#34d399',
-    update: '#a78bfa',
-    peers: '#7ecfef',
-    grid: 'rgba(48, 54, 61, 0.3)',
-    text: '#8b949e',
-    textMuted: '#484f58',
-    versionLine: 'rgba(244, 114, 182, 0.25)',
-    versionText: '#f472b6',
-};
+function isLightMode() {
+    return document.documentElement.getAttribute('data-theme') === 'light';
+}
+
+function getColors() {
+    const light = isLightMode();
+    return {
+        put: '#fbbf24',
+        get: '#34d399',
+        update: '#a78bfa',
+        peers: '#7ecfef',
+        grid: light ? 'rgba(148, 163, 184, 0.25)' : 'rgba(48, 54, 61, 0.3)',
+        text: light ? '#475569' : '#8b949e',
+        textMuted: light ? '#94a3b8' : '#484f58',
+        versionLine: 'rgba(244, 114, 182, 0.25)',
+        versionText: '#f472b6',
+        tooltipBg: light ? 'rgba(255, 255, 255, 0.95)' : 'rgba(13, 17, 23, 0.95)',
+        tooltipBorder: light ? 'rgba(0, 0, 0, 0.12)' : 'rgba(48, 54, 61, 0.6)',
+        tooltipTitle: light ? '#0f172a' : '#e6edf3',
+        tooltipBody: light ? '#475569' : '#8b949e',
+    };
+}
 
 /**
  * Exponential moving average.
@@ -80,6 +91,8 @@ export function initMetricsChart(container) {
 
     // Version annotations removed — were adding visual clutter
 
+    const C = getColors();
+
     chart = new Chart(chartCanvas, {
         type: 'line',
         data: {
@@ -88,8 +101,8 @@ export function initMetricsChart(container) {
                 {
                     label: 'GET',
                     data: smoothGet,
-                    borderColor: COLORS.get,
-                    backgroundColor: COLORS.get + '18',
+                    borderColor: C.get,
+                    backgroundColor: C.get + '18',
                     borderWidth: 2,
                     pointRadius: 0,
                     pointHoverRadius: 4,
@@ -103,8 +116,8 @@ export function initMetricsChart(container) {
                 {
                     label: 'PUT',
                     data: smoothPut,
-                    borderColor: COLORS.put,
-                    backgroundColor: COLORS.put + '12',
+                    borderColor: C.put,
+                    backgroundColor: C.put + '12',
                     borderWidth: 2,
                     pointRadius: 0,
                     pointHoverRadius: 4,
@@ -118,8 +131,8 @@ export function initMetricsChart(container) {
                 {
                     label: 'UPDATE',
                     data: smoothUpd,
-                    borderColor: COLORS.update,
-                    backgroundColor: COLORS.update + '12',
+                    borderColor: C.update,
+                    backgroundColor: C.update + '12',
                     borderWidth: 2,
                     pointRadius: 0,
                     pointHoverRadius: 4,
@@ -145,7 +158,7 @@ export function initMetricsChart(container) {
                     position: 'top',
                     align: 'start',
                     labels: {
-                        color: COLORS.text,
+                        color: C.text,
                         font: { size: 10, family: "'JetBrains Mono', monospace" },
                         boxWidth: 16,
                         boxHeight: 2,
@@ -153,13 +166,13 @@ export function initMetricsChart(container) {
                     }
                 },
                 tooltip: {
-                    backgroundColor: 'rgba(13, 17, 23, 0.95)',
-                    borderColor: 'rgba(48, 54, 61, 0.6)',
+                    backgroundColor: C.tooltipBg,
+                    borderColor: C.tooltipBorder,
                     borderWidth: 1,
                     titleFont: { family: "'JetBrains Mono', monospace", size: 11 },
                     bodyFont: { family: "'JetBrains Mono', monospace", size: 10 },
-                    titleColor: '#e6edf3',
-                    bodyColor: '#8b949e',
+                    titleColor: C.tooltipTitle,
+                    bodyColor: C.tooltipBody,
                     padding: 10,
                     displayColors: true,
                     boxWidth: 8,
@@ -199,9 +212,9 @@ export function initMetricsChart(container) {
                         tooltipFormat: 'MMM d, HH:mm',
                         displayFormats: { hour: 'HH:mm', day: 'MMM d' }
                     },
-                    grid: { color: COLORS.grid, drawBorder: false },
+                    grid: { color: C.grid, drawBorder: false },
                     ticks: {
-                        color: COLORS.textMuted,
+                        color: C.textMuted,
                         font: { size: 10, family: "'JetBrains Mono', monospace" },
                         maxRotation: 0,
                         maxTicksLimit: 12,
@@ -215,12 +228,12 @@ export function initMetricsChart(container) {
                     title: {
                         display: true,
                         text: 'success %',
-                        color: COLORS.textMuted,
+                        color: C.textMuted,
                         font: { size: 9, family: "'JetBrains Mono', monospace" },
                     },
-                    grid: { color: COLORS.grid, drawBorder: false },
+                    grid: { color: C.grid, drawBorder: false },
                     ticks: {
-                        color: COLORS.textMuted,
+                        color: C.textMuted,
                         font: { size: 9, family: "'JetBrains Mono', monospace" },
                         callback: v => v + '%',
                         stepSize: 25,
@@ -270,3 +283,20 @@ export function destroyMetricsChart() {
         chart = null;
     }
 }
+
+// Re-render with updated theme colors on theme change
+window.addEventListener('themechange', () => {
+    if (!chart) return;
+    const C = getColors();
+    chart.options.plugins.legend.labels.color = C.text;
+    chart.options.plugins.tooltip.backgroundColor = C.tooltipBg;
+    chart.options.plugins.tooltip.borderColor = C.tooltipBorder;
+    chart.options.plugins.tooltip.titleColor = C.tooltipTitle;
+    chart.options.plugins.tooltip.bodyColor = C.tooltipBody;
+    chart.options.scales.x.grid.color = C.grid;
+    chart.options.scales.x.ticks.color = C.textMuted;
+    chart.options.scales.y.grid.color = C.grid;
+    chart.options.scales.y.ticks.color = C.textMuted;
+    chart.options.scales.y.title.color = C.textMuted;
+    chart.update('none');
+});
