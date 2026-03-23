@@ -394,6 +394,10 @@ class TelemetryDB:
         all_events = []
 
         for group_name, group in TYPE_BUDGETS.items():
+            # Skip connect when filtering by contract — connect events don't have contract keys
+            if group_name == 'connect' and contract_key:
+                continue
+
             types = group['types']
             budget = group['limit']
             ph = ",".join("?" * len(types))
