@@ -2220,10 +2220,10 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
         ctx.rotate(Math.PI / 4);
 
         if (isSelected) {
-            ctx.fillStyle = '#f59e0b'; // amber for selected
+            ctx.fillStyle = '#2dd4bf'; // aquamarine/teal
             ctx.globalAlpha = 1;
         } else {
-            ctx.fillStyle = '#f59e0b'; // amber to distinguish from cyan peers/ring
+            ctx.fillStyle = '#2dd4bf';
             ctx.globalAlpha = 0.5;
         }
 
