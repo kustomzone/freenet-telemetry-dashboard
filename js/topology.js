@@ -1655,9 +1655,9 @@ function drawSubscriptionLinksCanvas(ctx, peers, connections) {
     const proximityLinks = computeProximityLinks(state.selectedContract, peers, connections);
     if (proximityLinks.length > 0) {
         ctx.save();
-        ctx.strokeStyle = 'rgba(34, 211, 238, 0.7)';
-        ctx.lineWidth = 2;
-        ctx.setLineDash([4, 3]);
+        ctx.strokeStyle = 'rgba(34, 211, 238, 0.25)';
+        ctx.lineWidth = 1;
+        ctx.setLineDash([3, 4]);
         ctx.lineCap = 'round';
         ctx.beginPath();
         for (const link of proximityLinks) {
