@@ -2197,7 +2197,7 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
     // --- Pass 5: Contract diamonds on outer ring ---
     // Show active contracts as small diamonds on an outer track
     const contractData = state.contractData || {};
-    const CONTRACT_RADIUS = RADIUS + 14; // just outside the peer ring
+    const CONTRACT_RADIUS = RADIUS + 25; // well outside the peer ring
     const selectedContract = state.selectedContract;
     const tc = themeColors();
     const contractKeys = Object.keys(contractData);
@@ -2209,18 +2209,18 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
             const x = CENTER + CONTRACT_RADIUS * Math.cos(angle);
             const y = CENTER + CONTRACT_RADIUS * Math.sin(angle);
             const isSelected = ck === selectedContract;
-            const size = isSelected ? 4 : 2.5;
+            const size = isSelected ? 5 : 3.5;
 
             ctx.save();
             ctx.translate(x, y);
-            ctx.rotate(angle + Math.PI / 4);
+            ctx.rotate(Math.PI / 4);
 
             if (isSelected) {
                 ctx.fillStyle = '#7ecfef';
-                ctx.globalAlpha = 0.9;
+                ctx.globalAlpha = 1;
             } else {
-                ctx.fillStyle = tc.peerStroke === '#c8cdd2' ? '#94a3b8' : '#484f58';
-                ctx.globalAlpha = 0.4;
+                ctx.fillStyle = '#7ecfef';
+                ctx.globalAlpha = 0.35;
             }
 
             ctx.fillRect(-size / 2, -size / 2, size, size);
