@@ -639,18 +639,12 @@ function drawRingParticles(ctx) {
             const t = (now - p.startTime) / p.duration;
             const alpha = 1 - t * 0.5;
 
-            // Pulse particles — single position, no travel
+            // Pulse particles — subtle glow at peer position
             if (p.peerPos) {
                 const pos = p.peerPos;
-                const radius = 2 + t * 10;
-                ctx.globalAlpha = (1 - t) * 0.5;
-                ctx.lineWidth = p.style === 'broadcast_pulse' ? 1 : 1.5;
+                ctx.globalAlpha = (1 - t) * 0.25;
                 ctx.beginPath();
-                ctx.arc(pos.x, pos.y, radius, 0, Math.PI * 2);
-                ctx.stroke();
-                ctx.globalAlpha = (1 - t) * 0.7;
-                ctx.beginPath();
-                ctx.arc(pos.x, pos.y, 1.5, 0, Math.PI * 2);
+                ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
                 ctx.fill();
                 continue;
             }
