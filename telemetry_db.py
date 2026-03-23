@@ -362,6 +362,10 @@ class TelemetryDB:
 
         # Per-type budgets — proportional to visual importance, not raw count
         TYPE_BUDGETS = {
+            'connect': {
+                'types': ('connected',),
+                'limit': 20000,   # ~7.5M exists, sample evenly
+            },
             'get': {
                 'types': ('get_request', 'get_success', 'get_not_found', 'get_failure'),
                 'limit': 60000,   # ~56k exists, send all
@@ -599,30 +603,7 @@ class TelemetryDB:
                     p["contractKey"] = ck
                 particles.append(p)
 
-        # Add sparse connect sample
-        CONNECT_LIMIT = 500
-        num_buckets = 50
-        conn_per_bucket = max(1, CONNECT_LIMIT // num_buckets)
-        bucket_ns = range_ns // num_buckets
-        conn_count = 0
-        for b in range(num_buckets):
-            bs = start_ns + b * bucket_ns
-            be = bs + bucket_ns
-            cur = self.conn.execute(
-                "SELECT timestamp_ns, from_peer, to_peer, event_type, tx_id FROM flows "
-                "WHERE event_type = 'connected' AND timestamp_ns BETWEEN ? AND ? "
-                "ORDER BY timestamp_ns LIMIT ?",
-                (bs, be, conn_per_bucket))
-            for row in cur.fetchall():
-                particles.append({
-                    "type": "hop",
-                    "timestamp_ns": row[0],
-                    "fromPeer": row[1],
-                    "toPeer": row[2],
-                    "eventType": row[3],
-                    "txId": row[4],
-                    "offsetMs": (row[0] - start_ns) / 1_000_000,
-                })
+        # Connect events are now handled by TYPE_BUDGETS above
                 conn_count += 1
             if conn_count >= CONNECT_LIMIT:
                 break
