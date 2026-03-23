@@ -652,69 +652,44 @@ function drawRingParticles(ctx) {
             const eased = 1 - (1 - t) * (1 - t);
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
 
-            if (p.style === 'connect') {
-                // Connect events — same as default request dot
-                const trailT = Math.max(0, eased - 0.15);
-                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
-                ctx.globalAlpha = alpha * 0.25;
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.moveTo(trailPt.x, trailPt.y);
-                ctx.lineTo(pt.x, pt.y);
-                ctx.stroke();
-                ctx.globalAlpha = alpha;
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
-                ctx.fill();
-            } else if (p.style === 'return') {
-                // Response "bounce back" — larger dot with glow halo
-                const trailT = Math.max(0, eased - 0.12);
-                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
-                ctx.globalAlpha = alpha * 0.3;
-                ctx.lineWidth = 2;
-                ctx.beginPath();
-                ctx.moveTo(trailPt.x, trailPt.y);
-                ctx.lineTo(pt.x, pt.y);
-                ctx.stroke();
+            // Trail (same for all styles)
+            const trailT = Math.max(0, eased - 0.15);
+            const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
+            ctx.globalAlpha = alpha * 0.25;
+            ctx.lineWidth = 1.5;
+            ctx.beginPath();
+            ctx.moveTo(trailPt.x, trailPt.y);
+            ctx.lineTo(pt.x, pt.y);
+            ctx.stroke();
 
-                // Glow halo
-                ctx.globalAlpha = alpha * 0.15;
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
-                ctx.fill();
-
-                // Core dot (larger)
-                ctx.globalAlpha = alpha;
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
-                ctx.fill();
+            // Shape by subtype
+            ctx.globalAlpha = alpha;
+            if (p.style === 'return') {
+                // Diamond — rotated square for response/bounce-back
+                const s = 2.8;
+                ctx.save();
+                ctx.translate(pt.x, pt.y);
+                ctx.rotate(Math.PI / 4);
+                ctx.fillRect(-s / 2, -s / 2, s, s);
+                ctx.restore();
             } else if (p.style === 'broadcast') {
-                // Broadcast — same as request dot
-                const trailT = Math.max(0, eased - 0.15);
-                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
-                ctx.globalAlpha = alpha * 0.25;
-                ctx.lineWidth = 1.5;
+                // Triangle — points in travel direction for broadcast
+                const dx = pt.x - trailPt.x;
+                const dy = pt.y - trailPt.y;
+                const angle = Math.atan2(dy, dx);
+                const s = 3;
+                ctx.save();
+                ctx.translate(pt.x, pt.y);
+                ctx.rotate(angle);
                 ctx.beginPath();
-                ctx.moveTo(trailPt.x, trailPt.y);
-                ctx.lineTo(pt.x, pt.y);
-                ctx.stroke();
-                ctx.globalAlpha = alpha;
-                ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+                ctx.moveTo(s, 0);
+                ctx.lineTo(-s * 0.6, -s * 0.7);
+                ctx.lineTo(-s * 0.6, s * 0.7);
+                ctx.closePath();
                 ctx.fill();
+                ctx.restore();
             } else {
-                // Default request dot — small with short trail
-                const trailT = Math.max(0, eased - 0.15);
-                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
-                ctx.globalAlpha = alpha * 0.25;
-                ctx.lineWidth = 1.5;
-                ctx.beginPath();
-                ctx.moveTo(trailPt.x, trailPt.y);
-                ctx.lineTo(pt.x, pt.y);
-                ctx.stroke();
-
-                // Core dot
-                ctx.globalAlpha = alpha;
+                // Circle — request (default) and connect
                 ctx.beginPath();
                 ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
                 ctx.fill();
