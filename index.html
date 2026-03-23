@@ -99,6 +99,7 @@
                 <div class="panel">
                     <div class="panel-header">
                         <span class="panel-title">Network Topology</span>
+                        <button class="msg-filter-btn" id="msg-filter-btn" title="Message filters">&#9697;</button>
                         <span class="panel-time-label" id="topology-time-label">Live</span>
                     </div>
                     <div class="topology-legend-inline" id="ring-legend">
@@ -108,16 +109,37 @@
                         <span class="legend-item"><span style="color:#7ecfef; font-size:12px; margin-right:3px;">&#9678;</span>Contract Location</span>
                         <span class="legend-item find-my-peer" id="find-my-peer-btn" style="display: none;" onclick="findMyPeer()"><span class="legend-marker you"></span><a href="#" onclick="event.preventDefault()">Find My Peer</a></span>
                     </div>
-                    <div class="topology-legend-inline message-filter-bar" id="message-filter-bar">
-                        <span class="legend-item msg-toggle active" data-type="connect"><span class="legend-dot" style="background:var(--color-connect)"></span>conn</span>
-                        <span class="legend-item msg-toggle active" data-type="put"><span class="legend-dot" style="background:var(--color-put)"></span>put</span>
-                        <span class="legend-item msg-toggle active" data-type="get"><span class="legend-dot" style="background:var(--color-get)"></span>get</span>
-                        <span class="legend-item msg-toggle active" data-type="update"><span class="legend-dot" style="background:var(--color-update)"></span>upd</span>
-                        <span class="legend-item msg-toggle active" data-type="subscribe"><span class="legend-dot" style="background:var(--color-subscribe)"></span>sub</span>
-                        <span class="msg-sample-control">
-                            <input type="range" id="msg-sample-slider" min="0" max="100" value="100" title="Sample rate">
-                            <span id="msg-sample-label" class="msg-sample-label">100%</span>
-                        </span>
+                    <div class="msg-filter-popover" id="msg-filter-popover">
+                        <div class="msg-filter-row" data-type="connect">
+                            <span class="msg-filter-dot" style="background:var(--color-connect)"></span>
+                            <span class="msg-filter-label">connect</span>
+                            <input type="range" class="msg-filter-slider" min="0" max="100" value="100">
+                            <span class="msg-filter-pct">100%</span>
+                        </div>
+                        <div class="msg-filter-row" data-type="put">
+                            <span class="msg-filter-dot" style="background:var(--color-put)"></span>
+                            <span class="msg-filter-label">put</span>
+                            <input type="range" class="msg-filter-slider" min="0" max="100" value="100">
+                            <span class="msg-filter-pct">100%</span>
+                        </div>
+                        <div class="msg-filter-row" data-type="get">
+                            <span class="msg-filter-dot" style="background:var(--color-get)"></span>
+                            <span class="msg-filter-label">get</span>
+                            <input type="range" class="msg-filter-slider" min="0" max="100" value="100">
+                            <span class="msg-filter-pct">100%</span>
+                        </div>
+                        <div class="msg-filter-row" data-type="update">
+                            <span class="msg-filter-dot" style="background:var(--color-update)"></span>
+                            <span class="msg-filter-label">update</span>
+                            <input type="range" class="msg-filter-slider" min="0" max="100" value="100">
+                            <span class="msg-filter-pct">100%</span>
+                        </div>
+                        <div class="msg-filter-row" data-type="subscribe">
+                            <span class="msg-filter-dot" style="background:var(--color-subscribe)"></span>
+                            <span class="msg-filter-label">subscribe</span>
+                            <input type="range" class="msg-filter-slider" min="0" max="100" value="100">
+                            <span class="msg-filter-pct">100%</span>
+                        </div>
                     </div>
                     <div class="topology-legend-inline" id="tree-legend" style="display: none;">
                         <span class="legend-item"><span class="legend-marker tree-root"></span>Root (seeder)</span>

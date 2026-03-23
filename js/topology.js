@@ -287,23 +287,21 @@ export function startReplay(flows, peers) {
     stopReplay();
     if (flows.length === 0) return;
 
-    // Apply message type filter and sample rate
-    const enabled = state.messageTypeEnabled;
-    const sampleRate = state.messageSampleRate;
+    // Apply per-type sample rate filter
+    const rates = state.messageTypeSampleRate;
 
     // Resolve peer positions and build pre-resolved flow list
     replayFlows = [];
     for (const flow of flows) {
         const eventClass = getEventClass(flow.eventType);
 
-        // Type filter: skip disabled types
-        if (!enabled[eventClass] && !(eventClass === 'transfer' && enabled.other)) continue;
-
-        // Sample filter: deterministic hash-based sampling for stability
-        if (sampleRate < 1.0) {
-            // Use offsetMs as a stable seed so same flows are shown on re-filter
+        // Per-type sample rate (0 = hidden, 1 = all shown)
+        const rate = rates[eventClass] ?? 1.0;
+        if (rate <= 0) continue;
+        if (rate < 1.0) {
+            // Deterministic hash-based sampling for stable results
             const h = (flow.offsetMs * 2654435761) >>> 0;
-            if ((h % 10000) / 10000 >= sampleRate) continue;
+            if ((h % 10000) / 10000 >= rate) continue;
         }
 
         let fromLoc = null, toLoc = null, fromPos = null, toPos = null;

@@ -66,13 +66,12 @@ export const state = {
     // Pre-computed flows from server (SQLite)
     serverFlows: null,  // [{fromPeer, toPeer, eventType, offsetMs, timestamp_ns}]
 
-    // Message type filter: which event classes are shown in replay
-    // All enabled by default; toggling re-filters client-side (no server round-trip)
-    messageTypeEnabled: {
-        connect: true, put: true, get: true,
-        update: true, subscribe: true, other: true,
+    // Message type filter: per-type sample rate (0..1) for replay particles
+    // 1.0 = show all, 0 = hide. Client-side filtering, no server round-trip.
+    messageTypeSampleRate: {
+        connect: 1.0, put: 1.0, get: 1.0,
+        update: 1.0, subscribe: 1.0, other: 1.0,
     },
-    messageSampleRate: 1.0, // 0..1 — fraction of enabled messages to show
 
     // Replay: selected time range for looping particle animation
     replayRange: null,  // {startNs, endNs} or null
