@@ -2200,9 +2200,9 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
     const CONTRACT_RADIUS = RADIUS + 22;
     const selectedContract = state.selectedContract;
     const contractEntries = Object.entries(contractData)
-        .filter(([_, d]) => (d.subscribers?.length || 0) >= 5 || d.peer_count >= 5)
+        .filter(([_, d]) => (d.subscribers?.length || 0) >= 100 || d.peer_count >= 100)
         .sort((a, b) => (b[1].subscribers?.length || 0) - (a[1].subscribers?.length || 0))
-        .slice(0, 50); // cap to avoid clutter
+        .slice(0, 20);
 
     for (const [ck, data] of contractEntries) {
         const loc = contractKeyToLocation(ck);
