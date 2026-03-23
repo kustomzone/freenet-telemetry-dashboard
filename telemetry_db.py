@@ -73,6 +73,7 @@ CREATE TABLE IF NOT EXISTS flows (
 );
 CREATE INDEX IF NOT EXISTS idx_flows_ts ON flows(timestamp_ns);
 CREATE INDEX IF NOT EXISTS idx_flows_tx ON flows(tx_id) WHERE tx_id IS NOT NULL;
+CREATE INDEX IF NOT EXISTS idx_flows_type_ts ON flows(event_type, timestamp_ns);
 
 -- Metadata for tracking ingest position
 CREATE TABLE IF NOT EXISTS meta (
@@ -359,6 +360,10 @@ class TelemetryDB:
         if range_ns <= 0:
             return []
 
+        # Exclude noise event types that dominate (87%+) but aren't useful for visualization
+        NOISE_TYPES = ('connected', 'request_sent', 'request', 'success')
+        noise_filter = " AND event_type NOT IN ({})".format(",".join("?" * len(NOISE_TYPES)))
+
         where = "timestamp_ns BETWEEN ? AND ?"
         params = [start_ns, end_ns]
         table = "flows"
@@ -393,6 +398,10 @@ class TelemetryDB:
             return [row_to_flow(row) for row in cur.fetchall()]
 
         # Unfiltered: sample across time buckets for even distribution
+        # Exclude noise types so the budget is spent on interesting operations
+        where_filtered = where + noise_filter
+        params_filtered = params + list(NOISE_TYPES)
+
         num_buckets = min(limit, 100)
         per_bucket = max(1, limit // num_buckets)
         bucket_ns = range_ns // num_buckets
@@ -401,11 +410,11 @@ class TelemetryDB:
         for b in range(num_buckets):
             bucket_start = start_ns + b * bucket_ns
             bucket_end = bucket_start + bucket_ns
-            bucket_params = list(params)
+            bucket_params = list(params_filtered)
             bucket_params[0] = bucket_start
             bucket_params[1] = bucket_end
 
-            sql = f"SELECT {select_cols} FROM {table} WHERE {where} ORDER BY timestamp_ns LIMIT {per_bucket}"
+            sql = f"SELECT {select_cols} FROM {table} WHERE {where_filtered} ORDER BY timestamp_ns LIMIT {per_bucket}"
             cur = self.conn.execute(sql, bucket_params)
             for row in cur.fetchall():
                 all_flows.append(row_to_flow(row))
