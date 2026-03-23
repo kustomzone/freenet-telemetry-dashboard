@@ -336,11 +336,9 @@ export function startReplay(flows, peers) {
     const offsetRange = maxOffset - minOffset;
     replayRealDurationMs = offsetRange || 1;
 
-    // Playhead sweeps the full replay range (0 to end), not just the flow span.
-    // This way it covers the entire timeline including gaps where no flows exist.
-    replayFlowMinOffsetMs = 0;
-    const rangeEndMs = state.replayRange ? (state.replayRange.endNs - state.replayRange.startNs) / 1_000_000 : maxOffset;
-    replayFlowMaxOffsetMs = Math.max(maxOffset, rangeEndMs);
+    // Playhead sweeps across the actual flow span so it stays in sync with particles.
+    replayFlowMinOffsetMs = minOffset;
+    replayFlowMaxOffsetMs = maxOffset;
     // Compress the actual flow span (not the full range) to 3-8s
     const compressedDuration = Math.min(8000, Math.max(3000, offsetRange * 0.5));
     replayActiveDuration = compressedDuration;
@@ -503,11 +501,7 @@ function startReplayLoop() {
             drawRingParticles(ctx);
         }
 
-        // Update timeline playhead — throttle to every 3rd frame (~20fps)
-        if (!step._frameCount) step._frameCount = 0;
-        if (++step._frameCount % 3 === 0) {
-            updateTimelinePlayhead();
-        }
+        updateTimelinePlayhead();
     }
 
     replayFrame = requestAnimationFrame(step);
