@@ -339,22 +339,24 @@ export function startReplay(flows, peers) {
 
     if (replayFlows.length === 0) return;
 
-    // Compute timing
-    const maxOffset = Math.max(...replayFlows.map(f => f.offsetMs));
-    const minOffset = Math.min(...replayFlows.map(f => f.offsetMs));
-    const offsetRange = maxOffset - minOffset;
-    replayRealDurationMs = offsetRange || 1;
+    // Compute timing — playhead must sweep the full replay range (not just the flow span)
+    // so it covers the entire visible timeline including gaps with no activity.
+    const rangeMs = state.replayRange
+        ? (state.replayRange.endNs - state.replayRange.startNs) / 1_000_000
+        : Math.max(...replayFlows.map(f => f.offsetMs));
+    replayFlowMinOffsetMs = 0;
+    replayFlowMaxOffsetMs = rangeMs;
+    replayRealDurationMs = rangeMs || 1;
 
-    replayFlowMinOffsetMs = minOffset;
-    replayFlowMaxOffsetMs = maxOffset;
-    const compressedDuration = Math.min(8000, Math.max(3000, offsetRange * 0.5));
+    const compressedDuration = Math.min(12000, Math.max(4000, rangeMs * 0.001));
     replayActiveDuration = compressedDuration;
     replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500;
 
-    // Normalize offsets to [0, compressedDuration] based on flow span
-    if (offsetRange > 0) {
+    // Normalize offsets to [0, compressedDuration] based on the FULL range
+    // Particles will cluster in active periods with gaps in quiet periods
+    if (rangeMs > 0) {
         for (const f of replayFlows) {
-            f.normalizedOffset = ((f.offsetMs - minOffset) / offsetRange) * compressedDuration;
+            f.normalizedOffset = (f.offsetMs / rangeMs) * compressedDuration;
         }
     } else {
         replayFlows.forEach((f, i) => {
