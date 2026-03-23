@@ -104,13 +104,20 @@ export function renderExponentialTimeline() {
     state.currentTime = tNow;
     const totalDurationNs = tNow - state.timeRange.start;
 
-    // Cache check — include playhead position (rounded to reduce redraws to ~20/sec)
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+
+    // Always update the lightweight playhead overlay
+    drawPlayheadOverlay(tNow, totalDurationNs, width, height);
+
+    // Cache check for the expensive static content (events, ticks, range highlight)
+    // Exclude playhead position — that's drawn on the overlay canvas
     const replayKey = state.replayRange ? `${state.replayRange.startNs}-${state.replayRange.endNs}` : 'none';
     const dragKey = isDragging ? `${dragStartX}-${dragCurrentX}` : '';
     const pauseKey = state.replayPaused ? 'p' : '';
-    // During replay, redraw ~30 times/sec for smooth playhead sweep
-    const playheadKey = state.replayPlayheadMs > 0 ? (performance.now() / 33 | 0) : '';
-    const cacheKey = `${tNow}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${canvas.clientWidth}-${canvas.clientHeight}-${replayKey}-${dragKey}-${pauseKey}-${playheadKey}`;
+    // Throttle tNow to 5-second granularity — event positions shift negligibly over 70h
+    const tRounded = Math.floor(tNow / 5_000_000_000) * 5_000_000_000;
+    const cacheKey = `${tRounded}-${state.timeRange.start}-${state.allEvents.length}-${state.selectedContract}-${state.selectedPeerId}-${width}-${height}-${replayKey}-${dragKey}-${pauseKey}`;
     if (cacheKey === lastCanvasKey) return;
     lastCanvasKey = cacheKey;
 
@@ -330,6 +337,44 @@ let suppressNextClick = false; // eat the click event that follows a successful 
 
 
 /**
+ * Lightweight playhead overlay — drawn every frame on a separate canvas.
+ * Only draws a single vertical line, no event iteration needed.
+ */
+let _playheadCtx = null;
+function drawPlayheadOverlay(tNow, totalDurationNs, width, height) {
+    if (state.replayPlayheadMs <= 0) return;
+
+    const overlay = document.getElementById('timeline-playhead-canvas');
+    if (!overlay) return;
+
+    if (!_playheadCtx) _playheadCtx = overlay.getContext('2d');
+    const ctx = _playheadCtx;
+    const dpr = window.devicePixelRatio || 1;
+
+    // Match canvas resolution to display
+    const w = width * dpr;
+    const h = height * dpr;
+    if (overlay.width !== w || overlay.height !== h) {
+        overlay.width = w;
+        overlay.height = h;
+    }
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    ctx.clearRect(0, 0, width, height);
+
+    const playheadNs = state.replayPlayheadMs * 1_000_000;
+    const px = timeToX(playheadNs, tNow, totalDurationNs, width);
+    if (px < 0 || px > width) return;
+
+    const isLight = document.documentElement.getAttribute('data-theme') === 'light';
+    ctx.beginPath();
+    ctx.moveTo(px, 0);
+    ctx.lineTo(px, height);
+    ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.95)';
+    ctx.lineWidth = 2;
+    ctx.stroke();
+}
+
+/**
  * Draw the replay selection highlight on the timeline canvas.
  * Called from renderExponentialTimeline after event bars are drawn.
  */
@@ -366,19 +411,7 @@ function drawReplayHighlight(ctx, width, height, tNow, totalDurationNs) {
     ctx.lineWidth = 1.5;
     ctx.strokeRect(left, 0, right - left, height);
 
-    // Playhead line — uses timeToX for correct logarithmic positioning
-    if (state.replayPlayheadMs > 0) {
-        const playheadNs = state.replayPlayheadMs * 1_000_000;
-        const px = timeToX(playheadNs, tNow, totalDurationNs, width);
-        if (px >= 0 && px <= width) {
-            ctx.beginPath();
-            ctx.moveTo(px, 0);
-            ctx.lineTo(px, height);
-            ctx.strokeStyle = isLight ? 'rgba(0, 0, 0, 0.8)' : 'rgba(255, 255, 255, 0.95)';
-            ctx.lineWidth = 2;
-            ctx.stroke();
-        }
-    }
+    // Playhead is drawn on the overlay canvas (drawPlayheadOverlay)
 
     // PAUSED label in the selection region
     if (state.replayPaused) {
