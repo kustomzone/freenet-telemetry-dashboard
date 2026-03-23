@@ -364,24 +364,24 @@ class TelemetryDB:
         TYPE_BUDGETS = {
             'get': {
                 'types': ('get_request', 'get_success', 'get_not_found', 'get_failure'),
-                'limit': 10000,
+                'limit': 100000,
             },
             'subscribe': {
                 'types': ('subscribe_request', 'subscribe_success', 'subscribe_not_found'),
-                'limit': 10000,
+                'limit': 200000,
             },
             'update': {
                 'types': ('update_request', 'update_success', 'update_failure'),
-                'limit': 10000,
+                'limit': 100000,
             },
             'broadcast': {
                 'types': ('update_broadcast_received', 'update_broadcast_applied',
                           'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied'),
-                'limit': 5000,
+                'limit': 200000,
             },
             'put': {
                 'types': ('put_request', 'put_success'),
-                'limit': 2000,
+                'limit': 10000,
             },
         }
 

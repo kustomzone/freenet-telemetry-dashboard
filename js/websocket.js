@@ -24,8 +24,8 @@ export function connect(callbacks) {
     state.ws = new WebSocket(wsUrl);
 
     state.ws.onopen = () => {
-        document.getElementById('status-dot').className = 'status-dot live';
-        document.getElementById('status-text').textContent = 'Live';
+        document.getElementById('status-dot').className = 'status-dot';
+        document.getElementById('status-text').textContent = 'Loading...';
         hideCapacityMessage();
         if (state.reconnectTimeout) {
             clearTimeout(state.reconnectTimeout);
@@ -99,6 +99,7 @@ function hideCapacityMessage() {
 function handleMessage(data, callbacks) {
     if (data.type === 'state') {
         console.log('Received initial state');
+        document.getElementById('status-text').textContent = 'Loading history...';
 
         // Store priority token for future reconnects (returning user priority)
         if (data.priority_token) {
@@ -252,6 +253,10 @@ function handleMessage(data, callbacks) {
             const maxEvt = new Date(Math.max(...evtTimes) / 1_000_000);
             console.log(`Loaded ${state.allEvents.length} events from ${minEvt.toLocaleTimeString()} to ${maxEvt.toLocaleTimeString()}`);
         }
+
+        const flowCount = state.serverFlows ? state.serverFlows.length : 0;
+        document.getElementById('status-dot').className = 'status-dot live';
+        document.getElementById('status-text').textContent = 'Live';
 
         callbacks.renderTimeline();
         callbacks.renderRuler();
