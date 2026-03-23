@@ -181,7 +181,7 @@ REJECT examples: MAGA2024 (political), TransRights (political), FreePalestine (p
 # Event history buffer (last 2 hours, hard-capped)
 MAX_HISTORY_AGE_NS = 2 * 60 * 60 * 1_000_000_000  # 2 hours in nanoseconds
 MAX_HISTORY_EVENTS = 50000  # Limit events kept in memory
-MAX_INITIAL_EVENTS = 20000  # Events sent to clients on connect (subset of history)
+MAX_INITIAL_EVENTS = 5000  # Events sent to clients on connect (subset of history)
 # Hard cap the deque to prevent unbounded growth. Events are appended in
 # approximately chronological order so a maxlen deque naturally keeps the
 # most recent events.
@@ -743,7 +743,7 @@ pending_ops = {}
 # Transaction tracking - store full event sequences for timeline lanes
 # tx_id -> {"op": type, "contract": key, "events": [...], "start_ns": ts, "end_ns": ts, "status": "pending"|"success"|"failed"}
 MAX_TRANSACTIONS = 10000  # Keep last N transactions
-MAX_INITIAL_TRANSACTIONS = 2000  # Transactions sent to clients on connect
+MAX_INITIAL_TRANSACTIONS = 500  # Transactions sent to clients on connect
 transactions = {}  # tx_id -> transaction data
 transaction_order = []  # List of tx_ids in order for pruning
 
