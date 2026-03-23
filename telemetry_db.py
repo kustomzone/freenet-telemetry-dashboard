@@ -362,11 +362,11 @@ class TelemetryDB:
         where = "timestamp_ns BETWEEN ? AND ?"
         params = [start_ns, end_ns]
         table = "flows"
-        select_cols = "timestamp_ns, from_peer, to_peer, event_type"
+        select_cols = "timestamp_ns, from_peer, to_peer, event_type, tx_id"
 
         if contract_key:
             table = "flows f JOIN transactions t ON f.tx_id = t.tx_id"
-            select_cols = "f.timestamp_ns, f.from_peer, f.to_peer, f.event_type"
+            select_cols = "f.timestamp_ns, f.from_peer, f.to_peer, f.event_type, f.tx_id"
             where = "f.timestamp_ns BETWEEN ? AND ? AND t.contract_key = ?"
             params = [start_ns, end_ns, contract_key]
             if peer_id:
@@ -376,17 +376,21 @@ class TelemetryDB:
             where += " AND (from_peer = ? OR to_peer = ?)"
             params.extend([peer_id, peer_id])
 
-        if is_filtered:
-            # Single query — relies on idx_tx_contract and idx_flows_tx indexes
-            sql = f"SELECT {select_cols} FROM {table} WHERE {where} ORDER BY timestamp_ns LIMIT {limit}"
-            cur = self.conn.execute(sql, params)
-            return [{
+        def row_to_flow(row):
+            return {
                 "timestamp_ns": row[0],
                 "fromPeer": row[1],
                 "toPeer": row[2],
                 "eventType": row[3],
+                "txId": row[4],
                 "offsetMs": (row[0] - start_ns) / 1_000_000,
-            } for row in cur.fetchall()]
+            }
+
+        if is_filtered:
+            # Single query — relies on idx_tx_contract and idx_flows_tx indexes
+            sql = f"SELECT {select_cols} FROM {table} WHERE {where} ORDER BY timestamp_ns LIMIT {limit}"
+            cur = self.conn.execute(sql, params)
+            return [row_to_flow(row) for row in cur.fetchall()]
 
         # Unfiltered: sample across time buckets for even distribution
         num_buckets = min(limit, 100)
@@ -404,13 +408,7 @@ class TelemetryDB:
             sql = f"SELECT {select_cols} FROM {table} WHERE {where} ORDER BY timestamp_ns LIMIT {per_bucket}"
             cur = self.conn.execute(sql, bucket_params)
             for row in cur.fetchall():
-                all_flows.append({
-                    "timestamp_ns": row[0],
-                    "fromPeer": row[1],
-                    "toPeer": row[2],
-                    "eventType": row[3],
-                    "offsetMs": (row[0] - start_ns) / 1_000_000,
-                })
+                all_flows.append(row_to_flow(row))
             if len(all_flows) >= limit:
                 break
 

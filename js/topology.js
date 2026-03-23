@@ -293,6 +293,13 @@ export function startReplay(flows, peers) {
 
     // Resolve peer positions and build pre-resolved flow list
     replayFlows = [];
+    // Build peer lookup for fast position resolution
+    const peerLookup = new Map();
+    peers.forEach((peer, id) => {
+        peerLookup.set(id, peer);
+        if (peer.peer_id) peerLookup.set(peer.peer_id, peer);
+    });
+
     for (const flow of flows) {
         const eventClass = getEventClass(flow.eventType);
 
@@ -300,46 +307,46 @@ export function startReplay(flows, peers) {
         const rate = rates[eventClass] ?? 1.0;
         if (rate <= 0) continue;
         if (rate < 1.0) {
-            // Deterministic hash-based sampling for stable results
             const h = (flow.offsetMs * 2654435761) >>> 0;
             if ((h % 10000) / 10000 >= rate) continue;
         }
 
-        let fromLoc = null, toLoc = null, fromPos = null, toPos = null;
-        peers.forEach((peer, id) => {
-            if (id === flow.fromPeer || peer.peer_id === flow.fromPeer) {
-                fromLoc = peer.location;
-                fromPos = locationToXY(peer.location);
-            }
-            if (id === flow.toPeer || peer.peer_id === flow.toPeer) {
-                toLoc = peer.location;
-                toPos = locationToXY(peer.location);
-            }
-        });
-        if (!fromPos || !toPos || fromLoc === null || toLoc === null) continue;
+        const fromPeer = peerLookup.get(flow.fromPeer);
+        const toPeer = peerLookup.get(flow.toPeer);
+        if (!fromPeer || !toPeer || fromPeer.location == null || toPeer.location == null) continue;
+        const fromPos = locationToXY(fromPeer.location);
+        const toPos = locationToXY(toPeer.location);
         const dx = toPos.x - fromPos.x, dy = toPos.y - fromPos.y;
         if (dx * dx + dy * dy < 100) continue;
 
         const color = EVENT_LINE_COLORS[eventClass] || EVENT_LINE_COLORS.other;
-        const cp = connectionControlPoint(fromLoc, toLoc);
+        const cp = connectionControlPoint(fromPeer.location, toPeer.location);
 
-        replayFlows.push({ fromPos, toPos, cp, color, offsetMs: flow.offsetMs });
+        // Classify flow role for visual differentiation
+        const et = flow.eventType || '';
+        let style = 'dot'; // default
+        if (et.includes('success') || et.includes('not_found') || et.includes('failure')) {
+            style = 'return'; // response flowing back
+        } else if (et.includes('broadcast')) {
+            style = 'broadcast'; // fan-out from owner
+        }
+
+        replayFlows.push({
+            fromPos, toPos, cp, color, offsetMs: flow.offsetMs,
+            txId: flow.txId, style,
+        });
     }
 
     if (replayFlows.length === 0) return;
 
-    // Compute loop duration: compress real time range into a readable replay speed.
-    // The replay takes 3-8 seconds depending on the number of flows,
-    // plus PARTICLE_DURATION so the last particle finishes before the loop restarts.
+    // Compute timing
     const maxOffset = Math.max(...replayFlows.map(f => f.offsetMs));
     const minOffset = Math.min(...replayFlows.map(f => f.offsetMs));
     const offsetRange = maxOffset - minOffset;
     replayRealDurationMs = offsetRange || 1;
 
-    // Playhead sweeps across the actual flow span so it stays in sync with particles.
     replayFlowMinOffsetMs = minOffset;
     replayFlowMaxOffsetMs = maxOffset;
-    // Compress the actual flow span (not the full range) to 3-8s
     const compressedDuration = Math.min(8000, Math.max(3000, offsetRange * 0.5));
     replayActiveDuration = compressedDuration;
     replayLoopDuration = compressedDuration + PARTICLE_DURATION + 500;
@@ -350,10 +357,46 @@ export function startReplay(flows, peers) {
             f.normalizedOffset = ((f.offsetMs - minOffset) / offsetRange) * compressedDuration;
         }
     } else {
-        // All at the same time — stagger slightly
         replayFlows.forEach((f, i) => {
             f.normalizedOffset = (i / replayFlows.length) * Math.min(2000, compressedDuration);
         });
+    }
+
+    // Bounce effect: for response flows in the same transaction as request flows,
+    // add a delay so the return particle starts after the outbound arrives.
+    // This creates a visual "bounce" — request goes out, response comes back.
+    if (replayFlows.some(f => f.txId)) {
+        const byTx = new Map();
+        for (const f of replayFlows) {
+            if (f.txId) {
+                if (!byTx.has(f.txId)) byTx.set(f.txId, []);
+                byTx.get(f.txId).push(f);
+            }
+        }
+        const bounceDelay = PARTICLE_DURATION * 0.6;
+        for (const txFlows of byTx.values()) {
+            if (txFlows.length < 2) continue;
+            const hasRequest = txFlows.some(f => f.style === 'dot');
+            const hasReturn = txFlows.some(f => f.style === 'return');
+            if (hasRequest && hasReturn) {
+                // Find the latest request offset in this tx
+                let lastRequestOffset = 0;
+                for (const f of txFlows) {
+                    if (f.style === 'dot' && f.normalizedOffset > lastRequestOffset) {
+                        lastRequestOffset = f.normalizedOffset;
+                    }
+                }
+                // Shift return flows to start after the last request + bounce delay
+                for (const f of txFlows) {
+                    if (f.style === 'return') {
+                        const returnDelay = lastRequestOffset + bounceDelay;
+                        if (f.normalizedOffset < returnDelay) {
+                            f.normalizedOffset = returnDelay + (f.normalizedOffset - txFlows[0].normalizedOffset) * 0.5;
+                        }
+                    }
+                }
+            }
+        }
     }
 
     // Sort by normalizedOffset for efficient spawn scanning
@@ -481,7 +524,8 @@ function startReplayLoop() {
                 ringParticles.push({
                     fromPos: flow.fromPos, toPos: flow.toPos,
                     cp: flow.cp, color: flow.color,
-                    startTime: now, duration: particleDuration
+                    startTime: now, duration: particleDuration,
+                    style: flow.style || 'dot',
                 });
             }
             replayNextSpawnIdx = i + 1;
@@ -571,21 +615,52 @@ function drawRingParticles(ctx) {
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
             const alpha = 1 - t * 0.5;
 
-            // Short trail: line from ~15% behind to current position
-            const trailT = Math.max(0, eased - 0.15);
-            const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
-            ctx.globalAlpha = alpha * 0.25;
-            ctx.lineWidth = 1.5;
-            ctx.beginPath();
-            ctx.moveTo(trailPt.x, trailPt.y);
-            ctx.lineTo(pt.x, pt.y);
-            ctx.stroke();
+            if (p.style === 'return') {
+                // Response "bounce back" — larger dot with glow halo
+                const trailT = Math.max(0, eased - 0.12);
+                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
+                ctx.globalAlpha = alpha * 0.3;
+                ctx.lineWidth = 2;
+                ctx.beginPath();
+                ctx.moveTo(trailPt.x, trailPt.y);
+                ctx.lineTo(pt.x, pt.y);
+                ctx.stroke();
 
-            // Core dot
-            ctx.globalAlpha = alpha;
-            ctx.beginPath();
-            ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
-            ctx.fill();
+                // Glow halo
+                ctx.globalAlpha = alpha * 0.15;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 6, 0, Math.PI * 2);
+                ctx.fill();
+
+                // Core dot (larger)
+                ctx.globalAlpha = alpha;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 3, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.style === 'broadcast') {
+                // Broadcast fan-out — ring (unfilled circle)
+                ctx.globalAlpha = alpha * 0.8;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 3.5, 0, Math.PI * 2);
+                ctx.stroke();
+            } else {
+                // Default request dot — small with short trail
+                const trailT = Math.max(0, eased - 0.15);
+                const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);
+                ctx.globalAlpha = alpha * 0.25;
+                ctx.lineWidth = 1.5;
+                ctx.beginPath();
+                ctx.moveTo(trailPt.x, trailPt.y);
+                ctx.lineTo(pt.x, pt.y);
+                ctx.stroke();
+
+                // Core dot
+                ctx.globalAlpha = alpha;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 2, 0, Math.PI * 2);
+                ctx.fill();
+            }
         }
     }
 
