@@ -2174,6 +2174,12 @@ async def periodic_cleanup():
             except FileNotFoundError:
                 pass
 
+            # Snapshot contract_states and propagation for restart recovery
+            if contract_states:
+                db.set_meta("contract_states", orjson.dumps(contract_states).decode())
+            if contract_propagation:
+                db.set_meta("contract_propagation", orjson.dumps(contract_propagation).decode())
+
         except Exception as e:
             print(f"[cleanup] Error during periodic cleanup: {e}")
 
@@ -2491,6 +2497,24 @@ async def load_initial_state():
     print(f"History: {history_eligible} eligible, {history_stored} stored, {len(event_history)} in buffer", flush=True)
     print(f"DB: {db.event_count()} events, {db.flow_count()} flows", flush=True)
     print(f"Transfer events: {len(transfer_events)} transfers for scatter plot", flush=True)
+
+    # Restore contract_states and propagation from DB snapshot
+    if not contract_states:
+        saved = db.get_meta("contract_states")
+        if saved:
+            try:
+                contract_states.update(orjson.loads(saved))
+                print(f"Restored {len(contract_states)} contract states from DB snapshot", flush=True)
+            except Exception as e:
+                print(f"Failed to restore contract_states: {e}", flush=True)
+    if not contract_propagation:
+        saved = db.get_meta("contract_propagation")
+        if saved:
+            try:
+                contract_propagation.update(orjson.loads(saved))
+                print(f"Restored {len(contract_propagation)} propagation entries from DB snapshot", flush=True)
+            except Exception as e:
+                print(f"Failed to restore contract_propagation: {e}", flush=True)
 
     # Supplement contract subscriptions from DB — JSONL tail only captures
     # a small window and may miss most contracts
