@@ -607,11 +607,6 @@ class TelemetryDB:
                     p["contractKey"] = ck
                 particles.append(p)
 
-        # Connect events are now handled by TYPE_BUDGETS above
-                conn_count += 1
-            if conn_count >= CONNECT_LIMIT:
-                break
-
         return particles
 
     def get_flows_for_range(self, start_ns, end_ns, contract_key=None, peer_id=None, limit=None):
