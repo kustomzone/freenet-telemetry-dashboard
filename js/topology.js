@@ -654,10 +654,10 @@ function drawRingParticles(ctx) {
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
 
             if (p.style === 'connect') {
-                // Connect events — tiny dim dot, no trail
-                ctx.globalAlpha = alpha * 0.15;
+                // Connect events — small dim dot
+                ctx.globalAlpha = alpha * 0.3;
                 ctx.beginPath();
-                ctx.arc(pt.x, pt.y, 1.2, 0, Math.PI * 2);
+                ctx.arc(pt.x, pt.y, 1.5, 0, Math.PI * 2);
                 ctx.fill();
             } else if (p.style === 'return') {
                 // Response "bounce back" — larger dot with glow halo
