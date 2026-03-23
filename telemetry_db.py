@@ -407,47 +407,41 @@ class TelemetryDB:
             cur = self.conn.execute(sql, params)
             return [row_to_flow(row) for row in cur.fetchall()]
 
-        # Unfiltered: sample each operation type separately with its own budget,
-        # then merge. This prevents high-volume types (GET) from drowning out
-        # lower-volume but more interesting types (SUBSCRIBE, UPDATE).
-        OP_BUDGETS = {
-            'get':       ('get_request', 'get_success', 'get_not_found', 'get_failure'),
-            'put':       ('put_request', 'put_success'),
-            'subscribe': ('subscribe_request', 'subscribe_success', 'subscribe_not_found'),
-            'update':    ('update_request', 'update_success', 'update_failure',
-                          'update_broadcast_received', 'update_broadcast_applied',
-                          'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied'),
-            'connect':   ('connected',),
-        }
-        # Budget per operation type — equal share, except connect gets less
-        per_op_limit = limit // (len(OP_BUDGETS) - 1)  # divide among non-connect ops
-        CONNECT_LIMIT = 500
+        # Send ALL non-connect interesting flows (~53k, ~6MB) — no sampling.
+        # Connect events get a sparse sample (500) since there are 30M+ of them.
+        NON_CONNECT_TYPES = (
+            'get_request', 'get_success', 'get_not_found', 'get_failure',
+            'put_request', 'put_success',
+            'subscribe_request', 'subscribe_success', 'subscribe_not_found',
+            'update_request', 'update_success', 'update_failure',
+            'update_broadcast_received', 'update_broadcast_applied',
+            'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied',
+        )
+        nc_filter = " AND event_type IN ({})".format(",".join("?" * len(NON_CONNECT_TYPES)))
+        sql = f"SELECT {select_cols} FROM {table} WHERE {where}{nc_filter} ORDER BY timestamp_ns"
+        cur = self.conn.execute(sql, params + list(NON_CONNECT_TYPES))
+        all_flows = [row_to_flow(row) for row in cur.fetchall()]
 
-        all_flows = []
+        # Add sparse sample of connect events
+        CONNECT_LIMIT = 500
+        conn_filter = " AND event_type = 'connected'"
         num_buckets = 50
         bucket_ns = range_ns // num_buckets
-
-        for op_name, op_types in OP_BUDGETS.items():
-            op_limit = CONNECT_LIMIT if op_name == 'connect' else per_op_limit
-            op_filter = " AND event_type IN ({})".format(",".join("?" * len(op_types)))
-            op_where = where + op_filter
-            op_params = params + list(op_types)
-            op_per_bucket = max(1, op_limit // num_buckets)
-            op_count = 0
-
-            for b in range(num_buckets):
-                bs = start_ns + b * bucket_ns
-                be = bs + bucket_ns
-                bp = list(op_params)
-                bp[0] = bs
-                bp[1] = be
-                sql = f"SELECT {select_cols} FROM {table} WHERE {op_where} ORDER BY timestamp_ns LIMIT {op_per_bucket}"
-                cur = self.conn.execute(sql, bp)
-                for row in cur.fetchall():
-                    all_flows.append(row_to_flow(row))
-                    op_count += 1
-                if op_count >= op_limit:
-                    break
+        conn_per_bucket = max(1, CONNECT_LIMIT // num_buckets)
+        conn_count = 0
+        for b in range(num_buckets):
+            bs = start_ns + b * bucket_ns
+            be = bs + bucket_ns
+            bp = list(params)
+            bp[0] = bs
+            bp[1] = be
+            sql = f"SELECT {select_cols} FROM {table} WHERE {where}{conn_filter} ORDER BY timestamp_ns LIMIT {conn_per_bucket}"
+            cur = self.conn.execute(sql, bp)
+            for row in cur.fetchall():
+                all_flows.append(row_to_flow(row))
+                conn_count += 1
+            if conn_count >= CONNECT_LIMIT:
+                break
 
         return all_flows
 
