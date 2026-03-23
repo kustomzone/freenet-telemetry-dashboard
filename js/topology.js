@@ -325,7 +325,9 @@ export function startReplay(flows, peers) {
         // Classify flow role for visual differentiation
         const et = flow.eventType || '';
         let style = 'dot'; // default
-        if (et.includes('success') || et.includes('not_found') || et.includes('failure')) {
+        if (eventClass === 'connect') {
+            style = 'connect'; // subtle background particle
+        } else if (et.includes('success') || et.includes('not_found') || et.includes('failure')) {
             style = 'return'; // response flowing back
         } else if (et.includes('broadcast')) {
             style = 'broadcast'; // fan-out from owner
@@ -617,7 +619,13 @@ function drawRingParticles(ctx) {
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
             const alpha = 1 - t * 0.5;
 
-            if (p.style === 'return') {
+            if (p.style === 'connect') {
+                // Connect events — tiny dim dot, no trail
+                ctx.globalAlpha = alpha * 0.15;
+                ctx.beginPath();
+                ctx.arc(pt.x, pt.y, 1.2, 0, Math.PI * 2);
+                ctx.fill();
+            } else if (p.style === 'return') {
                 // Response "bounce back" — larger dot with glow halo
                 const trailT = Math.max(0, eased - 0.12);
                 const trailPt = quadBezierAt(p.fromPos, p.cp, p.toPos, trailT);

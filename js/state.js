@@ -69,7 +69,7 @@ export const state = {
     // Message type filter: per-type sample rate (0..1) for replay particles
     // 1.0 = show all, 0 = hide. Client-side filtering, no server round-trip.
     messageTypeSampleRate: {
-        connect: 0, put: 1.0, get: 1.0,
+        connect: 1.0, put: 1.0, get: 1.0,
         update: 1.0, subscribe: 1.0, other: 0,
     },
 

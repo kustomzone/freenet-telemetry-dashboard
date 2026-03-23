@@ -369,6 +369,9 @@ class TelemetryDB:
             'update_broadcast_received', 'update_broadcast_applied',
             'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied',
         )
+        # Connect events get a separate small budget so they don't overwhelm
+        CONNECT_TYPES = ('connected',)
+        CONNECT_LIMIT = 500  # sparse sample of connect events
         interesting_filter = " AND event_type IN ({})".format(",".join("?" * len(INTERESTING_TYPES)))
 
         where = "timestamp_ns BETWEEN ? AND ?"
@@ -428,7 +431,29 @@ class TelemetryDB:
             if len(all_flows) >= limit:
                 break
 
-        return all_flows[:limit]
+        # Add a sparse sample of connect events (separate budget)
+        connect_filter = " AND event_type IN ({})".format(",".join("?" * len(CONNECT_TYPES)))
+        where_connect = where + connect_filter
+        params_connect = params + list(CONNECT_TYPES)
+        conn_buckets = min(CONNECT_LIMIT, 50)
+        conn_per_bucket = max(1, CONNECT_LIMIT // conn_buckets)
+        conn_bucket_ns = range_ns // conn_buckets
+        conn_count = 0
+        for b in range(conn_buckets):
+            bs = start_ns + b * conn_bucket_ns
+            be = bs + conn_bucket_ns
+            bp = list(params_connect)
+            bp[0] = bs
+            bp[1] = be
+            sql = f"SELECT {select_cols} FROM {table} WHERE {where_connect} ORDER BY timestamp_ns LIMIT {conn_per_bucket}"
+            cur = self.conn.execute(sql, bp)
+            for row in cur.fetchall():
+                all_flows.append(row_to_flow(row))
+                conn_count += 1
+            if conn_count >= CONNECT_LIMIT:
+                break
+
+        return all_flows
 
     # ---- Contract reconstruction ----
 
