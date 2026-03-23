@@ -451,7 +451,7 @@ if (realtimeBtn) {
 }
 
 // ============================================================================
-// Message type filter popover with per-type sample sliders
+// Message type legend toggles (compact chips in panel header)
 // ============================================================================
 
 function reapplyMessageFilter() {
@@ -460,40 +460,11 @@ function reapplyMessageFilter() {
     }
 }
 
-// Toggle popover
-const filterBtn = document.getElementById('msg-filter-btn');
-const filterPopover = document.getElementById('msg-filter-popover');
-if (filterBtn && filterPopover) {
-    filterBtn.addEventListener('click', (e) => {
-        e.stopPropagation();
-        const isOpen = filterPopover.classList.toggle('open');
-        filterBtn.classList.toggle('active', isOpen);
-    });
-    // Close on outside click
-    document.addEventListener('click', (e) => {
-        if (!filterPopover.contains(e.target) && e.target !== filterBtn) {
-            filterPopover.classList.remove('open');
-            filterBtn.classList.remove('active');
-        }
-    });
-    // Prevent popover clicks from closing it
-    filterPopover.addEventListener('click', (e) => e.stopPropagation());
-}
-
-// Per-type sliders
-document.querySelectorAll('.msg-filter-row').forEach(row => {
-    const type = row.dataset.type;
-    const slider = row.querySelector('.msg-filter-slider');
-    const pctLabel = row.querySelector('.msg-filter-pct');
-    const dot = row.querySelector('.msg-filter-dot');
-    if (!slider || !type) return;
-
-    slider.addEventListener('input', () => {
-        const pct = parseInt(slider.value);
-        state.messageTypeSampleRate[type] = pct / 100;
-        pctLabel.textContent = pct + '%';
-        // Dim the dot when at 0
-        if (dot) dot.style.opacity = pct === 0 ? '0.2' : '1';
+document.querySelectorAll('.msg-type-chip').forEach(chip => {
+    chip.addEventListener('click', () => {
+        const type = chip.dataset.type;
+        const isActive = chip.classList.toggle('active');
+        state.messageTypeSampleRate[type] = isActive ? 1.0 : 0;
         reapplyMessageFilter();
     });
 });
