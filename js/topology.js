@@ -648,15 +648,6 @@ function drawRingParticles(ctx) {
             // Pulse particles — subtle glow at peer position
             if (p.peerPos) {
                 const pos = p.peerPos;
-                // Tether to contract position
-                if (p.contractPos) {
-                    ctx.globalAlpha = (1 - t) * 0.08;
-                    ctx.lineWidth = 0.5;
-                    ctx.beginPath();
-                    ctx.moveTo(pos.x, pos.y);
-                    ctx.lineTo(p.contractPos.x, p.contractPos.y);
-                    ctx.stroke();
-                }
                 ctx.globalAlpha = (1 - t) * 0.25;
                 ctx.beginPath();
                 ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
@@ -667,16 +658,6 @@ function drawRingParticles(ctx) {
             // Hop particles — travel along bezier curve
             const eased = 1 - (1 - t) * (1 - t);
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
-
-            // Tether to contract position
-            if (p.contractPos) {
-                ctx.globalAlpha = alpha * 0.08;
-                ctx.lineWidth = 0.5;
-                ctx.beginPath();
-                ctx.moveTo(pt.x, pt.y);
-                ctx.lineTo(p.contractPos.x, p.contractPos.y);
-                ctx.stroke();
-            }
 
             if (p.style === 'connect') {
                 // Connect events — small dim dot
@@ -731,6 +712,26 @@ function drawRingParticles(ctx) {
                 ctx.fill();
             }
         }
+    }
+
+    // Subtle glow at active contract locations on the ring edge
+    const activeContracts = new Map(); // pos key → {x, y, color, alpha}
+    for (const p of ringParticles) {
+        if (!p.contractPos) continue;
+        const t = (now - p.startTime) / p.duration;
+        const key = `${p.contractPos.x|0},${p.contractPos.y|0}`;
+        const existing = activeContracts.get(key);
+        const a = (1 - t) * 0.15;
+        if (!existing || a > existing.alpha) {
+            activeContracts.set(key, { x: p.contractPos.x, y: p.contractPos.y, color: p.color, alpha: a });
+        }
+    }
+    for (const glow of activeContracts.values()) {
+        ctx.globalAlpha = glow.alpha;
+        ctx.fillStyle = glow.color;
+        ctx.beginPath();
+        ctx.arc(glow.x, glow.y, 4, 0, Math.PI * 2);
+        ctx.fill();
     }
 
     ctx.globalAlpha = 1;
