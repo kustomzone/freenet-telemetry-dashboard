@@ -630,21 +630,6 @@ function drawRingParticles(ctx) {
     ctx.save();
     ctx.lineCap = 'round';
 
-    // Draw contract tether lines first (underneath particles)
-    for (const p of ringParticles) {
-        if (!p.contractPos) continue;
-        const t = (now - p.startTime) / p.duration;
-        const pos = p.peerPos || (p.fromPos ? quadBezierAt(p.fromPos, p.cp, p.toPos, 1 - (1 - t) * (1 - t)) : null);
-        if (!pos) continue;
-        ctx.globalAlpha = (1 - t) * 0.08;
-        ctx.strokeStyle = p.color;
-        ctx.lineWidth = 0.5;
-        ctx.beginPath();
-        ctx.moveTo(pos.x, pos.y);
-        ctx.lineTo(p.contractPos.x, p.contractPos.y);
-        ctx.stroke();
-    }
-
     // Batch particles by color to minimize state changes
     const byColor = new Map();
     for (const p of ringParticles) {
@@ -663,6 +648,15 @@ function drawRingParticles(ctx) {
             // Pulse particles — subtle glow at peer position
             if (p.peerPos) {
                 const pos = p.peerPos;
+                // Tether to contract position
+                if (p.contractPos) {
+                    ctx.globalAlpha = (1 - t) * 0.08;
+                    ctx.lineWidth = 0.5;
+                    ctx.beginPath();
+                    ctx.moveTo(pos.x, pos.y);
+                    ctx.lineTo(p.contractPos.x, p.contractPos.y);
+                    ctx.stroke();
+                }
                 ctx.globalAlpha = (1 - t) * 0.25;
                 ctx.beginPath();
                 ctx.arc(pos.x, pos.y, 3, 0, Math.PI * 2);
@@ -673,6 +667,16 @@ function drawRingParticles(ctx) {
             // Hop particles — travel along bezier curve
             const eased = 1 - (1 - t) * (1 - t);
             const pt = quadBezierAt(p.fromPos, p.cp, p.toPos, eased);
+
+            // Tether to contract position
+            if (p.contractPos) {
+                ctx.globalAlpha = alpha * 0.08;
+                ctx.lineWidth = 0.5;
+                ctx.beginPath();
+                ctx.moveTo(pt.x, pt.y);
+                ctx.lineTo(p.contractPos.x, p.contractPos.y);
+                ctx.stroke();
+            }
 
             if (p.style === 'connect') {
                 // Connect events — small dim dot
