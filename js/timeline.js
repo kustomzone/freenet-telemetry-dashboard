@@ -125,8 +125,6 @@ export function renderExponentialTimeline() {
 
     // Set canvas resolution to match display size (HiDPI aware)
     const dpr = window.devicePixelRatio || 1;
-    const width = canvas.clientWidth;
-    const height = canvas.clientHeight;
     canvas.width = width * dpr;
     canvas.height = height * dpr;
     const ctx = canvas.getContext('2d');
