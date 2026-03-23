@@ -1303,11 +1303,17 @@ function installCanvasEvents(canvas, container) {
 
         const hit = findHitTarget(mx, my);
         if (hit) {
-            const { selectPeer, showPeerNamingPrompt } = lastCallbacks;
-            if (hit.isYou && state.youArePeer && !hit.peerName && showPeerNamingPrompt) {
-                showPeerNamingPrompt();
-            } else if (selectPeer) {
-                selectPeer(hit.id);
+            if (hit.contractKey) {
+                // Contract diamond clicked — select in contract panel
+                const { selectContract } = lastCallbacks;
+                if (selectContract) selectContract(hit.contractKey);
+            } else {
+                const { selectPeer, showPeerNamingPrompt } = lastCallbacks;
+                if (hit.isYou && state.youArePeer && !hit.peerName && showPeerNamingPrompt) {
+                    showPeerNamingPrompt();
+                } else if (selectPeer) {
+                    selectPeer(hit.id);
+                }
             }
         } else if (state.selectedPeerId) {
             // Click on empty space clears peer selection
@@ -2247,24 +2253,24 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
         });
     }
 
-    // Contract location marker hit target
-    if (state.selectedContract) {
-        const contractLoc = contractKeyToLocation(state.selectedContract);
-        if (contractLoc !== null) {
-            const angle = contractLoc * 2 * Math.PI - Math.PI / 2;
-            const markerR = RADIUS + 22;
-            const shortKey = state.selectedContract.substring(0, 12) + '...';
-            canvasHitTargets.push({
-                x: CENTER + markerR * Math.cos(angle),
-                y: CENTER + markerR * Math.sin(angle),
-                radius: 14,
-                id: '__contract_location__',
-                peer: null,
-                isYou: false,
-                peerName: null,
-                tooltipText: `Contract location: ${shortKey}\nRing position: ${contractLoc.toFixed(4)}`
-            });
-        }
+    // Contract diamond hit targets (hover tooltip + click to select)
+    for (const [ck, data] of contractEntries) {
+        const loc = contractKeyToLocation(ck);
+        if (loc === null) continue;
+        const angle = loc * 2 * Math.PI - Math.PI / 2;
+        const subs = data.subscribers?.length || 0;
+        const shortKey = ck.substring(0, 12) + '...';
+        canvasHitTargets.push({
+            x: CENTER + CONTRACT_RADIUS * Math.cos(angle),
+            y: CENTER + CONTRACT_RADIUS * Math.sin(angle),
+            radius: 8,
+            id: '__contract__' + ck,
+            contractKey: ck,
+            peer: null,
+            isYou: false,
+            peerName: null,
+            tooltipText: `Contract: ${shortKey}\n${subs} subscribers\nRing: ${loc.toFixed(4)}`
+        });
     }
 }
 

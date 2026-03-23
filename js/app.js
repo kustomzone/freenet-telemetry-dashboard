@@ -128,7 +128,9 @@ function _updateViewImpl() {
     }
 
     updateRingSVG(peers, connections, subscriberPeerIds, {
-        selectPeer: (peerId) => { selectPeer(peerId, updateView, updateURL); refreshReplay(); }
+        selectPeer: (peerId) => { selectPeer(peerId, updateView, updateURL); refreshReplay(); },
+        selectContract: (contractKey) => { selectContract(contractKey); },
+        showPeerNamingPrompt: () => { showPeerNamingPrompt(); },
     }, treeData);
 
     // Update stats
