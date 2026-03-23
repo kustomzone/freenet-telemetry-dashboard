@@ -407,51 +407,47 @@ class TelemetryDB:
             cur = self.conn.execute(sql, params)
             return [row_to_flow(row) for row in cur.fetchall()]
 
-        # Unfiltered: sample across time buckets for even distribution
-        # Use positive event type filter (200x faster than NOT IN with the compound index)
-        where_filtered = where + interesting_filter
-        params_filtered = params + list(INTERESTING_TYPES)
-
-        num_buckets = min(limit, 100)
-        per_bucket = max(1, limit // num_buckets)
-        bucket_ns = range_ns // num_buckets
+        # Unfiltered: sample each operation type separately with its own budget,
+        # then merge. This prevents high-volume types (GET) from drowning out
+        # lower-volume but more interesting types (SUBSCRIBE, UPDATE).
+        OP_BUDGETS = {
+            'get':       ('get_request', 'get_success', 'get_not_found', 'get_failure'),
+            'put':       ('put_request', 'put_success'),
+            'subscribe': ('subscribe_request', 'subscribe_success', 'subscribe_not_found'),
+            'update':    ('update_request', 'update_success', 'update_failure',
+                          'update_broadcast_received', 'update_broadcast_applied',
+                          'broadcast_emitted', 'update_broadcast_emitted', 'broadcast_applied'),
+            'connect':   ('connected',),
+        }
+        # Budget per operation type — equal share, except connect gets less
+        per_op_limit = limit // (len(OP_BUDGETS) - 1)  # divide among non-connect ops
+        CONNECT_LIMIT = 500
 
         all_flows = []
-        for b in range(num_buckets):
-            bucket_start = start_ns + b * bucket_ns
-            bucket_end = bucket_start + bucket_ns
-            bucket_params = list(params_filtered)
-            bucket_params[0] = bucket_start
-            bucket_params[1] = bucket_end
+        num_buckets = 50
+        bucket_ns = range_ns // num_buckets
 
-            sql = f"SELECT {select_cols} FROM {table} WHERE {where_filtered} ORDER BY timestamp_ns LIMIT {per_bucket}"
-            cur = self.conn.execute(sql, bucket_params)
-            for row in cur.fetchall():
-                all_flows.append(row_to_flow(row))
-            if len(all_flows) >= limit:
-                break
+        for op_name, op_types in OP_BUDGETS.items():
+            op_limit = CONNECT_LIMIT if op_name == 'connect' else per_op_limit
+            op_filter = " AND event_type IN ({})".format(",".join("?" * len(op_types)))
+            op_where = where + op_filter
+            op_params = params + list(op_types)
+            op_per_bucket = max(1, op_limit // num_buckets)
+            op_count = 0
 
-        # Add a sparse sample of connect events (separate budget)
-        connect_filter = " AND event_type IN ({})".format(",".join("?" * len(CONNECT_TYPES)))
-        where_connect = where + connect_filter
-        params_connect = params + list(CONNECT_TYPES)
-        conn_buckets = min(CONNECT_LIMIT, 50)
-        conn_per_bucket = max(1, CONNECT_LIMIT // conn_buckets)
-        conn_bucket_ns = range_ns // conn_buckets
-        conn_count = 0
-        for b in range(conn_buckets):
-            bs = start_ns + b * conn_bucket_ns
-            be = bs + conn_bucket_ns
-            bp = list(params_connect)
-            bp[0] = bs
-            bp[1] = be
-            sql = f"SELECT {select_cols} FROM {table} WHERE {where_connect} ORDER BY timestamp_ns LIMIT {conn_per_bucket}"
-            cur = self.conn.execute(sql, bp)
-            for row in cur.fetchall():
-                all_flows.append(row_to_flow(row))
-                conn_count += 1
-            if conn_count >= CONNECT_LIMIT:
-                break
+            for b in range(num_buckets):
+                bs = start_ns + b * bucket_ns
+                be = bs + bucket_ns
+                bp = list(op_params)
+                bp[0] = bs
+                bp[1] = be
+                sql = f"SELECT {select_cols} FROM {table} WHERE {op_where} ORDER BY timestamp_ns LIMIT {op_per_bucket}"
+                cur = self.conn.execute(sql, bp)
+                for row in cur.fetchall():
+                    all_flows.append(row_to_flow(row))
+                    op_count += 1
+                if op_count >= op_limit:
+                    break
 
         return all_flows
 
