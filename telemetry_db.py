@@ -447,43 +447,43 @@ class TelemetryDB:
                         break
                 continue
 
-            if contract_key:
-                sql = (f"SELECT te.timestamp_ns, te.event_type, te.peer_id, te.tx_id "
-                       f"FROM tx_events te JOIN transactions t ON te.tx_id = t.tx_id "
-                       f"WHERE te.event_type IN ({ph}) AND te.timestamp_ns BETWEEN ? AND ? "
-                       f"AND t.contract_key = ? ORDER BY te.timestamp_ns LIMIT ?")
-                params = list(types) + [start_ns, end_ns, contract_key, budget]
-            elif peer_id:
-                sql = (f"SELECT timestamp_ns, event_type, peer_id, tx_id "
-                       f"FROM tx_events WHERE event_type IN ({ph}) "
-                       f"AND timestamp_ns BETWEEN ? AND ? AND peer_id = ? "
-                       f"ORDER BY timestamp_ns LIMIT ?")
-                params = list(types) + [start_ns, end_ns, peer_id, budget]
-            else:
-                # Unfiltered — use bucketed sampling for even time distribution
-                num_buckets = 50
-                per_bucket = max(1, budget // num_buckets)
-                bucket_ns = range_ns // num_buckets
-                count = 0
-                for b in range(num_buckets):
-                    bs = start_ns + b * bucket_ns
-                    be = bs + bucket_ns
-                    cur = self.conn.execute(
-                        f"SELECT timestamp_ns, event_type, peer_id, tx_id "
-                        f"FROM tx_events WHERE event_type IN ({ph}) "
-                        f"AND timestamp_ns BETWEEN ? AND ? "
-                        f"ORDER BY timestamp_ns LIMIT ?",
-                        list(types) + [bs, be, per_bucket])
-                    for row in cur.fetchall():
-                        all_events.append((row[0], row[1], row[2], row[3], None, None))
-                        count += 1
-                    if count >= budget:
-                        break
-                continue  # skip the single-query path below
+            # Always use bucketed sampling for even time distribution
+            num_buckets = 50
+            per_bucket = max(1, budget // num_buckets)
+            bucket_ns = range_ns // num_buckets
+            count = 0
 
-            cur = self.conn.execute(sql, params)
-            for row in cur.fetchall():
-                all_events.append((row[0], row[1], row[2], row[3], None, None))
+            if contract_key:
+                bucket_sql = (f"SELECT te.timestamp_ns, te.event_type, te.peer_id, te.tx_id "
+                              f"FROM tx_events te JOIN transactions t ON te.tx_id = t.tx_id "
+                              f"WHERE te.event_type IN ({ph}) AND te.timestamp_ns BETWEEN ? AND ? "
+                              f"AND t.contract_key = ? ORDER BY te.timestamp_ns LIMIT ?")
+                base_params = list(types) + [0, 0, contract_key, per_bucket]
+            elif peer_id:
+                bucket_sql = (f"SELECT timestamp_ns, event_type, peer_id, tx_id "
+                              f"FROM tx_events WHERE event_type IN ({ph}) "
+                              f"AND timestamp_ns BETWEEN ? AND ? AND peer_id = ? "
+                              f"ORDER BY timestamp_ns LIMIT ?")
+                base_params = list(types) + [0, 0, peer_id, per_bucket]
+            else:
+                bucket_sql = (f"SELECT timestamp_ns, event_type, peer_id, tx_id "
+                              f"FROM tx_events WHERE event_type IN ({ph}) "
+                              f"AND timestamp_ns BETWEEN ? AND ? "
+                              f"ORDER BY timestamp_ns LIMIT ?")
+                base_params = list(types) + [0, 0, per_bucket]
+
+            for b in range(num_buckets):
+                bs = start_ns + b * bucket_ns
+                be = bs + bucket_ns
+                bp = list(base_params)
+                bp[len(types)] = bs
+                bp[len(types) + 1] = be
+                cur = self.conn.execute(bucket_sql, bp)
+                for row in cur.fetchall():
+                    all_events.append((row[0], row[1], row[2], row[3], None, None))
+                    count += 1
+                if count >= budget:
+                    break
 
         if not all_events:
             return []
