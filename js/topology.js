@@ -2195,37 +2195,40 @@ function drawPeersCanvas(ctx, peers, connections, subscriberPeerIds, callbacks, 
     }
 
     // --- Pass 5: Contract diamonds on outer ring ---
-    // Show active contracts as small diamonds on an outer track
+    // Only show contracts with meaningful subscriber counts to avoid dense clutter
     const contractData = state.contractData || {};
-    const CONTRACT_RADIUS = RADIUS + 25; // well outside the peer ring
+    const CONTRACT_RADIUS = RADIUS + 22;
     const selectedContract = state.selectedContract;
-    const tc = themeColors();
-    const contractKeys = Object.keys(contractData);
-    if (contractKeys.length > 0 && contractKeys.length <= 200) {
-        for (const ck of contractKeys) {
-            const loc = contractKeyToLocation(ck);
-            if (loc === null) continue;
-            const angle = loc * 2 * Math.PI - Math.PI / 2;
-            const x = CENTER + CONTRACT_RADIUS * Math.cos(angle);
-            const y = CENTER + CONTRACT_RADIUS * Math.sin(angle);
-            const isSelected = ck === selectedContract;
-            const size = isSelected ? 5 : 3.5;
+    const contractEntries = Object.entries(contractData)
+        .filter(([_, d]) => (d.subscribers?.length || 0) >= 5 || d.peer_count >= 5)
+        .sort((a, b) => (b[1].subscribers?.length || 0) - (a[1].subscribers?.length || 0))
+        .slice(0, 50); // cap to avoid clutter
 
-            ctx.save();
-            ctx.translate(x, y);
-            ctx.rotate(Math.PI / 4);
+    for (const [ck, data] of contractEntries) {
+        const loc = contractKeyToLocation(ck);
+        if (loc === null) continue;
+        const angle = loc * 2 * Math.PI - Math.PI / 2;
+        const x = CENTER + CONTRACT_RADIUS * Math.cos(angle);
+        const y = CENTER + CONTRACT_RADIUS * Math.sin(angle);
+        const isSelected = ck === selectedContract;
+        const subs = data.subscribers?.length || 0;
+        // Scale size by subscriber count (log scale)
+        const size = isSelected ? 6 : Math.min(5, 2.5 + Math.log10(Math.max(subs, 1)) * 1.2);
 
-            if (isSelected) {
-                ctx.fillStyle = '#7ecfef';
-                ctx.globalAlpha = 1;
-            } else {
-                ctx.fillStyle = '#7ecfef';
-                ctx.globalAlpha = 0.35;
-            }
+        ctx.save();
+        ctx.translate(x, y);
+        ctx.rotate(Math.PI / 4);
 
-            ctx.fillRect(-size / 2, -size / 2, size, size);
-            ctx.restore();
+        if (isSelected) {
+            ctx.fillStyle = '#f59e0b'; // amber for selected
+            ctx.globalAlpha = 1;
+        } else {
+            ctx.fillStyle = '#f59e0b'; // amber to distinguish from cyan peers/ring
+            ctx.globalAlpha = 0.5;
         }
+
+        ctx.fillRect(-size / 2, -size / 2, size, size);
+        ctx.restore();
     }
 
     // --- Build hit targets for mouse events ---
