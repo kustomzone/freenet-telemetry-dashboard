@@ -2492,16 +2492,23 @@ async def load_initial_state():
     print(f"DB: {db.event_count()} events, {db.flow_count()} flows", flush=True)
     print(f"Transfer events: {len(transfer_events)} transfers for scatter plot", flush=True)
 
-    # Rebuild contract subscriptions from DB if JSONL tail didn't have any
-    if not subscriptions and not contract_states:
-        db_contracts = db.get_active_contracts()
-        if db_contracts:
-            for ck, info in db_contracts.items():
+    # Supplement contract subscriptions from DB — JSONL tail only captures
+    # a small window and may miss most contracts
+    db_contracts = db.get_active_contracts()
+    if db_contracts:
+        merged = 0
+        for ck, info in db_contracts.items():
+            if ck not in subscriptions:
                 subscriptions[ck] = {
                     "subscribers": info["subscribers"],
                     "tree": {},
                 }
-            print(f"Rebuilt {len(db_contracts)} contracts from DB", flush=True)
+                merged += 1
+            else:
+                # Merge DB subscribers into existing set
+                subscriptions[ck]["subscribers"] |= info["subscribers"]
+        if merged > 0:
+            print(f"Merged {merged} additional contracts from DB ({len(db_contracts)} total in DB)", flush=True)
 
     print(f"Contract states: {len(contract_states)} contracts", flush=True)
     print(f"Subscriptions: {len(subscriptions)} contracts", flush=True)
