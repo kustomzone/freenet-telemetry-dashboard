@@ -450,6 +450,22 @@ export function updatePlayhead() {
  * The exponential canvas replaces renderTimeline, renderRuler, renderDetailTimeline.
  */
 export function renderTimeline() { renderExponentialTimeline(); }
+
+/**
+ * Lightweight playhead-only update for the replay animation loop.
+ * Computes the same tNow/totalDurationNs/width/height as renderExponentialTimeline
+ * but ONLY redraws the playhead overlay canvas — no event iteration, no ticks, no main canvas.
+ */
+export function updatePlayheadOverlay() {
+    const canvas = document.getElementById('timeline-canvas');
+    if (!canvas) return;
+    const tNow = Date.now() * 1_000_000;
+    state.currentTime = tNow;
+    const totalDurationNs = tNow - state.timeRange.start;
+    const width = canvas.clientWidth;
+    const height = canvas.clientHeight;
+    drawPlayheadOverlay(tNow, totalDurationNs, width, height);
+}
 export function renderRuler() { /* ticks are drawn on canvas */ }
 export function renderDetailTimeline() { /* removed */ }
 export function updateWindowLabel() { /* no playhead window */ }

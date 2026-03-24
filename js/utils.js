@@ -130,27 +130,70 @@ export function getRateClass(rate) {
     return 'bad';
 }
 
-// Calculate contract activity stats from events
-export function getContractActivity(contractKey, allEvents) {
-    // Only count update_success/put_success - these represent actual state changes
-    // Don't count broadcast_received which is just propagation (one change = many receives)
-    const contractEvents = allEvents.filter(e =>
-        e.contract_full === contractKey &&
-        (e.event_type === 'update_success' || e.event_type === 'put_success')
-    );
+// Contract activity index: Map<contractKey, {lastUpdate, totalUpdates, timestamps: number[]}>
+// Populated incrementally to avoid O(contracts * events) scanning on every render.
+const activityIndex = new Map();
 
-    if (contractEvents.length === 0) {
+/**
+ * Index a single event for the contract activity cache.
+ * Call this whenever an event is added to state.allEvents.
+ * @param {Object} event - The event object
+ */
+export function indexEventForActivity(event) {
+    if (event.event_type !== 'update_success' && event.event_type !== 'put_success') return;
+    const key = event.contract_full;
+    if (!key) return;
+
+    let entry = activityIndex.get(key);
+    if (!entry) {
+        entry = { lastUpdate: null, totalUpdates: 0, timestamps: [] };
+        activityIndex.set(key, entry);
+    }
+    entry.totalUpdates++;
+    entry.timestamps.push(event.timestamp);
+    if (entry.lastUpdate === null || event.timestamp > entry.lastUpdate) {
+        entry.lastUpdate = event.timestamp;
+    }
+}
+
+/**
+ * Clear the activity index. Call when events are pruned/trimmed
+ * (e.g., when allEvents is reset or old events are spliced out).
+ */
+export function clearActivityIndex() {
+    activityIndex.clear();
+}
+
+/**
+ * Rebuild the activity index from a full array of events.
+ * Use after bulk-loading history.
+ * @param {Array} allEvents - All events to index
+ */
+export function rebuildActivityIndex(allEvents) {
+    activityIndex.clear();
+    for (const event of allEvents) {
+        indexEventForActivity(event);
+    }
+}
+
+// Calculate contract activity stats from the pre-built index
+export function getContractActivity(contractKey, _allEvents) {
+    const entry = activityIndex.get(contractKey);
+    if (!entry || entry.totalUpdates === 0) {
         return { lastUpdate: null, totalUpdates: 0, recentUpdates: 0 };
     }
 
-    // Sort by timestamp descending to get latest
-    contractEvents.sort((a, b) => b.timestamp - a.timestamp);
-    const lastUpdate = contractEvents[0].timestamp;
-    const totalUpdates = contractEvents.length;
-
     // Count recent updates (within 1 hour)
     const oneHourAgo = Date.now() * 1_000_000 - (60 * 60 * 1000 * 1_000_000);
-    const recentUpdates = contractEvents.filter(e => e.timestamp > oneHourAgo).length;
+    let recentUpdates = 0;
+    // Timestamps are in insertion order (roughly chronological), scan from end
+    for (let i = entry.timestamps.length - 1; i >= 0; i--) {
+        if (entry.timestamps[i] > oneHourAgo) {
+            recentUpdates++;
+        } else {
+            break;
+        }
+    }
 
-    return { lastUpdate, totalUpdates, recentUpdates };
+    return { lastUpdate: entry.lastUpdate, totalUpdates: entry.totalUpdates, recentUpdates };
 }

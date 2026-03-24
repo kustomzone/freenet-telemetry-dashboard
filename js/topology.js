@@ -8,7 +8,7 @@
 
 import { state, SVG_SIZE, SVG_WIDTH, CENTER, RADIUS } from './state.js';
 import { hashToColor, contractKeyToLocation, getEventClass } from './utils.js';
-import { renderExponentialTimeline } from './timeline.js';
+import { updatePlayheadOverlay } from './timeline.js';
 
 // Re-render canvas charts on theme change
 window.addEventListener('themechange', () => {
@@ -434,6 +434,7 @@ export function startReplay(flows, peers) {
 export function stopReplay() {
     if (replayFrame) {
         cancelAnimationFrame(replayFrame);
+        clearTimeout(replayFrame);
         replayFrame = null;
     }
     replayFlows = [];
@@ -507,16 +508,21 @@ function startReplayLoop() {
     if (replayFrame) return;
 
     function step() {
-        replayFrame = requestAnimationFrame(step);
-
         if (replayFlows.length === 0) {
-            cancelAnimationFrame(replayFrame);
             replayFrame = null;
             return;
         }
 
-        // When paused, don't advance anything
-        if (replayPaused) return;
+        // When paused, poll slowly instead of running at 60fps
+        if (replayPaused) {
+            replayFrame = setTimeout(() => {
+                replayFrame = null;
+                startReplayLoop();
+            }, 500);
+            return;
+        }
+
+        replayFrame = requestAnimationFrame(step);
 
         const now = performance.now();
         const effectiveDuration = replayLoopDuration / replaySpeed;
@@ -584,9 +590,9 @@ function startReplayLoop() {
 }
 
 /**
- * Store the playhead timestamp in state and trigger a timeline redraw.
- * The actual line is drawn by renderExponentialTimeline using timeToX,
- * which correctly handles the logarithmic scale.
+ * Store the playhead timestamp in state and update the playhead overlay.
+ * Uses the lightweight updatePlayheadOverlay() which only redraws the
+ * playhead line on its overlay canvas, NOT the full timeline.
  */
 function updateTimelinePlayhead() {
     if (state.replayProgress < 0 || !state.replayRange) {
@@ -607,8 +613,8 @@ function updateTimelinePlayhead() {
         timeEl.textContent = d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     }
 
-    // Trigger timeline redraw to show the playhead line
-    renderExponentialTimeline();
+    // Update only the lightweight playhead overlay — no full timeline redraw
+    updatePlayheadOverlay();
 }
 
 
@@ -1425,6 +1431,7 @@ function drawConnectionsCanvas(ctx, peers, connections, subscriberPeerIds = new 
             ctx.lineDashOffset = -connectionAnimOffset;
             startConnectionAnimation();
         } else {
+            stopConnectionAnimation();
             ctx.setLineDash([]);
         }
         const byStyle = new Map();
@@ -1477,6 +1484,13 @@ function startConnectionAnimation() {
         connectionAnimFrame = requestAnimationFrame(step);
     };
     connectionAnimFrame = requestAnimationFrame(step);
+}
+
+function stopConnectionAnimation() {
+    if (connectionAnimFrame) {
+        cancelAnimationFrame(connectionAnimFrame);
+        connectionAnimFrame = null;
+    }
 }
 
 // ============================================================================

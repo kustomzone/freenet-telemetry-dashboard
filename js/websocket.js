@@ -5,7 +5,7 @@
 
 import { state } from './state.js';
 import { addTransferEvents, addTransferEvent } from './transfers.js';
-import { formatLatency, getRateClass } from './utils.js';
+import { formatLatency, getRateClass, indexEventForActivity, clearActivityIndex, rebuildActivityIndex } from './utils.js';
 
 /**
  * Connect to the WebSocket server
@@ -217,6 +217,8 @@ function handleMessage(data, callbacks) {
     } else if (data.type === 'history') {
         state.allEvents.length = 0;
         state.allEvents.push(...data.events);
+        // Rebuild the contract activity index from the full history
+        rebuildActivityIndex(state.allEvents);
         // Use the server's time range (matches both events and flows from DB)
         state.timeRange = data.time_range;
         state.timeRange.end = Date.now() * 1_000_000;  // extend to now for live events
@@ -267,6 +269,7 @@ function handleMessage(data, callbacks) {
 
     } else if (data.type === 'event') {
         state.allEvents.push(data);
+        indexEventForActivity(data);
         state.timeRange.end = data.timestamp;
 
         if (callbacks.trackTransactionFromEvent) {
@@ -305,6 +308,7 @@ function handleMessage(data, callbacks) {
         const events = data.events || [];
         const MAX_EVENTS = 25000;
 
+        let needsIndexRebuild = false;
         for (const event of events) {
             if (state.allEvents.length >= MAX_EVENTS) {
                 const removeCount = Math.floor(MAX_EVENTS * 0.1);
@@ -313,8 +317,12 @@ function handleMessage(data, callbacks) {
                 if (state.allEvents.length > 0) {
                     state.timeRange.start = state.allEvents[0].timestamp;
                 }
+                needsIndexRebuild = true;
             }
             state.allEvents.push(event);
+            if (!needsIndexRebuild) {
+                indexEventForActivity(event);
+            }
 
             if (callbacks.trackTransactionFromEvent) {
                 callbacks.trackTransactionFromEvent(event);
@@ -322,6 +330,11 @@ function handleMessage(data, callbacks) {
             if (callbacks.addEventMarker) {
                 callbacks.addEventMarker(event);
             }
+        }
+
+        // If events were pruned, rebuild the activity index from scratch
+        if (needsIndexRebuild) {
+            rebuildActivityIndex(state.allEvents);
         }
 
         if (events.length > 0) {
