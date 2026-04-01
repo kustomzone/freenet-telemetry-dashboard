@@ -401,41 +401,47 @@ def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_ty
         "event_type": event_type,
     }
 
-    # Track propagation timeline - counts peers that received the update broadcast,
-    # even if the CRDT merge was a no-op (peer already had the state via another path).
-    # A peer receiving a broadcast IS propagation regardless of merge outcome.
+    # Track propagation timeline for update events
     if event_type in ("update_success", "update_broadcast_applied", "update_broadcast_emitted"):
-        update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx_id=tx_id)
+        update_propagation_tracking(contract_key, peer_id, state_hash, timestamp,
+                                    tx_id=tx_id, state_hash_before=state_hash_before)
 
 
-def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx_id=None):
+def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp,
+                                tx_id=None, state_hash_before=None):
     """Track how an update propagates across peers.
 
-    Groups by state_hash, not tx_id. Each peer receives a broadcast with its own
-    tx_id, but the state_hash is the same for all peers receiving the same update.
-    The 2-minute propagation window prevents stale catch-ups from being conflated
-    with the active wave.
+    Groups by state_hash with a tight propagation window. For active contracts
+    (like River chat), updates arrive every few seconds, so we use a 15-second
+    window to avoid conflating independent update waves that happen to converge
+    to the same CRDT state hash.
+
+    No-op merges (hash_before == hash_after) are skipped — they represent stale
+    broadcasts from earlier waves, not real propagation of the current update.
     """
+    # Skip no-op CRDT merges: peer already had this state from a different path
+    if state_hash_before and state_hash_before == state_hash:
+        return
+
     prop = contract_propagation.setdefault(contract_key, {})
 
-    # Propagation window: only count peers that receive state within 2 minutes of first_seen
-    # Anything after that is likely a peer catching up after being offline, not real propagation
-    PROPAGATION_WINDOW_NS = 2 * 60 * 1_000_000_000  # 2 minutes in nanoseconds
+    # Tight propagation window: real broadcast propagation completes in seconds.
+    # Anything arriving later is a stale broadcast from an earlier wave or a peer
+    # catching up after being offline.
+    PROPAGATION_WINDOW_NS = 15 * 1_000_000_000  # 15 seconds
 
-    # Track by state_hash — all peers receiving the same broadcast share a hash
     tracking_key = state_hash
 
     # Check if this is a new update wave
     if prop.get("current_key") != tracking_key:
-        # Archive current as previous (if exists)
-        if "current_key" in prop and prop.get("peers"):
-            peers = prop["peers"]
+        # Archive current as previous (if exists and has meaningful data)
+        if "current_key" in prop and len(prop.get("peers", {})) >= 2:
             prop["previous"] = {
                 "hash": prop.get("current_hash", ""),
                 "tx_id": prop.get("current_tx"),
                 "first_seen": prop["first_seen"],
                 "propagation_ms": (prop.get("last_seen", prop["first_seen"]) - prop["first_seen"]) // 1_000_000,
-                "peer_count": len(peers),
+                "peer_count": len(prop["peers"]),
             }
         # Start tracking new update wave
         prop["current_key"] = tracking_key
@@ -1027,7 +1033,7 @@ def precompute_propagation_from_db():
     now_ns = int(time.time() * 1_000_000_000)
     window_ns = STALE_PROPAGATION_NS  # 2 hours
     cutoff_ns = now_ns - window_ns
-    PROPAGATION_WINDOW_NS = 2 * 60 * 1_000_000_000  # 2 minutes
+    PROPAGATION_WINDOW_NS = 15 * 1_000_000_000  # 15 seconds (match live tracking)
 
     rows = db.conn.execute("""
         SELECT contract_key, peer_id, timestamp_ns, data
@@ -1041,6 +1047,7 @@ def precompute_propagation_from_db():
         return
 
     # Group by (contract_key, state_hash) to find propagation waves
+    # Skip no-op merges (hash_before == hash_after)
     waves = {}  # (contract_key, state_hash) -> {first_seen, peers: {pid: ts}}
     for contract_key, peer_id, ts, data_str in rows:
         if not contract_key or not peer_id:
@@ -1050,7 +1057,11 @@ def precompute_propagation_from_db():
         except Exception:
             continue
         state_hash = d.get("state_hash_after") or d.get("state_hash")
+        state_hash_before = d.get("state_hash_before")
         if not state_hash:
+            continue
+        # Skip no-op CRDT merges
+        if state_hash_before and state_hash_before == state_hash:
             continue
 
         wave_key = (contract_key, state_hash)
@@ -1067,7 +1078,7 @@ def precompute_propagation_from_db():
         if len(wave["peers"]) < 2:
             continue
         existing = latest_per_contract.get(ck)
-        if not existing or wave["first_seen"] > existing[1]["first_seen"]:
+        if not existing or len(wave["peers"]) > len(existing[1]["peers"]):
             latest_per_contract[ck] = (sh, wave)
 
     precomputed = 0
@@ -1088,8 +1099,13 @@ def precompute_propagation_from_db():
         }
         precomputed += 1
 
-    if precomputed:
-        print(f"Precomputed propagation for {precomputed} contracts from DB events", flush=True)
+    print(f"Precomputed propagation: {precomputed} contracts from {len(rows)} events, "
+          f"{len(waves)} waves across {len(latest_per_contract)} contracts with >=2 peers", flush=True)
+    # Show top 5 for debugging
+    for ck in sorted(contract_propagation, key=lambda k: len(contract_propagation[k].get("peers", {})), reverse=True)[:5]:
+        p = contract_propagation[ck]
+        ms = (p.get("last_seen", p["first_seen"]) - p["first_seen"]) // 1_000_000
+        print(f"  {ck[:24]}: {len(p.get('peers', {}))} peers, {ms/1000:.1f}s", flush=True)
 
 
 def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None, body_type=None):
