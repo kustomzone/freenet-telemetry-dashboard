@@ -125,8 +125,24 @@ export function renderContractsList() {
         return;
     }
 
-    // Sort contracts by subscriber count (highest first)
+    // Sort contracts: active (has propagation or recent updates) first, then by subscriber count
     const sortedContracts = filteredContracts.sort((a, b) => {
+        const aProp = state.propagationData[a];
+        const bProp = state.propagationData[b];
+        const aActivity = getContractActivity(a, state.allEvents);
+        const bActivity = getContractActivity(b, state.allEvents);
+
+        // Primary: has recent update activity (updates/hr > 0)
+        const aActive = aActivity.recentUpdates > 0 ? 1 : 0;
+        const bActive = bActivity.recentUpdates > 0 ? 1 : 0;
+        if (bActive !== aActive) return bActive - aActive;
+
+        // Secondary: propagation peer count (more peers = more interesting)
+        const aPropPeers = aProp?.peer_count || 0;
+        const bPropPeers = bProp?.peer_count || 0;
+        if (bPropPeers !== aPropPeers) return bPropPeers - aPropPeers;
+
+        // Tertiary: subscriber count
         const aCount = state.contractData[a]?.subscribers?.length || 0;
         const bCount = state.contractData[b]?.subscribers?.length || 0;
         return bCount - aCount;
