@@ -1015,6 +1015,83 @@ def cleanup_stale_propagation():
         print(f"[cleanup] Removed {len(stale_keys)} stale propagation entries")
 
 
+def precompute_propagation_from_db():
+    """Precompute propagation timelines from DB events on startup.
+
+    Queries recent update_broadcast_applied/update_success events and builds
+    propagation data for contracts that don't already have it from the
+    saved snapshot. This ensures propagation sparklines appear immediately
+    after a server restart without waiting for new live events.
+    """
+    import json as _json
+    now_ns = int(time.time() * 1_000_000_000)
+    window_ns = STALE_PROPAGATION_NS  # 2 hours
+    cutoff_ns = now_ns - window_ns
+    PROPAGATION_WINDOW_NS = 2 * 60 * 1_000_000_000  # 2 minutes
+
+    rows = db.conn.execute("""
+        SELECT contract_key, peer_id, timestamp_ns, data
+        FROM events
+        WHERE timestamp_ns > ?
+        AND event_type IN ('update_broadcast_applied', 'update_success', 'update_broadcast_emitted')
+        ORDER BY timestamp_ns
+    """, (cutoff_ns,)).fetchall()
+
+    if not rows:
+        return
+
+    # Group by (contract_key, state_hash) to find propagation waves
+    waves = {}  # (contract_key, state_hash) -> {first_seen, peers: {pid: ts}}
+    for contract_key, peer_id, ts, data_str in rows:
+        if not contract_key or not peer_id:
+            continue
+        try:
+            d = _json.loads(data_str) if data_str else {}
+        except Exception:
+            continue
+        state_hash = d.get("state_hash_after") or d.get("state_hash")
+        if not state_hash:
+            continue
+
+        wave_key = (contract_key, state_hash)
+        if wave_key not in waves:
+            waves[wave_key] = {"first_seen": ts, "peers": {}}
+        wave = waves[wave_key]
+        if peer_id not in wave["peers"]:
+            if (ts - wave["first_seen"]) <= PROPAGATION_WINDOW_NS:
+                wave["peers"][peer_id] = ts
+
+    # For each contract, find the latest wave (by first_seen) and use it
+    latest_per_contract = {}  # contract_key -> (state_hash, wave)
+    for (ck, sh), wave in waves.items():
+        if len(wave["peers"]) < 2:
+            continue
+        existing = latest_per_contract.get(ck)
+        if not existing or wave["first_seen"] > existing[1]["first_seen"]:
+            latest_per_contract[ck] = (sh, wave)
+
+    precomputed = 0
+    for ck, (state_hash, wave) in latest_per_contract.items():
+        # Only fill in if we don't already have good data
+        existing = contract_propagation.get(ck)
+        if existing and len(existing.get("peers", {})) >= len(wave["peers"]):
+            continue
+
+        last_seen = max(wave["peers"].values())
+        contract_propagation[ck] = {
+            "current_key": state_hash,
+            "current_hash": state_hash,
+            "current_tx": None,
+            "first_seen": wave["first_seen"],
+            "last_seen": last_seen,
+            "peers": wave["peers"],
+        }
+        precomputed += 1
+
+    if precomputed:
+        print(f"Precomputed propagation for {precomputed} contracts from DB events", flush=True)
+
+
 def track_transaction(tx_id, event_type, timestamp, peer_id, contract_key=None, body_type=None):
     """Track an event as part of a transaction for timeline lanes.
 
@@ -2522,6 +2599,9 @@ async def load_initial_state():
                 print(f"Restored {len(contract_propagation)} propagation entries from DB snapshot", flush=True)
             except Exception as e:
                 print(f"Failed to restore contract_propagation: {e}", flush=True)
+
+    # Precompute propagation from DB for contracts missing from snapshot
+    precompute_propagation_from_db()
 
     # Supplement contract subscriptions from DB — JSONL tail only captures
     # a small window and may miss most contracts
