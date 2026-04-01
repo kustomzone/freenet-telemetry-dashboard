@@ -586,6 +586,41 @@ def record_version(version_str, timestamp_ns):
         version_markers.append((timestamp_ns, version_str))
 
 
+def precompute_metrics_from_db():
+    """Precompute metrics buckets from DB events on startup.
+
+    Populates the in-memory metrics_buckets with historical data so the
+    Performance tab shows data immediately after a server restart.
+    """
+    import time as _time
+    now_ns = int(_time.time() * 1_000_000_000)
+    cutoff_ns = now_ns - METRICS_MAX_AGE_NS  # 8 days
+
+    metric_event_types = (
+        'put_request', 'put_success',
+        'get_request', 'get_success', 'get_not_found',
+        'update_request', 'update_success',
+        'subscribed',
+    )
+    placeholders = ','.join('?' * len(metric_event_types))
+
+    rows = db.conn.execute(f"""
+        SELECT event_type, timestamp_ns, peer_id
+        FROM events
+        WHERE timestamp_ns > ?
+        AND event_type IN ({placeholders})
+        ORDER BY timestamp_ns
+    """, (cutoff_ns, *metric_event_types)).fetchall()
+
+    if not rows:
+        return
+
+    for event_type, ts, peer_id in rows:
+        record_metric(event_type, ts, peer_id=peer_id)
+
+    print(f"Precomputed metrics: {len(metrics_buckets)} buckets from {len(rows)} events", flush=True)
+
+
 def get_metrics_timeseries():
     """Build the time series payload for clients."""
 
@@ -2618,6 +2653,9 @@ async def load_initial_state():
 
     # Precompute propagation from DB for contracts missing from snapshot
     precompute_propagation_from_db()
+
+    # Precompute performance metrics from DB
+    precompute_metrics_from_db()
 
     # Supplement contract subscriptions from DB — JSONL tail only captures
     # a small window and may miss most contracts
