@@ -401,24 +401,20 @@ def update_contract_state(contract_key, peer_id, state_hash, timestamp, event_ty
         "event_type": event_type,
     }
 
-    # Track propagation timeline - only for UPDATE events that represent actual state changes
-    # GET and PUT don't represent propagation - GET is reading existing data, PUT is initial creation
+    # Track propagation timeline - counts peers that received the update broadcast,
+    # even if the CRDT merge was a no-op (peer already had the state via another path).
+    # A peer receiving a broadcast IS propagation regardless of merge outcome.
     if event_type in ("update_success", "update_broadcast_applied", "update_broadcast_emitted"):
-        # Fix #2: Skip no-op merges where state didn't actually change (CRDT convergence artifact)
-        if state_hash_before and state_hash_before == state_hash:
-            return
         update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx_id=tx_id)
 
 
 def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx_id=None):
     """Track how an update propagates across peers.
 
-    Fix #1: Tracks by transaction ID instead of final state hash. In a CRDT system,
-    independent updates (e.g. two chat messages sent minutes apart) converge to the
-    same final state hash. Tracking by hash conflates these into one slow "propagation"
-    when each individual broadcast actually completes in seconds.
-
-    Falls back to state_hash tracking when tx_id is unavailable.
+    Groups by state_hash, not tx_id. Each peer receives a broadcast with its own
+    tx_id, but the state_hash is the same for all peers receiving the same update.
+    The 2-minute propagation window prevents stale catch-ups from being conflated
+    with the active wave.
     """
     prop = contract_propagation.setdefault(contract_key, {})
 
@@ -426,8 +422,8 @@ def update_propagation_tracking(contract_key, peer_id, state_hash, timestamp, tx
     # Anything after that is likely a peer catching up after being offline, not real propagation
     PROPAGATION_WINDOW_NS = 2 * 60 * 1_000_000_000  # 2 minutes in nanoseconds
 
-    # Use tx_id as the tracking key when available; fall back to state_hash
-    tracking_key = tx_id if tx_id else state_hash
+    # Track by state_hash — all peers receiving the same broadcast share a hash
+    tracking_key = state_hash
 
     # Check if this is a new update wave
     if prop.get("current_key") != tracking_key:
